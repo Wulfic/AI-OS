@@ -61,14 +61,11 @@ test_results/
 # Note: Checkpoint files are tracked via Git LFS (see .gitattributes)
 # Only ignore specific checkpoint patterns if they're temporary
 artifacts/checkpoints/*-step*-*.npz
-artifacts/checkpoints/*-step*-*.pt
 
 # Ignore all parallel checkpoint directories (training artifacts)
 **/parallel_checkpoints/
 
-# Ignore large model files (*.pt, *.safetensors) in brains directory
-artifacts/brains/**/*.pt
-artifacts/brains/**/*.safetensors
+# Note: Large model files (*.pt, *.safetensors) are now tracked via Git LFS
 !artifacts/brains/masters.json
 !artifacts/brains/pinned.json
 
@@ -112,8 +109,7 @@ Thumbs.db
 
 # Track workspace settings
 !.vscode/settings.json
-artifacts/brains/actv1/English-v1-1M/actv1_student.pt.prev
 
-# Exclude large wheel files (>100MB for GitHub)
+# Note: .whl files can be large but not tracking in LFS for now
 flash_attn-*.whl
 *.whl
