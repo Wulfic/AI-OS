@@ -1,0 +1,129 @@
+# Local artifacts/logs (kept if explicitly added)
+aios.log
+artifacts/*.out.log
+artifacts/*.err.log
+debug_html_output.html
+
+# Centralized logs directory
+logs/
+!logs/README.md
+
+# Test outputs and temporary files
+artifacts/test_*.jsonl
+artifacts/test_*.log
+artifacts/*.log
+test_output.txt
+test_*.txt
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+/.venvs/
+.venv-dml/
+.dmlvenv/
+*.env
+
+# Python packaging
+*.egg-info/
+.build/
+
+dist/
+build/
+
+# Test/cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+artifacts/test_results/
+test_results/
+
+# IDE/editor
+.idea/
+
+# Backup files
+*.backup
+*~
+*.bak
+*.swp
+*.swo
+
+# Project data/cache
+.cache/
+*.log
+# Note: Checkpoint files are tracked via Git LFS (see .gitattributes)
+# Only ignore specific checkpoint patterns if they're temporary
+artifacts/checkpoints/*-step*-*.npz
+artifacts/checkpoints/*-step*-*.pt
+
+# Ignore all parallel checkpoint directories (training artifacts)
+**/parallel_checkpoints/
+
+# Ignore all model files in artifacts except the ones we explicitly want to track
+artifacts/brains/**/*.pt
+artifacts/brains/**/*.safetensors
+artifacts/brains/**/*.prev
+
+# Exception: Keep the English-v1 model (ships with base installation)
+!artifacts/brains/actv1/English-v1/actv1_student.safetensors
+!artifacts/brains/actv1/English-v1/brain.json
+
+# Exception: Keep final_model.safetensors if it's the production model
+!artifacts/brains/actv1/final_model.safetensors
+
+# Keep registry files
+!artifacts/brains/masters.json
+!artifacts/brains/pinned.json
+
+# Ignore installer builds
+installers/releases/*.deb
+installers/releases/*.exe
+installers/releases/*.AppImage
+installers/releases/*.dmg
+
+# Local training outputs (ignored)
+training_data/
+**/metrics.jsonl
+
+# Diagnostics files (generated with user-specific paths)
+artifacts/diagnostics/diagnostics_latest.json
+artifacts/diagnostics/diagnostics_latest.txt
+
+# Evaluation results (contain user-specific paths)
+artifacts/evaluation/
+
+# User-specific GUI state
+src/gui_state.json
+
+# GPU metrics and monitoring
+**/gpu_metrics.jsonl
+**/gpu_metrics.log
+**/gpu_stats.jsonl
+**/gpu_stats.log
+artifacts/gpu_metrics/
+gpu_metrics/
+
+# Optimization testing results
+artifacts/optimization/
+**/progressive_results_*.json
+**/train_*.jsonl
+**/stop_*.flag
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Track workspace settings
+!.vscode/settings.json
+artifacts/brains/actv1/English-v1-1M/actv1_student.pt.prev
+
+# Exclude large wheel files (>100MB for GitHub)
+flash_attn-*.whl
+*.whl
