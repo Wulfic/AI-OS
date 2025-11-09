@@ -66,19 +66,9 @@ artifacts/checkpoints/*-step*-*.pt
 # Ignore all parallel checkpoint directories (training artifacts)
 **/parallel_checkpoints/
 
-# Ignore all model files in artifacts except the ones we explicitly want to track
+# Ignore large model files (*.pt, *.safetensors) in brains directory
 artifacts/brains/**/*.pt
 artifacts/brains/**/*.safetensors
-artifacts/brains/**/*.prev
-
-# Exception: Keep the English-v1 model (ships with base installation)
-!artifacts/brains/actv1/English-v1/actv1_student.safetensors
-!artifacts/brains/actv1/English-v1/brain.json
-
-# Exception: Keep final_model.safetensors if it's the production model
-!artifacts/brains/actv1/final_model.safetensors
-
-# Keep registry files
 !artifacts/brains/masters.json
 !artifacts/brains/pinned.json
 
