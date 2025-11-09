@@ -13,7 +13,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Any, Dict, Optional
 
-from .brain_creator import create_brain_directory, apply_preset_to_panel, sanitize_brain_name
+from .brain_creator import create_brain_directory, apply_preset_to_panel
 from .param_estimator import estimate_parameters
 
 
@@ -85,20 +85,6 @@ def show_create_dialog(parent_dialog: tk.Toplevel, panel: Any) -> None:
             try:
                 sel = (choice.get() or "").strip()
                 
-                # Validate and sanitize brain name (fixes BUG-009)
-                bname_raw = (name_var.get() or "").strip()
-                if not bname_raw:
-                    panel._log("[hrm] ❌ Error: Brain name cannot be empty")
-                    return
-                
-                try:
-                    bname = sanitize_brain_name(bname_raw)
-                    if bname != bname_raw:
-                        panel._log(f"[hrm] ℹ️  Brain name sanitized: '{bname_raw}' → '{bname}'")
-                except ValueError as e:
-                    panel._log(f"[hrm] ❌ Error: Invalid brain name - {e}")
-                    return
-                
                 # Apply preset or custom values
                 if sel == "Custom":
                     # Custom architecture - apply custom values
@@ -120,7 +106,8 @@ def show_create_dialog(parent_dialog: tk.Toplevel, panel: Any) -> None:
                     panel.default_goal_var.set(goal_text)
                     panel._log(f"[hrm] Set default goal: {goal_text[:60]}...")
                 
-                # Update panel with sanitized brain name
+                # Create brain directory
+                bname = (name_var.get().strip() or "new_brain").replace(" ", "_")
                 panel.brain_name_var.set(bname)
                 
                 # Get tokenizer info

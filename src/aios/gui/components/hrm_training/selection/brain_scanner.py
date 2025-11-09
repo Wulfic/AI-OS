@@ -32,10 +32,6 @@ def scan_existing_brains(project_root: str) -> Dict[str, str]:
             if entry.startswith("_"):
                 continue
             
-            # Skip parallel training checkpoint directories
-            if entry == "parallel_checkpoints":
-                continue
-            
             path = os.path.join(base, entry)
             if os.path.isdir(path):
                 # Optional: validate that it's a real brain directory

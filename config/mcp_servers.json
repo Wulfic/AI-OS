@@ -1,0 +1,29 @@
+[
+  {
+    "name": "filesystem",
+    "type": "stdio",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "${WORKSPACE_ROOT}"],
+    "enabled": true,
+    "description": "Local filesystem access - read, write, search files and directories",
+    "tools_count": 10
+  },
+  {
+    "name": "memory",
+    "type": "stdio",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-memory"],
+    "enabled": true,
+    "description": "Persistent knowledge graph for storing entities, relations, and observations",
+    "tools_count": 9
+  },
+  {
+    "name": "duckduckgo",
+    "type": "stdio",
+    "command": "npx",
+    "args": ["-y", "@wulfic/server-duckduckgo"],
+    "enabled": true,
+    "description": "Web search via DuckDuckGo - search the web and fetch webpage content",
+    "tools_count": 2
+  }
+]

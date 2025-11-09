@@ -1,0 +1,4 @@
+{
+  "train_batch": 2,
+  "td_batch": 1
+}

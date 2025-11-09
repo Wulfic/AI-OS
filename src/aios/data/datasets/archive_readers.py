@@ -9,77 +9,27 @@ import zipfile
 import tarfile
 import gzip
 
-try:
-    from tqdm import tqdm
-    TQDM_AVAILABLE = True
-except ImportError:
-    TQDM_AVAILABLE = False
-
 from .constants import TEXT_EXTS, ARCHIVE_EXTS
 
 
 def _is_archive(path: Path) -> bool:
-    """Check if a path points to an archive file using extension and content sniffing."""
+    """Check if a path points to an archive file."""
     name = path.name.lower()
-    
-    # First check: file extension
     for ext in ARCHIVE_EXTS:
         if name.endswith(ext):
             return True
-    
-    # Second check: content-based detection (magic bytes)
-    if not path.exists() or not path.is_file():
-        return False
-    
-    try:
-        with open(path, 'rb') as f:
-            header = f.read(16)  # Read first 16 bytes
-            
-            # ZIP: PK\x03\x04 or PK\x05\x06 (empty archive)
-            if header[:4] in (b'PK\x03\x04', b'PK\x05\x06'):
-                return True
-            
-            # GZIP: \x1f\x8b
-            if header[:2] == b'\x1f\x8b':
-                return True
-            
-            # TAR: ustar at offset 257 (we can't check this with just 16 bytes)
-            # But tar files often have specific patterns in first 512 bytes
-            # Skip for now to avoid reading too much
-            
-            # RAR: Rar! or Rar!\x1a\x07
-            if header[:4] == b'Rar!':
-                return True
-            
-            # 7Z: 7z\xbc\xaf\x27\x1c
-            if header[:6] == b'7z\xbc\xaf\x27\x1c':
-                return True
-            
-            # BZ2: BZ
-            if header[:2] == b'BZ':
-                return True
-            
-            # XZ: \xfd7zXZ\x00
-            if header[:6] == b'\xfd7zXZ\x00':
-                return True
-            
-    except Exception:
-        pass  # If we can't read, fall back to extension only
-    
     return False
 
 
 def _iter_text_from_zip(zp: zipfile.ZipFile, max_lines: int) -> List[str]:
     """Extract text lines from files inside a ZIP archive."""
     out: List[str] = []
-    # Filter text files for progress bar
-    text_files = [info for info in zp.infolist() if not info.is_dir() and 
-                  ("." + info.filename.split(".")[-1].lower() if "." in info.filename else "") in TEXT_EXTS]
-    
-    # Show progress if there are many files
-    disable_pbar = not TQDM_AVAILABLE or len(text_files) < 5
-    
-    for info in (tqdm(text_files, desc="Extracting from ZIP", unit="files", disable=disable_pbar) if TQDM_AVAILABLE else text_files):
+    for info in zp.infolist():
+        if info.is_dir():
+            continue
+        suf = "." + info.filename.split(".")[-1].lower() if "." in info.filename else ""
+        if suf not in TEXT_EXTS:
+            continue
         try:
             with zp.open(info, mode="r") as f:
                 for b in io.TextIOWrapper(f, encoding="utf-8", errors="ignore"):
@@ -94,14 +44,13 @@ def _iter_text_from_zip(zp: zipfile.ZipFile, max_lines: int) -> List[str]:
 def _iter_text_from_tar(tf: tarfile.TarFile, max_lines: int) -> List[str]:
     """Extract text lines from files inside a TAR archive."""
     out: List[str] = []
-    # Filter text files for progress bar
-    text_members = [m for m in tf.getmembers() if m.isfile() and 
-                    ("." + m.name.lower().split(".")[-1] if "." in m.name else "") in TEXT_EXTS]
-    
-    # Show progress if there are many files
-    disable_pbar = not TQDM_AVAILABLE or len(text_members) < 5
-    
-    for m in (tqdm(text_members, desc="Extracting from TAR", unit="files", disable=disable_pbar) if TQDM_AVAILABLE else text_members):
+    for m in tf.getmembers():
+        if not m.isfile():
+            continue
+        name = m.name.lower()
+        suf = "." + name.split(".")[-1] if "." in name else ""
+        if suf not in TEXT_EXTS:
+            continue
         try:
             f = tf.extractfile(m)
             if not f:

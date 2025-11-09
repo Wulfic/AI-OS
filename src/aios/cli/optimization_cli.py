@@ -70,13 +70,13 @@ def register(app: typer.Typer):
         Examples:
         
         Basic optimization:
-        aios optimize --model gpt2
+        aios optimize --model artifacts/hf_implant/base_model
         
         Custom batch sizes and duration:
-        aios optimize --model gpt2 --batch-sizes "1,2,4,8,16" --test-duration 15
+        aios optimize --model artifacts/hf_implant/base_model --batch-sizes "1,2,4,8,16" --test-duration 15
         
         Multi-GPU optimization:
-        aios optimize --model gpt2 --cuda-devices "0,1"
+        aios optimize --model artifacts/hf_implant/base_model --cuda-devices "0,1"
         
         Load from config file:
         aios optimize --config optimization_config.json

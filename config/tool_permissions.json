@@ -1,0 +1,261 @@
+{
+  "read_file": {
+    "enabled": true,
+    "category": "File Operations",
+    "description": "Read file contents from disk",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "write_file": {
+    "enabled": true,
+    "category": "File Operations",
+    "description": "Write or create files",
+    "risk": "Medium",
+    "usage_count": 0
+  },
+  "edit_file": {
+    "enabled": true,
+    "category": "File Operations",
+    "description": "Edit existing files with line-based replacements",
+    "risk": "Medium",
+    "usage_count": 0
+  },
+  "list_directory": {
+    "enabled": true,
+    "category": "File Operations",
+    "description": "List directory contents",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "create_directory": {
+    "enabled": true,
+    "category": "File Operations",
+    "description": "Create new directories",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "move_file": {
+    "enabled": true,
+    "category": "File Operations",
+    "description": "Move or rename files and directories",
+    "risk": "Medium",
+    "usage_count": 0
+  },
+  "search_files": {
+    "enabled": true,
+    "category": "File Operations",
+    "description": "Search for files matching patterns",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "get_file_info": {
+    "enabled": true,
+    "category": "File Operations",
+    "description": "Retrieve file metadata (size, dates, permissions)",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "directory_tree": {
+    "enabled": true,
+    "category": "File Operations",
+    "description": "Get recursive directory tree structure",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "read_multiple_files": {
+    "enabled": true,
+    "category": "File Operations",
+    "description": "Read contents of multiple files simultaneously",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "web_search": {
+    "enabled": true,
+    "category": "Web & Search",
+    "description": "Search the web using DuckDuckGo",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "fetch_webpage": {
+    "enabled": true,
+    "category": "Web & Search",
+    "description": "Fetch and parse webpage content",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "create_entities": {
+    "enabled": true,
+    "category": "Memory & Knowledge",
+    "description": "Create entities in knowledge graph",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "create_relations": {
+    "enabled": true,
+    "category": "Memory & Knowledge",
+    "description": "Create relations between entities",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "add_observations": {
+    "enabled": true,
+    "category": "Memory & Knowledge",
+    "description": "Add observations to existing entities",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "search_nodes": {
+    "enabled": true,
+    "category": "Memory & Knowledge",
+    "description": "Search knowledge graph nodes",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "read_graph": {
+    "enabled": true,
+    "category": "Memory & Knowledge",
+    "description": "Read entire knowledge graph",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "open_nodes": {
+    "enabled": true,
+    "category": "Memory & Knowledge",
+    "description": "Open specific nodes by name",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "delete_entities": {
+    "enabled": true,
+    "category": "Memory & Knowledge",
+    "description": "Delete entities from knowledge graph",
+    "risk": "High",
+    "usage_count": 0
+  },
+  "delete_relations": {
+    "enabled": true,
+    "category": "Memory & Knowledge",
+    "description": "Delete relations from knowledge graph",
+    "risk": "Medium",
+    "usage_count": 0
+  },
+  "delete_observations": {
+    "enabled": true,
+    "category": "Memory & Knowledge",
+    "description": "Delete observations from entities",
+    "risk": "Medium",
+    "usage_count": 0
+  },
+  "run_code_snippet": {
+    "enabled": true,
+    "category": "Code & Development",
+    "description": "Execute Python code snippets in workspace environment",
+    "risk": "High",
+    "usage_count": 0
+  },
+  "check_syntax_errors": {
+    "enabled": true,
+    "category": "Code & Development",
+    "description": "Check Python files for syntax errors",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "get_imports": {
+    "enabled": true,
+    "category": "Code & Development",
+    "description": "Analyze Python imports across workspace",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "invoke_refactoring": {
+    "enabled": true,
+    "category": "Code & Development",
+    "description": "Apply automated code refactorings",
+    "risk": "Medium",
+    "usage_count": 0
+  },
+  "get_python_environments": {
+    "enabled": true,
+    "category": "Code & Development",
+    "description": "Get available Python environments",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "update_python_environment": {
+    "enabled": true,
+    "category": "Code & Development",
+    "description": "Switch active Python environment",
+    "risk": "Medium",
+    "usage_count": 0
+  },
+  "get_installed_modules": {
+    "enabled": true,
+    "category": "Code & Development",
+    "description": "Get installed Python packages",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "run_terminal_command": {
+    "enabled": true,
+    "category": "System & Terminal",
+    "description": "Execute shell commands in terminal",
+    "risk": "High",
+    "usage_count": 0
+  },
+  "get_terminal_output": {
+    "enabled": true,
+    "category": "System & Terminal",
+    "description": "Retrieve terminal command output",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "run_task": {
+    "enabled": true,
+    "category": "System & Terminal",
+    "description": "Run VS Code tasks",
+    "risk": "Medium",
+    "usage_count": 0
+  },
+  "get_task_output": {
+    "enabled": true,
+    "category": "System & Terminal",
+    "description": "Get VS Code task output",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "semantic_search": {
+    "enabled": true,
+    "category": "Data Analysis",
+    "description": "Semantic search across workspace",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "grep_search": {
+    "enabled": true,
+    "category": "Data Analysis",
+    "description": "Text pattern search (grep)",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "list_code_usages": {
+    "enabled": true,
+    "category": "Data Analysis",
+    "description": "Find symbol references and usages",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "file_search": {
+    "enabled": true,
+    "category": "Data Analysis",
+    "description": "Search for files by glob pattern",
+    "risk": "Low",
+    "usage_count": 0
+  },
+  "get_errors": {
+    "enabled": true,
+    "category": "Data Analysis",
+    "description": "Get compile/lint errors in files",
+    "risk": "Low",
+    "usage_count": 0
+  }
+}

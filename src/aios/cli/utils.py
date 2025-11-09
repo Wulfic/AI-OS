@@ -128,24 +128,6 @@ def setup_logging(
     conf["handlers"]["console"]["level"] = desired_level
     conf["handlers"]["console"]["formatter"] = desired_formatter
     conf["handlers"]["console"]["stream"] = desired_stream
-    
-    # CRITICAL FIX: Set UTF-8 encoding for Windows console to support unicode characters
-    # This prevents UnicodeEncodeError crashes when logging emojis/symbols (✓, ℹ️, etc.)
-    import platform
-    import sys
-    if platform.system() == "Windows":
-        # Reconfigure stdout/stderr to use UTF-8 encoding
-        if hasattr(sys.stdout, 'reconfigure'):
-            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-        if hasattr(sys.stderr, 'reconfigure'):
-            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-        # For Python < 3.7 or streams without reconfigure, wrap them
-        else:
-            import io
-            if not isinstance(sys.stdout, io.TextIOWrapper) or sys.stdout.encoding.lower() != 'utf-8':
-                sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
-            if not isinstance(sys.stderr, io.TextIOWrapper) or sys.stderr.encoding.lower() != 'utf-8':
-                sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
 
     # If a file handler exists or an override is provided, ensure it uses at least INFO unless explicitly set
     if "file" in conf["handlers"] or env_file:

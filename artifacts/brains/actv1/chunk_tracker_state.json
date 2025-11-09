@@ -1,0 +1,42 @@
+{
+  "completed_chunks": [
+    {
+      "block_id": 0,
+      "chunk_id": 1,
+      "gpu_id": 1,
+      "step": 52,
+      "samples_trained": 52
+    },
+    {
+      "block_id": 0,
+      "chunk_id": 0,
+      "gpu_id": 0,
+      "step": 49,
+      "samples_trained": 49
+    },
+    {
+      "block_id": 0,
+      "chunk_id": 2,
+      "gpu_id": 1,
+      "step": 100,
+      "samples_trained": 100
+    },
+    {
+      "block_id": 0,
+      "chunk_id": 3,
+      "gpu_id": 0,
+      "step": 100,
+      "samples_trained": 100
+    }
+  ],
+  "started_blocks": [
+    0
+  ],
+  "completed_blocks": [],
+  "current_epoch": 0,
+  "blocks_this_epoch": [
+    0
+  ],
+  "total_blocks_in_dataset": null,
+  "total_samples_trained": 301
+}

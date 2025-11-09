@@ -1,9 +1,27 @@
-# uncompyle6 version 3.9.3
-# Python bytecode version base 3.12.0 (3531)
-# Decompiled from: Python 3.10.11 (tags/v3.10.11:7d4cc5a, Apr  5 2023, 00:38:17) [MSC v.1929 64 bit (AMD64)]
-# Embedded file name: C:\Users\tyler\Repos\AI-OS\src\aios\core\hrm_models\impl\common.py
-# Compiled at: 2025-09-25 00:06:46
-# Size of source mod 2**32: 848 bytes
+import math
 
-Unsupported Python version, 3.12.0, for decompilation
+import torch
+from torch import nn
 
+
+def trunc_normal_init_(tensor: torch.Tensor, std: float = 1.0, lower: float = -2.0, upper: float = 2.0):
+    with torch.no_grad():
+        if std == 0:
+            tensor.zero_()
+        else:
+            sqrt2 = math.sqrt(2)
+            a = math.erf(lower / sqrt2)
+            b = math.erf(upper / sqrt2)
+            z = (b - a) / 2
+
+            c = (2 * math.pi) ** -0.5
+            pdf_u = c * math.exp(-0.5 * lower ** 2)
+            pdf_l = c * math.exp(-0.5 * upper ** 2)
+            comp_std = std / math.sqrt(1 - (upper * pdf_u - lower * pdf_l) / z - ((pdf_u - pdf_l) / z) ** 2)
+
+            tensor.uniform_(a, b)
+            tensor.erfinv_()
+            tensor.mul_(sqrt2 * comp_std)
+            tensor.clip_(lower * comp_std, upper * comp_std)
+
+    return tensor

@@ -1,0 +1,843 @@
+{
+  "model_tested": {
+    "h_layers": 3,
+    "l_layers": 3,
+    "hidden_size": 512
+  },
+  "context_scaling": {
+    "base_vram_gb": 1.094171047210695,
+    "per_token_gb": 0.011580407619476318
+  },
+  "single_optimizations": {
+    "moe": 0.6557037480670972,
+    "gradient_checkpointing": 0.7647759127523351,
+    "amp": 0.882492637233595,
+    "flash_attention_2": 0.9919698475361609,
+    "use_8bit_optimizer": 0.8373988958905104,
+    "cpu_offload": 0.9919698475361609
+  },
+  "pairwise_interactions": {
+    "moe+gradient_checkpointing": 1.3611509898222913,
+    "moe+amp": 1.1860160746807624,
+    "gradient_checkpointing+amp": 1.0055311992529727,
+    "moe+amp+flash_attention_2": 1.701870364752828
+  },
+  "lookup_table": {
+    "moe": {
+      "multiplier": 0.5031425322768289,
+      "context_specific": {
+        "128": 0.6654239543532713,
+        "256": 0.43578023848464004,
+        "384": 0.40822340399257534
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "moe_only"
+    },
+    "gradcheck": {
+      "multiplier": 0.6939466536575364,
+      "context_specific": {
+        "128": 0.7761130137778566,
+        "256": 0.67795362852182,
+        "384": 0.6277733186729323
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "gradcheck_only"
+    },
+    "amp": {
+      "multiplier": 0.8457341819895229,
+      "context_specific": {
+        "128": 0.8955747806638055,
+        "256": 0.832607970063301,
+        "384": 0.8090197952414622
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "amp_only"
+    },
+    "flash": {
+      "multiplier": 0.998160997786437,
+      "context_specific": {
+        "128": 1.006674890135261,
+        "256": 0.9811795986925012,
+        "384": 1.0066285045315488
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "flash_attn2_only"
+    },
+    "8bit": {
+      "multiplier": 0.888440577686584,
+      "context_specific": {
+        "128": 0.8498125659905588,
+        "256": 0.8825671621380459,
+        "384": 0.9329420049311472
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "8bit_optimizer_only"
+    },
+    "cpu_offload": {
+      "multiplier": 0.9979847562929073,
+      "context_specific": {
+        "128": 1.006674890135261,
+        "256": 0.9811795986925012,
+        "384": 1.00609978005096
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "cpu_offload_only"
+    },
+    "chunking_256": {
+      "multiplier": 0.5757677771582149,
+      "context_specific": {
+        "256": 0.9828683078262747,
+        "384": 0.4679293405857395,
+        "512": 0.5682215187428401,
+        "768": 0.3993808422006956
+      },
+      "contexts_tested": [
+        256,
+        384,
+        384,
+        512,
+        512,
+        768
+      ],
+      "sample_size": 6,
+      "example_config_name": "context_chunking_256"
+    },
+    "zero1": {
+      "multiplier": 0.9978966355461424,
+      "context_specific": {
+        "128": 1.006674890135261,
+        "256": 0.9811795986925012,
+        "384": 1.0058354178106654
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "zero1_only"
+    },
+    "gradcheck+zero1": {
+      "multiplier": 0.6939466536575364,
+      "context_specific": {
+        "128": 0.7761130137778566,
+        "256": 0.67795362852182,
+        "384": 0.6277733186729323
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "zero1_gradcheck"
+    },
+    "amp+zero1": {
+      "multiplier": 0.8459397970653075,
+      "context_specific": {
+        "128": 0.8955747806638055,
+        "256": 0.832607970063301,
+        "384": 0.8096366404688159
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "zero1_amp"
+    },
+    "zero2": {
+      "multiplier": 0.998160309343103,
+      "context_specific": {
+        "128": 1.006674890135261,
+        "256": 0.9811795986925012,
+        "384": 1.0066264392015465
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "zero2_only"
+    },
+    "gradcheck+zero2": {
+      "multiplier": 0.6939466536575364,
+      "context_specific": {
+        "128": 0.7761130137778566,
+        "256": 0.67795362852182,
+        "384": 0.6277733186729323
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "zero2_gradcheck"
+    },
+    "amp+zero2": {
+      "multiplier": 0.8460426046031998,
+      "context_specific": {
+        "128": 0.8955747806638055,
+        "256": 0.832607970063301,
+        "384": 0.8099450630824927
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "zero2_amp"
+    },
+    "cpu_offload+zero2": {
+      "multiplier": 0.9980875638307997,
+      "context_specific": {
+        "128": 1.006674890135261,
+        "256": 0.9811795986925012,
+        "384": 1.0064082026646368
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "zero_offload"
+    },
+    "gradcheck+cpu_offload+zero2": {
+      "multiplier": 0.6939466536575364,
+      "context_specific": {
+        "128": 0.7761130137778566,
+        "256": 0.67795362852182,
+        "384": 0.6277733186729323
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "zero_offload_gradcheck"
+    },
+    "amp+cpu_offload+zero2": {
+      "multiplier": 0.8460132310209448,
+      "context_specific": {
+        "128": 0.8955747806638055,
+        "256": 0.832607970063301,
+        "384": 0.8098569423357279
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "zero_offload_amp"
+    },
+    "gradcheck+amp+cpu_offload+zero2": {
+      "multiplier": 0.6214695789508058,
+      "context_specific": {
+        "128": 0.6887024162376794,
+        "256": 0.613052168470999,
+        "384": 0.5626541521437393
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "zero_offload_max"
+    },
+    "lora_r4": {
+      "multiplier": 0.9982197449509469,
+      "context_specific": {
+        "128": 1.006674890135261,
+        "256": 0.9811795986925012,
+        "384": 1.0068047460250784
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "lora_r4_all"
+    },
+    "lora_r8": {
+      "multiplier": 0.998204455771902,
+      "context_specific": {
+        "128": 1.006674890135261,
+        "256": 0.9811795986925012,
+        "384": 1.006758878487944
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "lora_r8_all"
+    },
+    "lora_r16": {
+      "multiplier": 0.998014086847454,
+      "context_specific": {
+        "128": 1.006674890135261,
+        "256": 0.9811795986925012,
+        "384": 1.0059675989308128
+      },
+      "contexts_tested": [
+        128,
+        128,
+        128,
+        128,
+        256,
+        256,
+        256,
+        256,
+        384,
+        384,
+        384,
+        384
+      ],
+      "sample_size": 12,
+      "example_config_name": "lora_r16_all"
+    },
+    "lora_r32": {
+      "multiplier": 0.9982197449509469,
+      "context_specific": {
+        "128": 1.006674890135261,
+        "256": 0.9811795986925012,
+        "384": 1.0068047460250784
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "lora_r32_all"
+    },
+    "lora_r64": {
+      "multiplier": 0.9980435034574172,
+      "context_specific": {
+        "128": 1.006674890135261,
+        "256": 0.9811795986925012,
+        "384": 1.0062760215444897
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "lora_r64_all"
+    },
+    "gradcheck+lora_r16": {
+      "multiplier": 0.6939466536575364,
+      "context_specific": {
+        "128": 0.7761130137778566,
+        "256": 0.67795362852182,
+        "384": 0.6277733186729323
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "lora_r16_gradcheck"
+    },
+    "amp+lora_r16": {
+      "multiplier": 0.8460132310209448,
+      "context_specific": {
+        "128": 0.8955747806638055,
+        "256": 0.832607970063301,
+        "384": 0.8098569423357279
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "lora_r16_amp"
+    },
+    "8bit+lora_r16": {
+      "multiplier": 0.888440577686584,
+      "context_specific": {
+        "128": 0.8498125659905588,
+        "256": 0.8825671621380459,
+        "384": 0.9329420049311472
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "lora_r16_8bit"
+    },
+    "gradcheck+amp+8bit+lora_r16": {
+      "multiplier": 0.511770571388987,
+      "context_specific": {
+        "128": 0.5320296081884275,
+        "256": 0.5134773063409299,
+        "384": 0.48980479963760326
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "lora_r16_all_opts"
+    },
+    "moe+gradcheck": {
+      "multiplier": 0.49202406664583437,
+      "context_specific": {
+        "128": 0.6926900273632366,
+        "256": 0.4660872454292126,
+        "384": 0.3172949271450538
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "moe_gradcheck"
+    },
+    "moe+amp": {
+      "multiplier": 0.6715359112063473,
+      "context_specific": {
+        "128": 0.6964662836245319,
+        "256": 0.4197742740777037,
+        "384": 0.8983671759168061
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "moe_amp"
+    },
+    "moe+flash": {
+      "multiplier": 0.9859661241912644,
+      "context_specific": {
+        "128": 1.2175776178530076,
+        "256": 0.559522885039839,
+        "384": 1.1807978696809467
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "moe_flash_attn2"
+    },
+    "moe+8bit": {
+      "multiplier": 0.6021305006975969,
+      "context_specific": {
+        "128": 0.46146614019194027,
+        "256": 1.0260761878736488,
+        "384": 0.3188491740272015
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "moe_8bit"
+    },
+    "gradcheck+amp": {
+      "multiplier": 0.6214695789508058,
+      "context_specific": {
+        "128": 0.6887024162376794,
+        "256": 0.613052168470999,
+        "384": 0.5626541521437393
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "gradcheck_amp"
+    },
+    "gradcheck+flash": {
+      "multiplier": 0.6939466536575364,
+      "context_specific": {
+        "128": 0.7761130137778566,
+        "256": 0.67795362852182,
+        "384": 0.6277733186729323
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "gradcheck_flash_attn2"
+    },
+    "gradcheck+8bit": {
+      "multiplier": 0.5844584133477908,
+      "context_specific": {
+        "128": 0.6192506896331545,
+        "256": 0.5789802823765096,
+        "384": 0.5551442680337084
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "gradcheck_8bit"
+    },
+    "gradcheck+cpu_offload": {
+      "multiplier": 0.6939466536575364,
+      "context_specific": {
+        "128": 0.7761130137778566,
+        "256": 0.67795362852182,
+        "384": 0.6277733186729323
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "gradcheck_cpu_offload"
+    },
+    "amp+flash": {
+      "multiplier": 0.8460132310209448,
+      "context_specific": {
+        "128": 0.8955747806638055,
+        "256": 0.832607970063301,
+        "384": 0.8098569423357279
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "amp_flash_attn2"
+    },
+    "amp+8bit": {
+      "multiplier": 0.7360125690211129,
+      "context_specific": {
+        "128": 0.7389019726145536,
+        "256": 0.7332737143271353,
+        "384": 0.7358620201216495
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "amp_8bit"
+    },
+    "flash+8bit": {
+      "multiplier": 0.8885286984333488,
+      "context_specific": {
+        "128": 0.8498125659905588,
+        "256": 0.8825671621380459,
+        "384": 0.9332063671714417
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "flash_attn2_8bit"
+    },
+    "8bit+cpu_offload": {
+      "multiplier": 0.8882643361930543,
+      "context_specific": {
+        "128": 0.8498125659905588,
+        "256": 0.8825671621380459,
+        "384": 0.9324132804505584
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "cpu_offload_8bit"
+    },
+    "moe+gradcheck+flash": {
+      "multiplier": 0.6599419832079867,
+      "context_specific": {
+        "128": 0.9025868761954637,
+        "256": 0.7598119651632954,
+        "384": 0.317427108265201
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "moe_gradcheck_flash_attn2"
+    },
+    "moe+amp+flash": {
+      "multiplier": 0.7718359771705073,
+      "context_specific": {
+        "128": 0.9913670236441681,
+        "256": 0.43402902808057525,
+        "384": 0.8901118797867785
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "moe_amp_flash_attn2"
+    },
+    "gradcheck+amp+flash": {
+      "multiplier": 0.6217254183861172,
+      "context_specific": {
+        "128": 0.6893657225717551,
+        "256": 0.6131123200694748,
+        "384": 0.5626982125171216
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "gradcheck_amp_flash_attn2"
+    },
+    "gradcheck+amp+8bit": {
+      "multiplier": 0.5117042480491257,
+      "context_specific": {
+        "128": 0.5319348501407024,
+        "256": 0.513417154742454,
+        "384": 0.48976073926422087
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "gradcheck_amp_8bit"
+    },
+    "gradcheck+flash+8bit": {
+      "multiplier": 0.5843417270184584,
+      "context_specific": {
+        "128": 0.6193454476808796,
+        "256": 0.578799827581082,
+        "384": 0.554879905793414
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "gradcheck_flash_attn2_8bit"
+    },
+    "moe+gradcheck+amp+flash+8bit": {
+      "multiplier": 0.22549812161360883,
+      "context_specific": {
+        "256": 0.22549812161360883
+      },
+      "contexts_tested": [
+        256
+      ],
+      "sample_size": 1,
+      "example_config_name": "all_basic_opts"
+    },
+    "moe+gradcheck+amp+flash+8bit+cpu_offload+chunking": {
+      "multiplier": 0.2233106946370032,
+      "context_specific": {
+        "256": 0.2233106946370032
+      },
+      "contexts_tested": [
+        256
+      ],
+      "sample_size": 1,
+      "example_config_name": "maximum_memory_savings"
+    },
+    "gradcheck+amp+flash+cpu_offload+zero2": {
+      "multiplier": 0.6217917417259783,
+      "context_specific": {
+        "128": 0.6894604806194803,
+        "256": 0.6131724716679506,
+        "384": 0.562742272890504
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "zero_offload_flash_amp"
+    },
+    "gradcheck+amp+flash+8bit+lora_r16": {
+      "multiplier": 0.5115978236436141,
+      "context_specific": {
+        "128": 0.5318400920929772,
+        "256": 0.5132366999470265,
+        "384": 0.4897166788908385
+      },
+      "contexts_tested": [
+        128,
+        256,
+        384
+      ],
+      "sample_size": 3,
+      "example_config_name": "lora_max"
+    },
+    "chunking_128": {
+      "multiplier": 0.3928876841923299,
+      "context_specific": {
+        "256": 0.450420103698066,
+        "384": 0.4679293405857395,
+        "512": 0.26031360829318406
+      },
+      "contexts_tested": [
+        256,
+        384,
+        512
+      ],
+      "sample_size": 3,
+      "example_config_name": "chunking_128"
+    },
+    "chunking_512": {
+      "multiplier": 0.3628831145910054,
+      "context_specific": {
+        "768": 0.4027574459227558,
+        "1024": 0.323008783259255
+      },
+      "contexts_tested": [
+        768,
+        1024
+      ],
+      "sample_size": 2,
+      "example_config_name": "chunking_512"
+    }
+  },
+  "validation_metrics": {
+    "total_tests": 157,
+    "accuracy_5pct": 98.08917197452229,
+    "accuracy_10pct": 98.08917197452229,
+    "mean_error_pct": 0.2861109970977924,
+    "median_error_pct": 0.0
+  },
+  "worst_predictions": [
+    {
+      "config": "baseline",
+      "context": 256,
+      "actual": 3.982367992401123,
+      "predicted": 4.667568707466127,
+      "error_pct": 17.20586134612512
+    },
+    {
+      "config": "baseline",
+      "context": 384,
+      "actual": 5.5792412757873535,
+      "predicted": 6.372204709053041,
+      "error_pct": 14.212746752985389
+    },
+    {
+      "config": "baseline",
+      "context": 128,
+      "actual": 2.614656925201416,
+      "predicted": 2.962932705879213,
+      "error_pct": 13.320133028579583
+    },
+    {
+      "config": "lora_r16_mlp",
+      "context": 384,
+      "actual": 5.577529430389404,
+      "predicted": 5.5741143226623535,
+      "error_pct": 0.06122975718323283
+    },
+    {
+      "config": "context_chunking_256",
+      "context": 384,
+      "actual": 2.5942835807800293,
+      "predicted": 2.5928187370300293,
+      "error_pct": 0.05646428790022878
+    }
+  ],
+  "extrapolation_examples": [
+    {
+      "scenario": "Extreme context (100K tokens)",
+      "estimated_vram_gb": 300.5901626001113
+    },
+    {
+      "scenario": "Mega context (1M tokens)",
+      "estimated_vram_gb": 3003.347934111858
+    },
+    {
+      "scenario": "Untested combo: MoE + 8bit only",
+      "estimated_vram_gb": 7.910917706793957
+    },
+    {
+      "scenario": "Untested combo: Flash + CPU offload",
+      "estimated_vram_gb": 30.039335999230712
+    },
+    {
+      "scenario": "Large model (5h/5l/1024)",
+      "estimated_vram_gb": 42.893460036900116
+    },
+    {
+      "scenario": "Tiny model (1h/1l/128) at large context",
+      "estimated_vram_gb": 3.5715255142718254
+    },
+    {
+      "scenario": "All opts + untested chunking",
+      "estimated_vram_gb": 28.130694791395747
+    },
+    {
+      "scenario": "Batch size 16 (untested)",
+      "estimated_vram_gb": 53.7421003902842
+    }
+  ]
+}

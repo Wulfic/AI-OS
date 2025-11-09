@@ -1,0 +1,9 @@
+{
+  "model": "artifacts/hf_implant/gpt2",
+  "q_head": "artifacts\\hf_starter\\q_head.pt",
+  "max_seq_len": 10240,
+  "halt_max_steps": 1,
+  "device": "cpu",
+  "forward_dtype": "bfloat16",
+  "peft_dir": null
+}

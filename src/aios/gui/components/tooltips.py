@@ -17,12 +17,11 @@ except Exception:  # pragma: no cover - environment dependent
 
 
 class _Tooltip:
-    def __init__(self, widget: "tk.Misc", text: str, *, delay_ms: int = 500, wrap: int = 400) -> None:  # type: ignore[name-defined]
+    def __init__(self, widget: "tk.Misc", text: str, *, delay_ms: int = 500, wrap: int = 288) -> None:  # type: ignore[name-defined]
         self.widget = widget
         self.text = text.strip() if text else ""
         self.delay_ms = max(50, int(delay_ms))
-        # Increased default wrap from 288 to 400 for better text display
-        self.wrap = max(100, int(wrap))
+        self.wrap = max(40, int(wrap))
         self._after_id: Optional[str] = None
         self._tip: Optional["tk.Toplevel"] = None  # type: ignore[name-defined]
         try:
@@ -64,26 +63,18 @@ class _Tooltip:
                 tip.wm_geometry(f"+{x}+{y}")
             except Exception:
                 pass
-            
-            # Improved label formatting to fix BUG-020: Tooltip Text Truncated
-            # - Increased padding for better readability
-            # - Better font settings
-            # - Proper text wrapping
             lbl = tk.Label(
                 tip,
                 text=self.text,
                 justify="left",
                 relief="solid",
                 borderwidth=1,
-                padx=8,  # Increased from 6 for better spacing
-                pady=6,  # Increased from 4 for better spacing
+                padx=6,
+                pady=4,
                 background="#ffffe0",
-                foreground="#000000",  # Explicit text color
-                font=("TkDefaultFont", 9),  # Explicit font for consistency
                 wraplength=self.wrap,
-                anchor="w",  # Left-align text
             )
-            lbl.pack(fill="both", expand=True)
+            lbl.pack()
         except Exception:
             self._tip = None
 
@@ -102,20 +93,7 @@ class _Tooltip:
         self._tip = None
 
 
-def add_tooltip(widget: Any, text: str, *, delay_ms: int = 500, wrap: int = 400) -> Any:
-    """Add a tooltip to a widget with improved text wrapping.
-    
-    Args:
-        widget: The widget to attach the tooltip to
-        text: The tooltip text to display
-        delay_ms: Delay in milliseconds before showing tooltip (default: 500)
-        wrap: Maximum width in pixels for text wrapping (default: 400, increased from 288)
-    
-    Returns:
-        The tooltip object, or None if creation failed
-    
-    Note: Increased default wrap from 288 to 400 pixels to fix BUG-020 (truncated tooltips)
-    """
+def add_tooltip(widget: Any, text: str, *, delay_ms: int = 500, wrap: int = 288) -> Any:
     if tk is None:
         return None
     if not widget or not text:

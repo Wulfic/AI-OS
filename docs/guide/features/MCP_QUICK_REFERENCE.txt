@@ -1,0 +1,222 @@
+"""
+MCP Integration Quick Reference
+================================
+
+FILES CREATED/MODIFIED
+----------------------
+
+New Files:
+✅ config/mcp_servers.json                    - MCP server configuration
+✅ src/aios/core/mcp/__init__.py              - MCP module exports
+✅ src/aios/core/mcp/client.py                - MCP client implementation
+✅ src/aios/core/mcp/tool_executor.py         - Tool execution coordinator
+✅ docs/guide/features/MCP_INTEGRATION_COMPLETE.md - Complete guide
+✅ tests/test_mcp_integration.py              - Integration tests
+✅ tests/test_mcp_mock_model.py               - Mock model testing
+✅ tests/test_mcp_servers_manual.md           - Manual testing guide
+✅ scripts/verify_mcp_setup.py                - Setup verification
+✅ scripts/mcp_quickstart.py                  - Interactive tutorial
+
+Modified Files:
+🔧 src/aios/gui/app/chat_operations.py       - Added MCP tool support to chat
+
+QUICK START
+-----------
+
+1. Install Node.js:
+   https://nodejs.org/
+
+2. Verify setup:
+   python scripts/verify_mcp_setup.py
+
+3. Test infrastructure:
+   python tests/test_mcp_mock_model.py
+
+4. Try in GUI:
+   aios gui
+   → Go to Chat tab
+   → Load a brain
+   → Try: "Read the README file"
+
+AVAILABLE TOOLS (21 TOTAL)
+---------------------------
+
+Filesystem (10):
+  read_file, write_file, list_directory, search_files,
+  create_directory, move_file, get_file_info, directory_tree,
+  edit_file, read_multiple_files
+
+Memory/Knowledge Graph (9):
+  create_entities, create_relations, add_observations,
+  search_nodes, read_graph, open_nodes, delete_entities,
+  delete_relations, delete_observations
+
+Web Search (2):
+  web_search, fetch_webpage
+
+TOOL CALL FORMATS SUPPORTED
+----------------------------
+
+1. JSON:
+   {"tool": "read_file", "parameters": {"path": "README.md"}}
+
+2. XML-style:
+   <tool_call>
+   {"name": "read_file", "arguments": {"path": "README.md"}}
+   </tool_call>
+
+3. Function call:
+   read_file(path="README.md")
+
+HOW IT WORKS
+------------
+
+User Message
+    ↓
+Enhanced with Tool Instructions
+    ↓
+Model Generates Response
+    ↓
+Tool Call Detected?
+    ↓ Yes
+Execute Tool via MCP Server
+    ↓
+Format Result
+    ↓
+Send to Model for Final Answer
+    ↓
+Display to User
+
+TESTING WITHOUT TRAINED MODEL
+------------------------------
+
+Infrastructure Test:
+  python scripts/verify_mcp_setup.py
+
+Mock Model Test:
+  python tests/test_mcp_mock_model.py
+
+Manual Server Test:
+  npm install -g @modelcontextprotocol/inspector
+  npx @modelcontextprotocol/inspector npx -y @modelcontextprotocol/server-filesystem .
+
+Integration Test:
+  pytest tests/test_mcp_integration.py -v
+
+TRAINING MODEL FOR TOOL USE
+----------------------------
+
+Your model needs function calling training data:
+
+Example format:
+{
+  "messages": [
+    {"role": "user", "content": "Read README"},
+    {"role": "assistant", "tool_calls": [
+      {"name": "read_file", "arguments": {"path": "README.md"}}
+    ]},
+    {"role": "tool", "content": "# Contents..."},
+    {"role": "assistant", "content": "Based on the file..."}
+  ]
+}
+
+Options:
+1. Fine-tune tool-calling model (Qwen2.5, GPT-4, Claude)
+2. Add tool examples to HRM training data
+3. Use existing function calling datasets
+
+CONFIGURATION
+-------------
+
+Enable/Disable Servers:
+  Edit: config/mcp_servers.json
+  Or use: GUI → MCP Servers & Tools tab
+
+Enable/Disable Tools:
+  Edit: config/tool_permissions.json
+  Or use: GUI → MCP Servers & Tools → Tools tab
+
+Change Tool Behavior:
+  Modify: src/aios/core/mcp/client.py
+  Or: src/aios/core/mcp/tool_executor.py
+
+STATUS INDICATORS IN CHAT
+--------------------------
+
+🔧 Using tool: [name]        - Tool being executed
+Tool [name] result: {...}    - Tool execution result
+[Final response]             - Model's answer using tool data
+
+ERROR: Tool [name] failed    - Tool execution error
+
+WHAT'S READY NOW
+----------------
+
+✅ MCP server configuration
+✅ Tool discovery system
+✅ Chat integration
+✅ Tool call parsing
+✅ Tool execution framework
+✅ Result synthesis
+✅ 21 tools available
+✅ 3 servers configured
+
+WHAT NEEDS TRAINED MODEL
+-------------------------
+
+❌ Deciding when to use tools
+❌ Choosing correct tool
+❌ Generating parameters
+❌ Understanding results
+
+TROUBLESHOOTING
+---------------
+
+"npx not found":
+  Install Node.js from nodejs.org
+
+"Tool not being called":
+  Model needs function calling training data
+
+"Server connection failed":
+  Run: npx @modelcontextprotocol/inspector [server command]
+
+"No tools available":
+  Check: python scripts/verify_mcp_setup.py
+
+NEXT STEPS
+----------
+
+1. Install Node.js (if not installed)
+2. Run verification: python scripts/verify_mcp_setup.py
+3. Test mock model: python tests/test_mcp_mock_model.py
+4. Create function calling training data
+5. Train/fine-tune model with tool examples
+6. Test in Chat tab!
+
+KEY INSIGHT
+-----------
+
+The MCP infrastructure is COMPLETE and WORKING.
+The tools are ready to use RIGHT NOW.
+You just need to train your model to be the "brain"
+that decides when and how to call these tools.
+
+Think of it like giving someone a toolbox (✅ done!)
+Now they just need to learn carpentry (→ training)
+
+DOCUMENTATION
+-------------
+
+Complete guide:
+  docs/guide/features/MCP_INTEGRATION_COMPLETE.md
+
+Testing guide:
+  docs/guide/features/MCP_TESTING_WITHOUT_MODEL.md
+
+Manual testing:
+  tests/test_mcp_servers_manual.md
+
+Quick start:
+  python scripts/mcp_quickstart.py
+"""

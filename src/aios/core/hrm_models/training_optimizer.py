@@ -135,7 +135,7 @@ class TrainingOptimizer:
         activations_gb /= gradient_accumulation_steps
         
         # Logits output
-        vocab_size = 50257  # GPT-2 vocab
+        vocab_size = 50257  # Standard tokenizer vocab size
         logits_gb = (batch_size * context_length * vocab_size * bytes_per_element) / (1024 ** 3)
         
         # CUDA overhead (15%)

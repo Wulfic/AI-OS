@@ -100,14 +100,6 @@ def save_state(app: Any) -> None:
     except Exception as e:
         logger.warning(f"Failed to save HRM training panel state: {e}")
     
-    # Debug panel
-    try:
-        if hasattr(app, 'debug_panel') and app.debug_panel:
-            if hasattr(app.debug_panel, 'get_state'):
-                state['debug'] = app.debug_panel.get_state()
-    except Exception as e:
-        logger.debug(f"Failed to save debug panel state: {e}")
-    
     # Save to file
     try:
         with open(app._state_file, 'w', encoding='utf-8') as f:
@@ -164,12 +156,3 @@ def restore_state(app: Any, state: dict) -> None:
                 app.hrm_training_panel.set_state(state['hrm_training'])
         except Exception as e:
             logger.warning(f"Failed to restore HRM training panel state: {e}")
-    
-    # Debug panel
-    if 'debug' in state:
-        try:
-            if hasattr(app, 'debug_panel') and app.debug_panel:
-                if hasattr(app.debug_panel, 'set_state'):
-                    app.debug_panel.set_state(state['debug'])
-        except Exception as e:
-            logger.debug(f"Failed to restore debug panel state: {e}")

@@ -1,9 +1,58 @@
-# uncompyle6 version 3.9.3
-# Python bytecode version base 3.12.0 (3531)
-# Decompiled from: Python 3.10.11 (tags/v3.10.11:7d4cc5a, Apr  5 2023, 00:38:17) [MSC v.1929 64 bit (AMD64)]
-# Embedded file name: C:\Users\tyler\Repos\AI-OS\src\aios\core\hrm_engine.py
-# Compiled at: 2025-09-25 00:06:46
-# Size of source mod 2**32: 2037 bytes
+from __future__ import annotations
 
-Unsupported Python version, 3.12.0, for decompilation
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
+from aios.core.hrm import Manager, OperatorRegistry, build_default_registry
+
+
+def _get_mode_from_config(cfg: Optional[dict]) -> str:
+    # Vendor mode removed; always operate in builtin mode.
+    return "builtin"
+
+
+@dataclass
+class HRMEngine:
+    """Unified HRM facade (builtin only)."""
+
+    config: Optional[dict] = None
+
+    def __post_init__(self) -> None:
+        self.mode = _get_mode_from_config(self.config)
+        self._mgr: Optional[Manager] = None
+        self._reg: Optional[OperatorRegistry] = None
+
+    # --- Introspection ---
+    def info(self) -> Dict[str, Any]:
+        reg = self._registry()
+        return {
+            "mode": "builtin",
+            "operators": reg.names(),
+            "policy": "ThompsonBandit",
+        }
+
+    # --- Builtin path ---
+    def _registry(self) -> OperatorRegistry:
+        if self._reg is None:
+            self._reg = build_default_registry()
+        return self._reg
+
+    def _manager(self) -> Manager:
+        if self._mgr is None:
+            self._mgr = Manager(self._registry())
+        return self._mgr
+
+    async def act(self, context: Dict[str, Any], candidates: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Select and run an operator from the builtin registry."""
+        pick = await self._manager().act(context, candidates)
+        return {"mode": "builtin", "picked": pick}
+
+    # --- Legacy vendor stubs (no-op) ---
+    def setup(self, force: bool = False) -> Dict[str, Any]:
+        return {"ok": True, "mode": "builtin", "note": "vendor removed"}
+
+    def pretrain(self, args: Optional[List[str]] = None) -> Dict[str, Any]:
+        return {"started": False, "error": "vendor pretrain removed; use 'aios train'"}
+
+    def evaluate(self, args: Optional[List[str]] = None) -> Dict[str, Any]:
+        return {"returncode": None, "error": "vendor evaluate removed; use core HRM ops"}

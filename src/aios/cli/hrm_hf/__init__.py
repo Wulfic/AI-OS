@@ -1,9 +1,10 @@
-# uncompyle6 version 3.9.3
-# Python bytecode version base 3.12.0 (3531)
-# Decompiled from: Python 3.10.11 (tags/v3.10.11:7d4cc5a, Apr  5 2023, 00:38:17) [MSC v.1929 64 bit (AMD64)]
-# Embedded file name: C:\Users\tyler\Repos\AI-OS\src\aios\cli\hrm_hf\__init__.py
-# Compiled at: 2025-09-25 00:06:46
-# Size of source mod 2**32: 401 bytes
+"""Subpackage containing implementations for hrm_hf CLI commands.
 
-Unsupported Python version, 3.12.0, for decompilation
+Each module exposes a top-level function with the same signature as the
+Typer command in `hrm_hf_cli.py`. The CLI imports and calls these
+implementations directly; we intentionally do not re-export symbols at
+the package level to avoid import cycles.
+"""
 
+# No package-level re-exports are required.
+__all__: list[str] = []

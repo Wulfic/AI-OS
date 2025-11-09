@@ -1,0 +1,72 @@
+# Example Presidio configuration for AI-OS redaction
+# Copy to config/presidio.yaml and edit as needed
+
+# Master switch for the utility (CLI flags still control per-path behavior)
+enabled: true
+
+# NLP engine settings (spaCy)
+nlp_engine:
+  lang: en
+  model: en_core_web_lg  # consider en_core_web_sm for lighter installs
+
+# Target entities (subset). See Presidio docs for full list.
+entities:
+  - EMAIL_ADDRESS
+  - PHONE_NUMBER
+  - US_SSN
+  - CREDIT_CARD
+  - IBAN_CODE
+  - IP_ADDRESS
+  - PERSON
+  - LOCATION
+
+# Default anonymizer used when an entity doesn't have a specific rule
+default_anonymizer:
+  type: replace
+  new_value: "<PII>"
+
+# Per-entity anonymizers (overrides). Types: replace | mask | redact
+anonymizers:
+  EMAIL_ADDRESS:
+    type: replace
+    new_value: "<EMAIL>"
+  PHONE_NUMBER:
+    type: mask
+    masking_char: "*"
+    chars_to_mask: 0
+    from_end: true
+  US_SSN:
+    type: replace
+    new_value: "<SSN>"
+  CREDIT_CARD:
+    type: mask
+    masking_char: "X"
+    chars_to_mask: 12
+    from_end: true
+
+# Field-level behavior for JSON/records used in logs
+# Only fields set to redact: true will be processed when redacting logs
+fields:
+  text:
+    redact: true
+  prompt:
+    redact: true
+    entities: [EMAIL_ADDRESS, PHONE_NUMBER]
+  completion:
+    redact: true
+  sample:
+    redact: true
+  generated:
+    redact: true
+  user:
+    redact: false
+
+# Optional lightweight custom recognizers (regex-based)
+# Each recognizer: name, pattern, supported_entity, score (0-1)
+custom_recognizers: []
+
+# Performance knobs (tune for your machine)
+performance:
+  max_workers: 2
+  batch_size: 16
+  timeout_ms: 2000
