@@ -116,9 +116,14 @@ def gui(
     minimized: bool = typer.Option(False, "--minimized", help="Start with window minimized to system tray")
 ):
     """Launch the AI-OS Tkinter GUI."""
+    import time
+    gui_start = time.time()
+    
     # Ensure HF cache is configured (redundant but safe if aios.py wasn't the entry point)
     import os
     from pathlib import Path
+    
+    print(f"[GUI TIMING] Imports done: {time.time() - gui_start:.3f}s")
     
     # Only set if not already set by aios.py
     if not os.environ.get("HF_HOME"):
@@ -155,8 +160,12 @@ def gui(
         os.environ["HF_DATASETS_CACHE"] = str((_hf_cache_dir / "datasets").resolve())
         os.environ["HF_HUB_CACHE"] = str((_hf_cache_dir / "hub").resolve())
     
+    print(f"[GUI TIMING] HF cache configured: {time.time() - gui_start:.3f}s")
+    
     try:
+        print(f"[GUI TIMING] About to import aios.gui...")
         from aios.gui import run as _run_gui
+        print(f"[GUI TIMING] aios.gui imported: {time.time() - gui_start:.3f}s")
     except ImportError as e:
         print({"launched": False, "error": str(e)})
         return

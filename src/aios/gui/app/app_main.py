@@ -61,28 +61,50 @@ def run_app(app_instance: Any) -> None:
         last_time = current
     
     try:
+        # Use existing loading screen (created in __init__)
+        def update_status(text):
+            """Update loading status message."""
+            try:
+                if hasattr(app, '_loading_canvas') and app._loading_canvas:
+                    # Get the status text ID from canvas (set by update_loading_canvas)
+                    if hasattr(app._loading_canvas, '_status_text_id'):
+                        app._loading_canvas.itemconfig(app._loading_canvas._status_text_id, text=text)
+                    app.root.update_idletasks()
+            except Exception:
+                pass
+        
         # 1. Initialize resources (threads, timers, async loop)
         logger.info("Initializing resources...")
+        update_status("Initializing resources...")
         setup_resources(app, app.root, False)  # start_minimized handled elsewhere
         log_timing("Resources initialized")
         
         # 2. Initialize logging system
         logger.info("Initializing logging...")
+        update_status("Initializing logging...")
         initialize_logging(app, app._project_root)
         log_timing("Logging initialized")
         
         # 3. Initialize state management
         logger.info("Initializing state management...")
+        update_status("Initializing state management...")
         initialize_state(app, app._project_root)
         log_timing("State management initialized")
         
         # 4. Create UI structure (notebook with tabs)
         logger.info("Creating UI structure...")
+        update_status("Creating UI structure...")
         create_ui_structure(app, app.root)
+        
+        # Ensure loading screen stays on top
+        if hasattr(app, '_loading_frame') and app._loading_frame:
+            app._loading_frame.lift()
+        
         log_timing("UI structure created")
         
         # 5. Set up operation handlers (BEFORE panels - they depend on these)
         logger.info("Setting up operations...")
+        update_status("Setting up operations...")
         setup_chat_operations(app)
         setup_brain_operations(app)
         setup_goal_operations(app)
@@ -92,32 +114,57 @@ def run_app(app_instance: Any) -> None:
         app._cleanup = lambda: cleanup(app)
         app._save_state = lambda: save_state(app)
         
-        # 6. Initialize all panels (AFTER operations - they need the callbacks)
-        logger.info("Initializing panels...")
-        initialize_panels(app)
-        log_timing("Panels initialized")
-        
-        # 7. Set up event handlers
+        # 6. Set up event handlers
         logger.info("Setting up event handlers...")
+        update_status("Setting up event handlers...")
         setup_event_handlers(app)
-        setup_periodic_tasks(app)
         log_timing("Event handlers set up")
         
-        # 8. Set up system tray (optional)
+        # 7. Set up system tray (optional)
+        update_status("Setting up system tray...")
         try:
             init_tray(app)
         except Exception as e:
             logger.warning(f"Failed to set up system tray: {e}")
         log_timing("System tray initialized")
         
-        # 9. Load and restore saved state
+        # 8. Initialize all panels (with progress updates)
+        logger.info("Initializing panels...")
+        update_status("Loading panels...")
+        initialize_panels(app)
+        log_timing("Panels initialized")
+        
+        # 9. Load panel data synchronously while keeping loading screen visible
+        # This ensures all data is loaded before user can interact
+        logger.info("Loading panel data...")
+        from .panel_setup import load_all_panel_data
+        load_all_panel_data(app, update_status)
+        log_timing("Panel data loaded")
+        
+        # 10. Load and restore saved state
         logger.info("Loading saved state...")
+        update_status("Restoring saved state...")
         state = load_state(app)
         if state:
             restore_state(app, state)
         log_timing("State restored")
         
-        # 10. Configure log levels based on settings
+        # 10b. Re-apply theme after all panels are fully initialized
+        # This ensures theme is applied to all components including late-loaded ones
+        if hasattr(app, 'settings_panel') and app.settings_panel:
+            try:
+                current_theme = app.settings_panel.theme_var.get()
+                # Only re-apply if we have a valid theme (not just the default)
+                if current_theme and current_theme in ("Light Mode", "Dark Mode", "Matrix Mode", "Barbie Mode", "Halloween Mode"):
+                    logger.info(f"Re-applying theme after panel initialization: {current_theme}")
+                    app.settings_panel._apply_theme(current_theme)
+                else:
+                    logger.warning(f"Invalid or missing theme during re-application: {current_theme}")
+            except Exception as e:
+                logger.error(f"Failed to re-apply theme: {e}", exc_info=True)
+        
+        # 11. Configure log levels based on settings
+        update_status("Configuring settings...")
         debug_enabled = False
         if hasattr(app, 'settings_panel') and app.settings_panel:
             try:
@@ -128,41 +175,36 @@ def run_app(app_instance: Any) -> None:
         configure_log_levels(app, debug_enabled)
         log_timing("Log levels configured")
         
+        # 12. Setup periodic tasks
+        update_status("Starting background tasks...")
+        setup_periodic_tasks(app)
+        
         logger.info("AI-OS GUI initialized successfully")
-        
-        # 11. Finalize window display
-        logger.info("Finalizing window display...")
-        # Force window to update and render all components
-        app.root.update_idletasks()
-        log_timing("Window updated")
-        
-        # Show the window (unless starting minimized)
-        if not app._start_minimized:
-            app.root.deiconify()
-            # Maximize window for better user experience
-            try:
-                app.root.state('zoomed')  # Windows/Linux
-            except Exception:
-                try:
-                    # macOS alternative
-                    app.root.attributes('-zoomed', True)
-                except Exception:
-                    # Fallback: just show normally
-                    logger.debug("Could not maximize window, showing normal size")
-        else:
-            logger.info("Starting minimized to tray")
-        log_timing("Window displayed")
         
         total_startup = time.time() - start_time
         msg = f"[TIMING] Total startup time: {total_startup:.3f}s"
         logger.info(msg)
-        print(msg)  # Also print to console for visibility
+        print(msg)
         
-        # 12. Schedule deferred panel initialization (after window is shown)
-        # This runs data loading operations that make blocking subprocess calls
-        app.root.after(300, lambda: deferred_panel_initialization(app))
+        # Ensure all UI elements are fully rendered before removing loading screen
+        update_status("Ready!")
+        app.root.update_idletasks()
+        app.root.update()
         
-        # 13. Start main loop
+        # Remove loading screen with smooth transition
+        if hasattr(app, '_loading_frame') and app._loading_frame:
+            def _remove_loading():
+                try:
+                    app._loading_frame.destroy()
+                    # Force final update to ensure smooth transition
+                    app.root.update_idletasks()
+                except Exception as e:
+                    logger.warning(f"Error removing loading screen: {e}")
+            
+            # Schedule removal after a brief delay to ensure UI is ready
+            app.root.after(100, _remove_loading)
+        
+        # Start main event loop
         logger.info("Starting main loop...")
         app.root.mainloop()
         

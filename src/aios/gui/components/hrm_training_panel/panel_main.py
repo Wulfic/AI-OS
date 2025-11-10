@@ -101,13 +101,9 @@ class HRMTrainingPanel(ttk.LabelFrame):  # type: ignore[misc]
         initialize_epoch_tracking_display(self)
         build_memory_panels(self, self)
         
-        # Prefill from last safe batches
-        from .state_management import prefill_last_safe_batches
-        prefill_last_safe_batches(self)
-        
-        # Initial VRAM estimate
-        from .memory_estimation import update_vram_estimate
-        update_vram_estimate(self)
+        # Data loading deferred to async initialization during startup
+        # (prefill_last_safe_batches and update_vram_estimate will be called
+        #  in background thread via _load_hrm_training_panel_sync)
         
         # Bind real-time VRAM estimate updates
         from .variable_setup import _schedule_vram_update

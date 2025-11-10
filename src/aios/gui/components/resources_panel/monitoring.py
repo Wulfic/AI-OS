@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import threading
 from collections import deque
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -16,12 +17,57 @@ if TYPE_CHECKING:
     from .panel_main import ResourcesPanel
 
 
+# Global GPU stats cache to avoid blocking main thread
+_gpu_stats_cache = []
+_gpu_stats_lock = threading.Lock()
+_gpu_stats_thread = None
+_gpu_stats_stop_event = threading.Event()
+
+
+def _gpu_stats_worker():
+    """Background worker that collects GPU stats without blocking main thread."""
+    global _gpu_stats_cache
+    
+    while not _gpu_stats_stop_event.is_set():
+        try:
+            # Collect GPU stats (this may take up to 1 second)
+            gpu_stats = stats_collectors.get_gpu_stats()
+            
+            # Update cache atomically
+            with _gpu_stats_lock:
+                _gpu_stats_cache = gpu_stats
+        except Exception:
+            pass
+        
+        # Wait 1.5 seconds before next update (matches monitoring interval)
+        _gpu_stats_stop_event.wait(1.5)
+
+
+def _start_gpu_stats_worker():
+    """Start the background GPU stats collection thread."""
+    global _gpu_stats_thread
+    
+    if _gpu_stats_thread is None or not _gpu_stats_thread.is_alive():
+        _gpu_stats_stop_event.clear()
+        _gpu_stats_thread = threading.Thread(target=_gpu_stats_worker, daemon=True)
+        _gpu_stats_thread.start()
+
+
+def _get_cached_gpu_stats() -> list:
+    """Get cached GPU stats without blocking."""
+    with _gpu_stats_lock:
+        return _gpu_stats_cache.copy()
+
+
 def init_monitoring_data(panel: "ResourcesPanel") -> None:
     """Initialize data structures for historical monitoring.
     
     Args:
         panel: ResourcesPanel instance
     """
+    # Start background GPU stats collection
+    _start_gpu_stats_worker()
+    
     # Timeline options and current selection
     panel._timeline_options = {
         "1 minute": 60,
@@ -115,9 +161,9 @@ def update_monitor(panel: "ResourcesPanel") -> None:
         panel._history["disk_read"].append(disk_read)
         panel._history["disk_write"].append(disk_write)
 
-        # Update GPUs (with timeout protection to avoid blocking GUI)
+        # Update GPUs (using cached stats from background thread - NO blocking!)
         try:
-            gpu_stats = stats_collectors.get_gpu_stats()
+            gpu_stats = _get_cached_gpu_stats()
             for gpu in gpu_stats:
                 idx = gpu["index"]
                 if idx not in panel._history["gpu"]:
@@ -137,7 +183,7 @@ def update_monitor(panel: "ResourcesPanel") -> None:
                 panel._history["gpu"][idx]["temp"].append(gpu.get("temp"))
                 panel._history["gpu"][idx]["name"] = gpu.get("name", f"GPU{idx}")
         except Exception:
-            # GPU stats collection failed (nvidia-smi timeout or error) - skip this update
+            # Failed to get cached GPU stats - skip this update
             pass
 
         # Update storage usage display (only every 10th update to reduce I/O overhead)

@@ -123,8 +123,13 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
         Raises:
             RuntimeError: If Tkinter is not available in this environment
         """
+        import time
+        init_start = time.time()
+        print(f"[INIT] Starting __init__...")
+        
         # Initialize parent mixins (CliBridgeMixin, DebugMixin)
         super().__init__()
+        print(f"[INIT] Mixins initialized: {time.time() - init_start:.3f}s")
         
         if tk is None:
             raise RuntimeError("Tkinter is not available in this environment")
@@ -135,19 +140,150 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
         else:
             self.root = root
         
+        print(f"[INIT] Root window created: {time.time() - init_start:.3f}s")
+        
         self.root.title("AI-OS Control Panel")
         self._start_minimized = start_minimized
         
         # Set default window size for better initial display
         self.root.geometry("1400x900")
         
-        # Hide window during initialization to prevent blank white screen
-        self.root.withdraw()
+        # Set window icon if available
+        try:
+            icon_path = Path(__file__).parent.parent.parent.parent / "installers" / "AI-OS.ico"
+            if icon_path.exists():
+                self.root.iconbitmap(str(icon_path))
+        except Exception:
+            pass
+        
+        # Create loading screen FIRST - before any heavy initialization
+        try:
+            from tkinter import ttk
+            from PIL import Image, ImageTk
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            # Configure background color
+            self.root.configure(bg='#1e1e1e')  # Dark background
+            
+            # Create loading overlay frame that fills the entire window
+            loading_frame = tk.Frame(self.root, bg='#1e1e1e')
+            loading_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
+            
+            # Create canvas for background images - will resize with window
+            canvas = tk.Canvas(loading_frame, bg='#1e1e1e', highlightthickness=0)
+            canvas.place(relx=0, rely=0, relwidth=1, relheight=1)
+            
+            # Function to update canvas when window resizes
+            def update_loading_canvas(event=None):
+                """Redraw canvas content when window size changes."""
+                # Get actual window dimensions
+                try:
+                    w = canvas.winfo_width()
+                    h = canvas.winfo_height()
+                    if w <= 1 or h <= 1:  # Not yet rendered
+                        return
+                    
+                    # Clear canvas
+                    canvas.delete('all')
+                    
+                    # Reload and scale background image to current window size
+                    if hasattr(canvas, '_bg_image_path') and canvas._bg_image_path:
+                        try:
+                            bg_img = Image.open(canvas._bg_image_path)
+                            # Scale to FIT INSIDE window (not crop) - use min instead of max
+                            img_w, img_h = bg_img.size
+                            scale = min(w / img_w, h / img_h)  # FIT inside, not fill/crop
+                            new_w = int(img_w * scale)
+                            new_h = int(img_h * scale)
+                            bg_img = bg_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                            bg_photo = ImageTk.PhotoImage(bg_img)
+                            canvas._bg_photo = bg_photo  # Keep reference
+                            canvas.create_image(w // 2, h // 2, image=bg_photo, anchor='center', tags='bg')
+                        except Exception as e:
+                            print(f"[CANVAS] Failed to redraw background: {e}")
+                    
+                    # Semi-transparent overlay
+                    canvas.create_rectangle(0, 0, w, h, fill='black', stipple='gray50', tags='overlay')
+                    
+                    # Reload and position logo
+                    if hasattr(canvas, '_logo_image_path') and canvas._logo_image_path:
+                        try:
+                            logo_img = Image.open(canvas._logo_image_path)
+                            logo_img.thumbnail((100, 100), Image.Resampling.LANCZOS)
+                            logo_photo = ImageTk.PhotoImage(logo_img)
+                            canvas._logo_photo = logo_photo  # Keep reference
+                            logo_w, logo_h = logo_img.size
+                            canvas.create_image(20 + logo_w // 2, h - 20 - logo_h // 2,
+                                              image=logo_photo, anchor='center', tags='logo')
+                        except Exception as e:
+                            print(f"[CANVAS] Failed to redraw logo: {e}")
+                    
+                    # Text elements at very bottom (don't overlap with brain image text)
+                    # Position near bottom to avoid covering any image content
+                    loading_y = h - 80  # 80px from bottom
+                    canvas.create_text(w // 2, loading_y, text="⏳ Loading...",
+                                     font=("Arial", 16), fill='#cccccc', tags='loading')
+                    
+                    # Store status text ID for updates (right below "Loading...")
+                    status_id = canvas.create_text(w // 2, loading_y + 30, text="Starting up...",
+                                                   font=("Arial", 11), fill='#999999', tags='status')
+                    canvas._status_text_id = status_id
+                    
+                except Exception as e:
+                    print(f"[CANVAS] Error updating canvas: {e}")
+            
+            # Store image paths for reloading
+            bg_image_path = Path(__file__).parent.parent.parent.parent.parent / "AI-OS.png"
+            logo_image_path = Path(__file__).parent.parent.parent.parent.parent / "WulfNet_Designs.jpg"
+            
+            canvas._bg_image_path = bg_image_path if bg_image_path.exists() else None
+            canvas._logo_image_path = logo_image_path if logo_image_path.exists() else None
+            
+            # Bind canvas resize to update function
+            canvas.bind('<Configure>', update_loading_canvas)
+            
+            # Initial draw (will be called again on first Configure event)
+            self.root.after(50, update_loading_canvas)
+            
+            # Store references for updating during initialization
+            self._loading_frame = loading_frame
+            self._loading_canvas = canvas
+            # Note: status text ID will be set by update_loading_canvas
+            
+            # CRITICAL: Update the window to render the loading screen BEFORE showing it
+            self.root.update_idletasks()
+            self.root.update()
+            
+            # Now show the window with the loading screen visible
+            self.root.deiconify()
+            if not start_minimized:
+                try:
+                    self.root.state('zoomed')  # Windows/Linux
+                except Exception:
+                    try:
+                        self.root.attributes('-zoomed', True)  # macOS
+                    except Exception:
+                        pass
+            
+            # Force another update to ensure everything is rendered
+            self.root.update()
+            
+            print(f"[INIT] Loading screen displayed: {time.time() - init_start:.3f}s")
+            
+        except Exception as e:
+            logger.warning(f"Failed to create loading screen: {e}")
+            print(f"[INIT] Failed to create loading screen: {e}")
+            # Fall back to hiding window during init
+            self.root.withdraw()
+            self._loading_frame = None
+            self._loading_status_label = None
         
         # Determine project root
         # Navigate up from src/aios/gui/app/__init__.py to project root
         self._project_root = Path(__file__).parent.parent.parent.parent
         logger.info(f"Project root: {self._project_root}")
+        print(f"[INIT] About to call run_app: {time.time() - init_start:.3f}s")
         
         # Delegate all initialization to run_app orchestrator
         # This will:

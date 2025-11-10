@@ -71,6 +71,10 @@ def create_appearance_section(panel: "SettingsPanel", container: ttk.Frame) -> N
 
     # Theme change callback
     def _on_theme_change(*args):
+        # Don't trigger during state restoration to avoid race conditions
+        if hasattr(panel, '_restoring_state') and panel._restoring_state:
+            return
+        
         theme = panel.theme_var.get()
         panel._apply_theme(theme)
         if panel._save_state_fn:

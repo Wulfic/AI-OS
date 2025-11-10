@@ -86,12 +86,8 @@ def create_ui_structure(app: Any, root: "tk.Tk") -> None:  # type: ignore[name-d
                 except Exception:
                     pass
             elif tab_text == "Evaluation":
-                # Create evaluation panel on-demand to avoid 11s startup delay
-                try:
-                    from .panel_setup import create_evaluation_panel_on_demand
-                    create_evaluation_panel_on_demand(app)
-                except Exception:
-                    pass
+                # Panel already loaded during startup
+                pass
             elif tab_text == "Help":
                 try:
                     # ensure help panel has focus on search for quick typing

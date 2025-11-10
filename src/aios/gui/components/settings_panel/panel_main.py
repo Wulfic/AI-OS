@@ -26,6 +26,9 @@ class SettingsPanel:
         self._save_state_fn = save_state_fn
         self._chat_panel = chat_panel
         self._help_panel = help_panel
+        
+        # Flag to prevent trace callbacks during state restoration
+        self._restoring_state = False
 
         # Main container with canvas for scrolling
         main_container = ttk.Frame(parent)
@@ -151,14 +154,21 @@ class SettingsPanel:
 
     def set_state(self, state: dict[str, Any]) -> None:
         """Restore settings state from saved data."""
+        # Set flag to prevent trace callbacks during restoration
+        self._restoring_state = True
+        
         try:
             theme = state.get("theme")
             if theme in ("Light Mode", "Dark Mode", "Matrix Mode", "Barbie Mode", "Halloween Mode"):
                 self.theme_var.set(theme)
                 # Apply immediately on load
                 self._apply_theme(theme)
-        except Exception:
-            pass
+                logger.info(f"Restored and applied theme: {theme}")
+        except Exception as e:
+            logger.error(f"Failed to restore theme: {e}", exc_info=True)
+            # Ensure theme_var has a valid default value even if restore fails
+            if not self.theme_var.get() or self.theme_var.get() not in ("Light Mode", "Dark Mode", "Matrix Mode", "Barbie Mode", "Halloween Mode"):
+                self.theme_var.set("Light Mode")
         
         try:
             startup = state.get("startup_enabled")
@@ -185,3 +195,6 @@ class SettingsPanel:
                 self.minimize_to_tray_var.set(bool(minimize_to_tray))
         except Exception:
             pass
+        
+        # Clear flag after restoration is complete
+        self._restoring_state = False

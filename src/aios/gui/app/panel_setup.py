@@ -22,13 +22,9 @@ import time
 if TYPE_CHECKING:
     import tkinter as tk
 
-# Import all panel components EXCEPT EvaluationPanel (lazy loaded)
-from ..components import (
-    OutputPanel, ChatPanel, RichChatPanel, DatasetBuilderPanel, ResourcesPanel,
-    StatusBar, DebugPanel, BrainsPanel, HRMTrainingPanel,
-    DatasetDownloadPanel, SettingsPanel, MCPManagerPanel, HelpPanel
-)
-# EvaluationPanel imported lazily when needed to avoid loading heavy lm_eval deps at startup
+# Lazy imports - panels are imported only when instantiated to minimize startup time
+# This reduces initial import overhead by ~10-15 seconds
+# Components will be imported in their respective initialization functions
 
 from ..services import LogCategory
 
@@ -66,6 +62,17 @@ def initialize_panels(app: Any) -> None:
     start_time = time.time()
     last_time = start_time
     
+    def update_loading(text: str) -> None:
+        """Update loading screen if available."""
+        try:
+            if hasattr(app, '_loading_canvas') and app._loading_canvas:
+                # Get the status text ID from canvas (set by update_loading_canvas)
+                if hasattr(app._loading_canvas, '_status_text_id'):
+                    app._loading_canvas.itemconfig(app._loading_canvas._status_text_id, text=text)
+                app.root.update_idletasks()
+        except Exception:
+            pass
+    
     def log_timing(panel_name: str) -> None:
         """Log timing for each panel initialization."""
         nonlocal last_time
@@ -78,6 +85,7 @@ def initialize_panels(app: Any) -> None:
     
     # ===== DATASET PANELS =====
     # Create shared output panel first (will be in left frame)
+    update_loading("Loading Dataset Output panel...")
     try:
         import tkinter as tk
         from tkinter import scrolledtext, ttk
@@ -110,7 +118,10 @@ def initialize_panels(app: Any) -> None:
         app._dataset_output = app._append_out  # Fallback
     
     # Dataset download panel (search and download controls - will use shared output)
+    update_loading("Loading Dataset Download panel...")
     try:
+        from ..components import OutputPanel, DatasetDownloadPanel  # Lazy import
+        
         # Create bridge for streaming download progress to output panel
         def _create_download_bridge():
             queue_bridge = OutputPanel(app.root)
@@ -137,7 +148,10 @@ def initialize_panels(app: Any) -> None:
         logger.error(f"Failed to initialize dataset download panel: {e}")
     
     # Dataset builder panel (will be in right frame)
+    update_loading("Loading Dataset Builder panel...")
     try:
+        from ..components import DatasetBuilderPanel  # Lazy import
+        
         app.dataset_builder_panel = DatasetBuilderPanel(
             app._right_frame,
             run_cli=app._run_cli,
@@ -151,18 +165,25 @@ def initialize_panels(app: Any) -> None:
         logger.error(f"Failed to initialize dataset builder panel: {e}")
     
     # ===== RESOURCES PANEL =====
+    update_loading("Loading Resources panel...")
     _initialize_resources_panel(app)
     log_timing("Resources panel")
     
     # ===== DEBUG PANEL =====
+    update_loading("Loading Debug panel...")
     try:
+        from ..components import DebugPanel  # Lazy import
+        
         app.debug_panel = DebugPanel(app.debug_tab)
         log_timing("Debug panel")
     except Exception as e:
         logger.error(f"Failed to initialize debug panel: {e}")
     
     # ===== SETTINGS PANEL =====
+    update_loading("Loading Settings panel...")
     try:
+        from ..components import SettingsPanel  # Lazy import
+        
         app.settings_panel = SettingsPanel(
             app.settings_tab,
             save_state_fn=app._save_state,
@@ -178,7 +199,10 @@ def initialize_panels(app: Any) -> None:
     log_timing("Logging configuration")
     
     # ===== CHAT PANEL =====
+    update_loading("Loading Chat panel...")
     try:
+        from ..components import RichChatPanel  # Lazy import
+        
         app.chat_panel = RichChatPanel(
             app.chat_tab,
             app._on_chat_route_and_run,
@@ -195,7 +219,10 @@ def initialize_panels(app: Any) -> None:
         logger.error(f"Failed to initialize chat panel: {e}")
     
     # ===== BRAINS PANEL =====
+    update_loading("Loading Brains panel...")
     try:
+        from ..components import BrainsPanel  # Lazy import
+        
         app.brains_panel = BrainsPanel(
             app.brains_tab,
             run_cli=app._run_cli,
@@ -205,26 +232,30 @@ def initialize_panels(app: Any) -> None:
             on_goal_remove=app._on_goal_remove,
             worker_pool=app._worker_pool,
         )
-        # Defer refresh to avoid blocking GUI startup with CLI subprocess calls
         log_timing("Brains panel")
     except Exception as e:
         logger.error(f"Failed to initialize brains panel: {e}")
     
     # ===== MCP MANAGER PANEL =====
+    update_loading("Loading MCP Manager panel...")
     try:
+        from ..components import MCPManagerPanel  # Lazy import
+        
         app.mcp_panel = MCPManagerPanel(
             app.mcp_tab,
             run_cli=app._run_cli,
             append_out=app._append_out,
             save_state_fn=app._save_state,
         )
-        # Defer refresh to avoid blocking GUI startup with CLI subprocess calls
         log_timing("MCP Manager panel")
     except Exception as e:
         logger.error(f"Failed to initialize MCP panel: {e}")
     
     # ===== HRM TRAINING PANEL =====
+    update_loading("Loading HRM Training panel...")
     try:
+        from ..components import HRMTrainingPanel  # Lazy import
+        
         app.hrm_training_panel = HRMTrainingPanel(
             app.training_tab,
             run_cli=app._run_cli,
@@ -238,13 +269,29 @@ def initialize_panels(app: Any) -> None:
         logger.error(f"Failed to initialize HRM training panel: {e}")
     
     # ===== EVALUATION PANEL =====
-    # Defer evaluation panel creation completely to avoid 11s startup delay from lm_eval imports
-    # It will be created on-demand when user first switches to the Evaluation tab
-    app.evaluation_panel = None
-    log_timing("Evaluation panel (deferred)")
+    # Load evaluation panel during startup
+    update_loading("Loading Evaluation panel...")
+    try:
+        from ..components import EvaluationPanel  # Lazy import
+        
+        app.evaluation_panel = EvaluationPanel(
+            app.evaluation_tab,
+            run_cli=app._run_cli,
+            append_out=app._append_out,
+            save_state_fn=app._save_state,
+            worker_pool=app._worker_pool,
+            on_list_brains=app._on_list_brains if hasattr(app, '_on_list_brains') else None,
+        )
+        log_timing("Evaluation panel")
+    except Exception as e:
+        logger.error(f"Failed to initialize evaluation panel: {e}")
+        app.evaluation_panel = None
     
     # ===== HELP PANEL =====
+    update_loading("Loading Help panel...")
     try:
+        from ..components import HelpPanel  # Lazy import
+        
         app.help_panel = HelpPanel(app.help_tab, project_root=app._project_root)
         
         # Connect help_panel to settings panel for theme updates
@@ -256,6 +303,8 @@ def initialize_panels(app: Any) -> None:
 
     # ===== STATUS BAR =====
     try:
+        from ..components import StatusBar  # Lazy import
+        
         app.status_bar = StatusBar(app.root)
         log_timing("Status bar")
     except Exception as e:
@@ -271,59 +320,228 @@ def deferred_panel_initialization(app: Any) -> None:
     """
     Perform deferred panel initialization tasks after GUI is displayed.
     
-    This includes:
-    - Refreshing panels that make CLI subprocess calls
-    - Loading data that requires external processes
-    
-    Called asynchronously after the main window is shown to avoid blocking startup.
-    All refresh operations are submitted to worker pool to prevent GUI blocking.
+    DEPRECATED: All data now loads synchronously during startup.
+    This function is no longer called but kept for reference.
     
     Args:
         app: AiosTkApp instance with panels already created
     """
-    logger.info("Starting deferred panel initialization...")
+    pass  # All loading now happens synchronously
+
+
+def _load_chat_brains_sync(app: Any) -> None:
+    """Load chat panel brain list synchronously during startup.
     
-    # Submit all refresh operations to worker pool to prevent blocking GUI thread
-    def _refresh_chat_panel():
-        """Refresh chat panel brain list in background."""
+    This runs in a background thread. Data is loaded here, but UI updates
+    are stored for the main thread to apply later.
+    
+    Args:
+        app: AiosTkApp instance
+    """
+    try:
+        if hasattr(app, 'chat_panel') and app.chat_panel:
+            # Call on_list_brains directly (this is the slow part)
+            if app.chat_panel._on_list_brains:
+                brains = app.chat_panel._on_list_brains()
+                
+                # Store results for main thread to apply
+                # NO Tkinter calls from this thread!
+                app.chat_panel._pending_brains = brains
+                
+                logger.debug(f"Chat panel brain list loaded: {len(brains) if brains else 0} brains")
+    except Exception as e:
+        logger.warning(f"Failed to load chat panel brain list: {e}")
+
+
+def _load_brains_panel_sync(app: Any) -> None:
+    """Load brains panel data synchronously during startup.
+    
+    This runs in a background thread. Data is loaded here, but UI updates
+    are stored for the main thread to apply later.
+    
+    Args:
+        app: AiosTkApp instance
+    """
+    try:
+        if hasattr(app, 'brains_panel') and app.brains_panel:
+            # Load brains data directly (this calls CLI - the slow part)
+            from ..components.brains_panel.data_loading import refresh_brains_data, refresh_experts_data
+            
+            refresh_brains_data(app.brains_panel)
+            refresh_experts_data(app.brains_panel)
+            
+            # Store completion flag for main thread
+            # NO Tkinter calls from this thread!
+            app.brains_panel._data_loaded = True
+            
+            logger.debug(f"Brains panel data loaded from CLI")
+    except Exception as e:
+        logger.warning(f"Failed to load brains panel data: {e}")
+
+
+def _load_mcp_panel_sync(app: Any) -> None:
+    """Load MCP panel data synchronously during startup.
+    
+    This function runs in a background thread. It loads the config data
+    but schedules the UI update on the main thread.
+    
+    Args:
+        app: AiosTkApp instance
+    """
+    try:
+        if hasattr(app, 'mcp_panel') and app.mcp_panel:
+            # Load config data directly (file I/O - can be done in background)
+            servers = app.mcp_panel._load_servers_config()
+            tools = app.mcp_panel._load_tools_config()
+            
+            # Store data for main thread to apply
+            # NO Tkinter calls from this thread!
+            app.mcp_panel._pending_servers = servers
+            app.mcp_panel._pending_tools = tools
+            app.mcp_panel._data_loaded = True
+            
+            logger.debug("MCP panel data loaded")
+    except Exception as e:
+        logger.warning(f"Failed to load MCP panel data: {e}")
+
+
+def _load_resources_panel_sync(app: Any) -> None:
+    """Load resources panel data (caps and device detection) in background.
+    
+    This function runs in a background thread. It loads caps from CLI
+    and detects devices, then stores results for main thread to apply.
+    
+    Args:
+        app: AiosTkApp instance
+    """
+    try:
+        if not hasattr(app, 'resources_panel') or not app.resources_panel:
+            return
+        
+        # Load caps (CLI calls - slow)
+        caps_data = None
+        if hasattr(app, '_resources_fetch_caps_fn'):
+            try:
+                caps_data = app._resources_fetch_caps_fn()
+                logger.debug(f"Resource caps loaded: {caps_data}")
+            except Exception as e:
+                logger.warning(f"Failed to load resource caps: {e}")
+        
+        # Detect devices (torch calls - can be slow)
+        device_info = None
+        if hasattr(app, '_resources_detect_devices_fn'):
+            try:
+                device_info = app._resources_detect_devices_fn()
+                logger.debug(f"Device detection complete: {len(device_info.get('cuda_devices', []))} GPU(s)")
+            except Exception as e:
+                logger.warning(f"Device detection failed: {e}")
+        
+        # Store results for main thread to apply
+        # NO Tkinter calls from this thread!
+        app.resources_panel._pending_caps = caps_data
+        app.resources_panel._pending_devices = device_info
+        app.resources_panel._data_loaded = True
+        
+    except Exception as e:
+        logger.warning(f"Failed to load resources panel data: {e}")
+
+
+def _load_evaluation_panel_sync(app: Any) -> None:
+    """Load evaluation panel data (history database) in background.
+    
+    This function runs in a background thread. It initializes the database
+    and stores the history instance for main thread to apply.
+    
+    Args:
+        app: AiosTkApp instance
+    """
+    try:
+        if not hasattr(app, 'evaluation_panel') or not app.evaluation_panel:
+            return
+        
+        # Initialize history database (disk I/O - can be slow)
+        history_db_path = app.evaluation_panel._history_db_path
         try:
-            if hasattr(app, 'chat_panel') and app.chat_panel:
-                app.chat_panel.refresh_brain_list()
-                logger.debug("Chat panel brain list refreshed")
+            from aios.core.evaluation import EvaluationHistory
+            history = EvaluationHistory(history_db_path)
+            
+            # Store for main thread to apply
+            # NO Tkinter calls from this thread!
+            app.evaluation_panel._pending_history = history
+            app.evaluation_panel._data_loaded = True
+            
+            logger.debug("Evaluation history database initialized")
         except Exception as e:
-            logger.warning(f"Failed to refresh chat panel brain list: {e}")
+            logger.warning(f"Failed to initialize evaluation history: {e}")
+        
+    except Exception as e:
+        logger.warning(f"Failed to load evaluation panel data: {e}")
+
+
+def _load_help_panel_sync(app: Any) -> None:
+    """Load help panel data (search index) in background.
     
-    def _refresh_brains_panel():
-        """Refresh brains panel in background."""
+    This function runs in a background thread. It builds/loads the search
+    index for documentation.
+    
+    Args:
+        app: AiosTkApp instance
+    """
+    try:
+        if not hasattr(app, 'help_panel') or not app.help_panel:
+            return
+        
+        # Build search index (file I/O - can be slow)
         try:
-            if hasattr(app, 'brains_panel') and app.brains_panel:
-                app.brains_panel.refresh()
-                logger.debug("Brains panel refreshed")
+            success = app.help_panel._search_engine.build_index()
+            
+            # Store result for main thread
+            # NO Tkinter calls from this thread!
+            app.help_panel._index_loaded = success
+            app.help_panel._data_loaded = True
+            
+            logger.debug(f"Help panel search index loaded: {success}")
         except Exception as e:
-            logger.warning(f"Failed to refresh brains panel: {e}")
+            logger.warning(f"Failed to load help panel search index: {e}")
+        
+    except Exception as e:
+        logger.warning(f"Failed to load help panel data: {e}")
+
+
+def _load_hrm_training_panel_sync(app: Any) -> None:
+    """Load HRM training panel data (last safe batches, VRAM estimate) in background.
     
-    def _refresh_mcp_panel():
-        """Refresh MCP panel in background."""
+    This function runs in a background thread. It loads state and performs
+    initial VRAM estimation.
+    
+    Args:
+        app: AiosTkApp instance
+    """
+    try:
+        if not hasattr(app, 'hrm_training_panel') or not app.hrm_training_panel:
+            return
+        
+        # Prefill from last safe batches (file I/O)
         try:
-            if hasattr(app, 'mcp_panel') and app.mcp_panel:
-                app.mcp_panel.refresh()
-                logger.debug("MCP panel refreshed")
+            from ..components.hrm_training_panel.state_management import prefill_last_safe_batches
+            prefill_last_safe_batches(app.hrm_training_panel)
+            logger.debug("HRM training panel: last safe batches loaded")
         except Exception as e:
-            logger.warning(f"Failed to refresh MCP panel: {e}")
-    
-    # Submit to worker pool for async execution
-    if hasattr(app, '_worker_pool') and app._worker_pool:
-        app._worker_pool.submit(_refresh_chat_panel)
-        app._worker_pool.submit(_refresh_brains_panel)
-        app._worker_pool.submit(_refresh_mcp_panel)
-        logger.info("Deferred panel initialization submitted to worker pool")
-    else:
-        # Fallback to synchronous if worker pool not available
-        logger.warning("Worker pool not available, running deferred initialization synchronously")
-        _refresh_chat_panel()
-        _refresh_brains_panel()
-        _refresh_mcp_panel()
-        logger.info("Deferred panel initialization complete (synchronous fallback)")
+            logger.warning(f"Failed to prefill last safe batches: {e}")
+        
+        # Perform initial VRAM estimate (can be slow)
+        try:
+            from ..components.hrm_training_panel.memory_estimation import update_vram_estimate
+            update_vram_estimate(app.hrm_training_panel)
+            logger.debug("HRM training panel: VRAM estimate completed")
+        except Exception as e:
+            logger.warning(f"Failed to perform initial VRAM estimate: {e}")
+        
+        # Mark as loaded
+        app.hrm_training_panel._data_loaded = True
+        
+    except Exception as e:
+        logger.warning(f"Failed to load HRM training panel data: {e}")
 
 
 def create_evaluation_panel_on_demand(app: Any) -> None:
@@ -459,6 +677,8 @@ def _initialize_resources_panel(app: Any) -> None:
     
     # Create resources panel
     try:
+        from ..components import ResourcesPanel  # Lazy import
+        
         app.resources_panel = ResourcesPanel(
             app.resources_tab,
             cores=cores,
@@ -468,26 +688,14 @@ def _initialize_resources_panel(app: Any) -> None:
             save_state_fn=app._save_state,
             root=app.root,
         )
-        # Defer caps fetching to avoid blocking GUI startup with CLI subprocess calls
-        # This will be called asynchronously after GUI is displayed
-        app.root.after(100, lambda: app.resources_panel.set_caps(_fetch_caps()))
+        
+        # Store functions for async loading
+        app._resources_fetch_caps_fn = _fetch_caps
+        app._resources_detect_devices_fn = _detect_devices_info
+            
     except Exception as e:
         logger.error(f"Failed to initialize resources panel: {e}")
         return
-    
-    # Defer device detection to avoid blocking GUI startup with torch initialization
-    # This ensures the window appears quickly, then devices are detected
-    def _deferred_device_detection():
-        try:
-            info = _detect_devices_info()
-            if isinstance(info, dict):
-                app.resources_panel.set_detected(info)
-                logger.info(f"Device detection complete: {len(info.get('cuda_devices', []))} GPU(s) found")
-        except Exception as e:
-            logger.warning(f"Device detection failed: {e}")
-    
-    # Schedule device detection after a brief delay
-    app.root.after(200, _deferred_device_detection)
     
     # Load resources settings from config file (source of truth)
     try:
@@ -574,3 +782,286 @@ def _configure_python_logging(app: Any) -> None:
         logging.getLogger().addHandler(app._debug_log_handler)
     except Exception as e:
         logger.error(f"Failed to configure Python logging handler: {e}")
+
+
+def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
+    """Load all panel data using maximum available threads for optimal performance.
+    
+    This function loads data for all panels that require it, using the system's
+    maximum available threads to parallelize the work while keeping the loading 
+    screen visible and updating status messages. This ensures all data is ready 
+    before the user can interact with the application.
+    
+    Threads only do data loading - NO Tkinter calls. UI updates happen on main
+    thread after data loading completes.
+    
+    Args:
+        app: AiosTkApp instance with panels already created
+        update_status_fn: Function to call to update loading status message
+    """
+    import threading
+    import concurrent.futures
+    import os
+    
+    logger.info("Loading all panel data with threading...")
+    
+    # Use maximum available threads (CPU count or default to 4)
+    max_workers = os.cpu_count() or 4
+    logger.info(f"Using {max_workers} worker threads for data loading")
+    
+    # Track completion status
+    results = {
+        'chat': {'done': False, 'error': None},
+        'brains': {'done': False, 'error': None},
+        'mcp': {'done': False, 'error': None},
+        'resources': {'done': False, 'error': None},
+        'evaluation': {'done': False, 'error': None},
+        'help': {'done': False, 'error': None},
+        'hrm_training': {'done': False, 'error': None},
+    }
+    
+    # Thread functions that update results
+    def load_chat():
+        try:
+            _load_chat_brains_sync(app)
+            results['chat']['done'] = True
+        except Exception as e:
+            results['chat']['error'] = str(e)
+            logger.error(f"Error loading chat data: {e}")
+        return 'chat'
+    
+    def load_brains():
+        try:
+            _load_brains_panel_sync(app)
+            results['brains']['done'] = True
+        except Exception as e:
+            results['brains']['error'] = str(e)
+            logger.error(f"Error loading brains data: {e}")
+        return 'brains'
+    
+    def load_mcp():
+        try:
+            _load_mcp_panel_sync(app)
+            results['mcp']['done'] = True
+        except Exception as e:
+            results['mcp']['error'] = str(e)
+            logger.error(f"Error loading MCP data: {e}")
+        return 'mcp'
+    
+    def load_resources():
+        try:
+            _load_resources_panel_sync(app)
+            results['resources']['done'] = True
+        except Exception as e:
+            results['resources']['error'] = str(e)
+            logger.error(f"Error loading resources data: {e}")
+        return 'resources'
+    
+    def load_evaluation():
+        try:
+            _load_evaluation_panel_sync(app)
+            results['evaluation']['done'] = True
+        except Exception as e:
+            results['evaluation']['error'] = str(e)
+            logger.error(f"Error loading evaluation data: {e}")
+        return 'evaluation'
+    
+    def load_help():
+        try:
+            _load_help_panel_sync(app)
+            results['help']['done'] = True
+        except Exception as e:
+            results['help']['error'] = str(e)
+            logger.error(f"Error loading help data: {e}")
+        return 'help'
+    
+    def load_hrm_training():
+        try:
+            _load_hrm_training_panel_sync(app)
+            results['hrm_training']['done'] = True
+        except Exception as e:
+            results['hrm_training']['error'] = str(e)
+            logger.error(f"Error loading HRM training data: {e}")
+        return 'hrm_training'
+    
+    # Start loading with thread pool executor
+    update_status_fn("Loading data in parallel...")
+    app.root.update_idletasks()
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all tasks
+        futures = {
+            executor.submit(load_chat): 'chat',
+            executor.submit(load_brains): 'brains',
+            executor.submit(load_mcp): 'mcp',
+            executor.submit(load_resources): 'resources',
+            executor.submit(load_evaluation): 'evaluation',
+            executor.submit(load_help): 'help',
+            executor.submit(load_hrm_training): 'hrm_training',
+        }
+        
+        # Wait for completion with VERY infrequent UI updates to prevent hangs
+        completed = set()
+        import time
+        last_update = time.time()
+        
+        while len(completed) < len(futures):
+            # Check for newly completed tasks
+            for future in list(futures.keys()):
+                if future not in completed and future.done():
+                    completed.add(future)
+                    task_name = futures[future]
+                    logger.debug(f"Task '{task_name}' completed")
+            
+            # Update status based on what's still loading (only every 500ms)
+            current_time = time.time()
+            if current_time - last_update >= 0.5:  # 500ms = 2 updates/sec
+                loading_items = []
+                if not results['chat']['done']:
+                    loading_items.append("chat")
+                if not results['brains']['done']:
+                    loading_items.append("brains")
+                if not results['mcp']['done']:
+                    loading_items.append("MCP")
+                if not results['resources']['done']:
+                    loading_items.append("resources")
+                if not results['evaluation']['done']:
+                    loading_items.append("evaluation")
+                if not results['help']['done']:
+                    loading_items.append("help")
+                if not results['hrm_training']['done']:
+                    loading_items.append("training")
+                
+                if loading_items:
+                    update_status_fn(f"Loading {', '.join(loading_items)}...")
+                
+                # Only update_idletasks, not full update
+                app.root.update_idletasks()
+                last_update = current_time
+            
+            # Sleep to avoid busy-waiting and reduce CPU usage
+            time.sleep(0.1)  # 100ms sleep
+    
+    # NOW apply UI updates on main thread (after threads complete, before mainloop)
+    try:
+        # Apply chat panel updates
+        if hasattr(app, 'chat_panel') and hasattr(app.chat_panel, '_pending_brains'):
+            brains = app.chat_panel._pending_brains
+            if hasattr(app.chat_panel, 'brain_combo') and hasattr(app.chat_panel, 'brain_var'):
+                if brains:
+                    app.chat_panel.brain_combo["values"] = brains
+                    if not app.chat_panel.brain_var.get() or app.chat_panel.brain_var.get() == "<default>":
+                        app.chat_panel.brain_var.set(brains[0] if brains else "<default>")
+                else:
+                    app.chat_panel.brain_combo["values"] = ["<no brains>"]
+                    app.chat_panel.brain_var.set("<no brains>")
+            delattr(app.chat_panel, '_pending_brains')
+        
+        # Apply brains panel updates
+        if hasattr(app, 'brains_panel') and hasattr(app.brains_panel, '_data_loaded'):
+            total_experts = int(app.brains_panel.total_experts_var.get() or "0")
+            total_brains = int(app.brains_panel.brain_count_var.get() or "0")
+            if hasattr(app.brains_panel, 'status_var'):
+                app.brains_panel.status_var.set(f"{total_brains} brains, {total_experts} experts")
+            delattr(app.brains_panel, '_data_loaded')
+        
+        # Apply MCP panel updates
+        if hasattr(app, 'mcp_panel') and hasattr(app.mcp_panel, '_data_loaded'):
+            # Populate UI with loaded data
+            from ..components.mcp_manager_panel.ui_updaters import populate_servers_tree, populate_tools_tree, update_summary
+            
+            servers = getattr(app.mcp_panel, '_pending_servers', None)
+            tools = getattr(app.mcp_panel, '_pending_tools', None)
+            
+            if servers is not None:
+                populate_servers_tree(app.mcp_panel.servers_tree, servers)
+            if tools is not None:
+                category_filter = app.mcp_panel.tool_category_var.get()
+                populate_tools_tree(app.mcp_panel.tools_tree, tools, category_filter)
+            
+            # Update summary
+            if servers is not None and tools is not None:
+                update_summary(
+                    servers,
+                    tools,
+                    app.mcp_panel.servers_count_var,
+                    app.mcp_panel.servers_active_var,
+                    app.mcp_panel.tools_enabled_var,
+                )
+            
+            # Clean up
+            if hasattr(app.mcp_panel, '_pending_servers'):
+                delattr(app.mcp_panel, '_pending_servers')
+            if hasattr(app.mcp_panel, '_pending_tools'):
+                delattr(app.mcp_panel, '_pending_tools')
+            delattr(app.mcp_panel, '_data_loaded')
+        
+        # Apply resources panel updates
+        if hasattr(app, 'resources_panel') and hasattr(app.resources_panel, '_data_loaded'):
+            # Apply caps if loaded
+            caps_data = getattr(app.resources_panel, '_pending_caps', None)
+            if caps_data:
+                app.resources_panel.set_caps(caps_data)
+                logger.debug("Resource caps applied to UI")
+            
+            # Apply device detection if loaded
+            device_info = getattr(app.resources_panel, '_pending_devices', None)
+            if device_info:
+                app.resources_panel.set_detected(device_info)
+                logger.info(f"Device detection applied: {len(device_info.get('cuda_devices', []))} GPU(s) found")
+            
+            # Load resources settings from config file (source of truth)
+            try:
+                from ..components.resources_panel.config_persistence import load_resources_from_config
+                config_resources = load_resources_from_config()
+                if config_resources:
+                    app.resources_panel.set_values(config_resources)
+                    logger.info("Loaded resources settings from config/default.yaml")
+            except Exception as e:
+                logger.warning(f"Failed to load resources from config: {e}")
+            
+            # Clean up
+            if hasattr(app.resources_panel, '_pending_caps'):
+                delattr(app.resources_panel, '_pending_caps')
+            if hasattr(app.resources_panel, '_pending_devices'):
+                delattr(app.resources_panel, '_pending_devices')
+            delattr(app.resources_panel, '_data_loaded')
+        
+        # Apply evaluation panel updates
+        if hasattr(app, 'evaluation_panel') and hasattr(app.evaluation_panel, '_data_loaded'):
+            # Set history instance
+            history = getattr(app.evaluation_panel, '_pending_history', None)
+            if history:
+                app.evaluation_panel._set_history(history)
+                logger.debug("Evaluation history database initialized and set")
+            
+            # Clean up
+            if hasattr(app.evaluation_panel, '_pending_history'):
+                delattr(app.evaluation_panel, '_pending_history')
+            delattr(app.evaluation_panel, '_data_loaded')
+        
+        # Apply help panel updates
+        if hasattr(app, 'help_panel') and hasattr(app.help_panel, '_data_loaded'):
+            # Index is already loaded in background thread
+            # Just mark as complete - no UI updates needed
+            logger.debug("Help panel search index loaded and ready")
+            
+            # Clean up
+            delattr(app.help_panel, '_data_loaded')
+        
+        # Apply HRM training panel updates  
+        if hasattr(app, 'hrm_training_panel') and hasattr(app.hrm_training_panel, '_data_loaded'):
+            # Data already loaded in background thread (prefill and VRAM estimate)
+            # Just mark as complete - no UI updates needed
+            logger.debug("HRM training panel data loaded and ready")
+            
+            # Clean up
+            delattr(app.hrm_training_panel, '_data_loaded')
+    except Exception as e:
+        logger.warning(f"Error applying UI updates: {e}")
+    
+    # Final status update
+    update_status_fn("Data loading complete!")
+    app.root.update_idletasks()
+    
+    logger.info("All panel data loaded successfully")

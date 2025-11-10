@@ -65,9 +65,10 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         )
         self._current_result: Optional[EvaluationResult] = None
         
-        # Initialize History
-        history_db_path = str(Path(self._project_root) / "artifacts" / "evaluation" / "history.db")
-        self._history = EvaluationHistory(history_db_path)
+        # History will be initialized asynchronously during startup
+        # and set via _set_history() on main thread
+        self._history: Optional[EvaluationHistory] = None
+        self._history_db_path = str(Path(self._project_root) / "artifacts" / "evaluation" / "history.db")
 
         # Schedule save helper
         def _schedule_save(delay_ms: int = 400) -> None:
@@ -197,6 +198,10 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
     def _on_view_history(self) -> None:
         """View evaluation history."""
         history_management.view_history(self)
+
+    def _set_history(self, history: EvaluationHistory) -> None:
+        """Set history instance (called from main thread after async init)."""
+        self._history = history
 
     def _log_threadsafe(self, msg: str) -> None:
         """Thread-safe wrapper for logging (calls _append_out on GUI thread)."""

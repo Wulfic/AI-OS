@@ -37,16 +37,9 @@ def estimate_model_params(panel: HRMTrainingPanel) -> int:  # pyright: ignore[re
         hidden_size = int(panel.hidden_size_var.get() or 512)
         expansion = float(panel.expansion_var.get() or 2.0)
         
-        # Get vocab size from model/tokenizer if available
+        # Use default vocab size to avoid slow tokenizer loading during startup
+        # Tokenizer loading can add 15-20 seconds to GUI startup time
         vocab_size = 50257  # Default GPT-2 vocab
-        try:
-            tokenizer_path = panel.model_var.get()
-            if tokenizer_path:
-                from transformers import AutoTokenizer
-                tok = AutoTokenizer.from_pretrained(tokenizer_path, use_fast=True)
-                vocab_size = len(tok)
-        except Exception:
-            pass
         
         # Get MoE settings
         use_moe = False
@@ -599,16 +592,8 @@ def update_moe_stats_display(panel: HRMTrainingPanel) -> None:  # pyright: ignor
                 hidden_size = int(panel.hidden_size_var.get())
                 expansion = float(panel.expansion_var.get())
                 
-                # Get vocab size from tokenizer or use default
+                # Use default vocab size to avoid slow tokenizer loading
                 vocab_size = 50257  # Default GPT-2 vocab
-                try:
-                    tokenizer_path = panel.model_var.get()
-                    if tokenizer_path:
-                        from transformers import AutoTokenizer
-                        tok = AutoTokenizer.from_pretrained(tokenizer_path, use_fast=True)
-                        vocab_size = len(tok)
-                except Exception:
-                    pass
                 
                 # Get MoE settings from readonly display fields (from brain.json)
                 use_moe = False

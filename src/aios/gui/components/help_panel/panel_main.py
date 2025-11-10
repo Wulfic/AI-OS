@@ -73,26 +73,21 @@ class HelpPanel(ttk.LabelFrame):  # type: ignore[misc]
         self._debounce_after_id: Optional[str] = None
         self._loading_doc = False
         self._current_theme = "light"  # Default theme
+        self._html_frame_initialized = False  # Track if HtmlFrame has been created
         
-        # Initialize link handler (after html_view is created)
-        # Note: index will be empty initially, updated after build_index completes
-        if self.html_view is not None:
-            self._link_handler = LinkHandler(
-                self.html_view,
-                self._docs_root,
-                [],  # Empty initially, will be updated after indexing
-                self._open_doc
-            )
-        else:
-            self._link_handler = None
+        # Initialize link handler (will be set after HtmlFrame is created)
+        self._link_handler = None
         
         # Initialize TOC builder
         self._toc_builder = TOCBuilder(self.results)
         
         self._update_nav_buttons()
         
-        # Index in background
-        threading.Thread(target=self._build_index, daemon=True).start()
+        # Defer HtmlFrame creation until after mainloop starts (to avoid threading issues)
+        self.after(100, self._initialize_html_frame)
+        
+        # Index in background (after HtmlFrame is ready)
+        self.after(200, lambda: threading.Thread(target=self._build_index, daemon=True).start())
 
     def _build_ui(self) -> None:
         """Build the user interface components."""
@@ -220,7 +215,30 @@ class HelpPanel(ttk.LabelFrame):  # type: ignore[misc]
         """
         self.html_frame = ttk.Frame(parent)
         self.html_frame.pack(fill="both", expand=True)
+        # HtmlFrame will be created later in _initialize_html_frame() to avoid threading issues
         self.html_view = None
+        
+        # Show placeholder message
+        self._placeholder_label = ttk.Label(
+            self.html_frame,
+            text="Loading documentation viewer..."
+        )
+        self._placeholder_label.pack(fill="both", expand=True, padx=12, pady=12)
+
+    def _initialize_html_frame(self) -> None:
+        """Initialize the HtmlFrame widget after mainloop has started.
+        
+        This is called via after() to avoid tkinterweb threading issues that occur
+        when HtmlFrame is created before the main loop starts.
+        """
+        if self._html_frame_initialized or self.html_view is not None:
+            return
+        
+        self._html_frame_initialized = True
+        
+        # Remove placeholder
+        if hasattr(self, '_placeholder_label') and self._placeholder_label:
+            self._placeholder_label.destroy()
         
         if HtmlFrame is not None:
             try:
@@ -246,7 +264,17 @@ class HelpPanel(ttk.LabelFrame):  # type: ignore[misc]
                 self._protect_mousewheel_events()
             except Exception:
                 pass
+            
+            # Initialize link handler now that html_view is ready
+            if self.html_view is not None:
+                self._link_handler = LinkHandler(
+                    self.html_view,
+                    self._docs_root,
+                    self._search_engine.index if self._search_engine else [],
+                    self._open_doc
+                )
         else:
+            # tkinterweb not available
             ttk.Label(
                 self.html_frame,
                 text="Install tkinterweb to enable rich rendering"

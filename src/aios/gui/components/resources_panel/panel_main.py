@@ -95,10 +95,11 @@ class ResourcesPanel(ttk.LabelFrame):  # type: ignore[misc]
         # IMPORTANT: Defer first update to avoid blocking GUI startup with nvidia-smi call
         if self._root is not None:
             monitoring.init_monitoring_data(self)
-            # Schedule first update after a delay to avoid blocking startup
-            self._root.after(500, lambda: monitoring.schedule_monitor_update(self))
-            # Also schedule initial storage usage update
-            self._root.after(1000, lambda: monitoring.update_storage_usage(self))
+            # Schedule first update AFTER loading screen is removed (5 seconds delay)
+            # This prevents nvidia-smi from blocking the GUI during startup
+            self._root.after(5000, lambda: monitoring.schedule_monitor_update(self))
+            # Also schedule initial storage usage update with delay
+            self._root.after(6000, lambda: monitoring.update_storage_usage(self))
 
     # Button handlers
     
