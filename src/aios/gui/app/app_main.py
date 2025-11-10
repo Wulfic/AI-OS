@@ -63,14 +63,25 @@ def run_app(app_instance: Any) -> None:
     try:
         # Use existing loading screen (created in __init__)
         def update_status(text):
-            """Update loading status message."""
+            """Update loading status message (safe against window state changes)."""
             try:
+                # Only update if loading is still active
+                if not hasattr(app, '_loading_active') or not app._loading_active:
+                    return
+                
                 if hasattr(app, '_loading_canvas') and app._loading_canvas:
                     # Get the status text ID from canvas (set by update_loading_canvas)
                     if hasattr(app._loading_canvas, '_status_text_id'):
-                        app._loading_canvas.itemconfig(app._loading_canvas._status_text_id, text=text)
-                    app.root.update_idletasks()
+                        try:
+                            app._loading_canvas.itemconfig(app._loading_canvas._status_text_id, text=text)
+                        except Exception:
+                            # Canvas may be in bad state during window switching
+                            pass
+                    
+                    # NO update_idletasks here - causes hangs during panel creation
+                    # The canvas updates itself via Configure events
             except Exception:
+                # Silently fail - loading screen updates are not critical
                 pass
         
         # 1. Initialize resources (threads, timers, async loop)
@@ -93,7 +104,7 @@ def run_app(app_instance: Any) -> None:
         
         # 4. Create UI structure (notebook with tabs)
         logger.info("Creating UI structure...")
-        update_status("Creating UI structure...")
+        update_status("Creating interface layout...")
         create_ui_structure(app, app.root)
         
         # Ensure loading screen stays on top
@@ -104,7 +115,7 @@ def run_app(app_instance: Any) -> None:
         
         # 5. Set up operation handlers (BEFORE panels - they depend on these)
         logger.info("Setting up operations...")
-        update_status("Setting up operations...")
+        update_status("Initializing core systems...")
         setup_chat_operations(app)
         setup_brain_operations(app)
         setup_goal_operations(app)
@@ -116,12 +127,12 @@ def run_app(app_instance: Any) -> None:
         
         # 6. Set up event handlers
         logger.info("Setting up event handlers...")
-        update_status("Setting up event handlers...")
+        update_status("Connecting event handlers...")
         setup_event_handlers(app)
         log_timing("Event handlers set up")
         
         # 7. Set up system tray (optional)
-        update_status("Setting up system tray...")
+        update_status("Initializing system tray...")
         try:
             init_tray(app)
         except Exception as e:
@@ -130,20 +141,21 @@ def run_app(app_instance: Any) -> None:
         
         # 8. Initialize all panels (with progress updates)
         logger.info("Initializing panels...")
-        update_status("Loading panels...")
+        update_status("Building interface panels...")
         initialize_panels(app)
         log_timing("Panels initialized")
         
         # 9. Load panel data synchronously while keeping loading screen visible
         # This ensures all data is loaded before user can interact
         logger.info("Loading panel data...")
+        update_status("Loading application data...")
         from .panel_setup import load_all_panel_data
         load_all_panel_data(app, update_status)
         log_timing("Panel data loaded")
         
         # 10. Load and restore saved state
         logger.info("Loading saved state...")
-        update_status("Restoring saved state...")
+        update_status("Restoring your preferences...")
         state = load_state(app)
         if state:
             restore_state(app, state)
@@ -154,17 +166,25 @@ def run_app(app_instance: Any) -> None:
         if hasattr(app, 'settings_panel') and app.settings_panel:
             try:
                 current_theme = app.settings_panel.theme_var.get()
+                logger.info(f"Current theme from settings panel: '{current_theme}'")
+                
                 # Only re-apply if we have a valid theme (not just the default)
                 if current_theme and current_theme in ("Light Mode", "Dark Mode", "Matrix Mode", "Barbie Mode", "Halloween Mode"):
                     logger.info(f"Re-applying theme after panel initialization: {current_theme}")
+                    update_status(f"Applying theme: {current_theme}...")
                     app.settings_panel._apply_theme(current_theme)
+                    logger.info(f"Theme '{current_theme}' applied successfully")
                 else:
-                    logger.warning(f"Invalid or missing theme during re-application: {current_theme}")
+                    logger.warning(f"Invalid or missing theme during re-application: '{current_theme}' - applying Dark Mode as default")
+                    # Apply default dark mode if no valid theme
+                    app.settings_panel.theme_var.set("Dark Mode")
+                    app.settings_panel._apply_theme("Dark Mode")
+                    logger.info("Default Dark Mode theme applied")
             except Exception as e:
                 logger.error(f"Failed to re-apply theme: {e}", exc_info=True)
         
         # 11. Configure log levels based on settings
-        update_status("Configuring settings...")
+        update_status("Finalizing configuration...")
         debug_enabled = False
         if hasattr(app, 'settings_panel') and app.settings_panel:
             try:
@@ -195,6 +215,16 @@ def run_app(app_instance: Any) -> None:
         if hasattr(app, '_loading_frame') and app._loading_frame:
             def _remove_loading():
                 try:
+                    # Mark loading as no longer active
+                    if hasattr(app, '_loading_active'):
+                        app._loading_active = False
+                    
+                    # Unbind visibility handler
+                    try:
+                        app.root.unbind('<Visibility>')
+                    except Exception:
+                        pass
+                    
                     app._loading_frame.destroy()
                     # Force final update to ensure smooth transition
                     app.root.update_idletasks()

@@ -58,8 +58,9 @@ def initialize_panels(app: Any) -> None:
     Args:
         app: AiosTkApp instance with tabs already created
     """
+    import time as time_module
     
-    start_time = time.time()
+    start_time = time_module.time()
     last_time = start_time
     
     def update_loading(text: str) -> None:
@@ -76,7 +77,7 @@ def initialize_panels(app: Any) -> None:
     def log_timing(panel_name: str) -> None:
         """Log timing for each panel initialization."""
         nonlocal last_time
-        current = time.time()
+        current = time_module.time()
         step_duration = current - last_time
         msg = f"[PANEL TIMING] {panel_name}: {step_duration:.3f}s"
         logger.info(msg)
@@ -271,9 +272,24 @@ def initialize_panels(app: Any) -> None:
     # ===== EVALUATION PANEL =====
     # Load evaluation panel during startup
     update_loading("Loading Evaluation panel...")
+    
+    # CRITICAL: Temporarily disable canvas updates during heavy panel creation
+    # This prevents Configure events from blocking the main thread
     try:
-        from ..components import EvaluationPanel  # Lazy import
+        if hasattr(app, '_loading_canvas'):
+            app._loading_canvas.unbind('<Configure>')
+    except Exception:
+        pass
+    
+    try:
+        import time
+        eval_start = time.time()
         
+        from ..components import EvaluationPanel  # Lazy import
+        import_time = time.time() - eval_start
+        print(f"[EVAL TIMING] Import time: {import_time:.3f}s")
+        
+        panel_start = time.time()
         app.evaluation_panel = EvaluationPanel(
             app.evaluation_tab,
             run_cli=app._run_cli,
@@ -282,10 +298,20 @@ def initialize_panels(app: Any) -> None:
             worker_pool=app._worker_pool,
             on_list_brains=app._on_list_brains if hasattr(app, '_on_list_brains') else None,
         )
+        panel_create_time = time.time() - panel_start
+        print(f"[EVAL TIMING] Panel creation time: {panel_create_time:.3f}s")
+        
         log_timing("Evaluation panel")
     except Exception as e:
         logger.error(f"Failed to initialize evaluation panel: {e}")
         app.evaluation_panel = None
+    finally:
+        # Re-enable canvas updates after panel creation
+        try:
+            if hasattr(app, '_loading_canvas') and hasattr(app, '_canvas_update_handler'):
+                app._loading_canvas.bind('<Configure>', app._canvas_update_handler)
+        except Exception:
+            pass
     
     # ===== HELP PANEL =====
     update_loading("Loading Help panel...")
@@ -310,7 +336,7 @@ def initialize_panels(app: Any) -> None:
     except Exception as e:
         logger.error(f"Failed to initialize status bar: {e}")
     
-    total_time = time.time() - start_time
+    total_time = time_module.time() - start_time
     msg = f"[PANEL TIMING] Total panel initialization time: {total_time:.3f}s"
     logger.info(msg)
     print(msg)  # Also print to console for visibility
@@ -447,10 +473,11 @@ def _load_resources_panel_sync(app: Any) -> None:
 
 
 def _load_evaluation_panel_sync(app: Any) -> None:
-    """Load evaluation panel data (history database) in background.
+    """Load evaluation panel data (brains list, history database + benchmark tree) in background.
     
-    This function runs in a background thread. It initializes the database
-    and stores the history instance for main thread to apply.
+    This function runs in a background thread. It loads brains list,
+    initializes the database, prepares benchmark tree data, and stores 
+    for main thread to apply.
     
     Args:
         app: AiosTkApp instance
@@ -458,6 +485,19 @@ def _load_evaluation_panel_sync(app: Any) -> None:
     try:
         if not hasattr(app, 'evaluation_panel') or not app.evaluation_panel:
             return
+        
+        # Load brains list (subprocess call - VERY slow ~9.6s)
+        try:
+            if app.evaluation_panel._on_list_brains:
+                brains = app.evaluation_panel._on_list_brains()
+                
+                # Store results for main thread to apply
+                # NO Tkinter calls from this thread!
+                app.evaluation_panel._pending_brains = brains
+                
+                logger.debug(f"Evaluation panel brain list loaded: {len(brains) if brains else 0} brains")
+        except Exception as e:
+            logger.warning(f"Failed to load evaluation panel brain list: {e}")
         
         # Initialize history database (disk I/O - can be slow)
         history_db_path = app.evaluation_panel._history_db_path
@@ -468,11 +508,62 @@ def _load_evaluation_panel_sync(app: Any) -> None:
             # Store for main thread to apply
             # NO Tkinter calls from this thread!
             app.evaluation_panel._pending_history = history
-            app.evaluation_panel._data_loaded = True
             
             logger.debug("Evaluation history database initialized")
         except Exception as e:
             logger.warning(f"Failed to initialize evaluation history: {e}")
+        
+        # Prepare benchmark tree data (CPU-intensive - build data structure)
+        try:
+            from ..components.evaluation_panel.benchmark_data import BENCHMARKS
+            
+            # Build tree items structure without Tkinter calls
+            tree_items = {}
+            tree_structure = []  # List of (parent_id, item_id, text, values, item_info)
+            
+            for category, benchmarks in BENCHMARKS.items():
+                # Prepare category data
+                cat_id = f"cat_{category}"
+                tree_structure.append((
+                    "",  # parent (root)
+                    cat_id,
+                    "☐",  # text
+                    (category, "", ""),  # values
+                    {"type": "category", "name": category, "checked": False}
+                ))
+                tree_items[cat_id] = {"type": "category", "name": category, "checked": False}
+                
+                # Prepare benchmark data
+                for bench_name, bench_desc in benchmarks:
+                    item_id = f"bench_{category}_{bench_name}"
+                    tree_structure.append((
+                        cat_id,  # parent (category)
+                        item_id,
+                        "☐",  # text
+                        ("", bench_name, bench_desc),  # values
+                        {
+                            "type": "benchmark",
+                            "name": bench_name,
+                            "category": category,
+                            "checked": False
+                        }
+                    ))
+                    tree_items[item_id] = {
+                        "type": "benchmark",
+                        "name": bench_name,
+                        "category": category,
+                        "checked": False
+                    }
+            
+            # Store prepared data for main thread
+            app.evaluation_panel._pending_tree_structure = tree_structure
+            app.evaluation_panel._pending_tree_items = tree_items
+            
+            logger.debug(f"Prepared {len(tree_structure)} benchmark tree items")
+        except Exception as e:
+            logger.warning(f"Failed to prepare benchmark tree: {e}")
+        
+        app.evaluation_panel._data_loaded = True
         
     except Exception as e:
         logger.warning(f"Failed to load evaluation panel data: {e}")
@@ -823,7 +914,11 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
     # Thread functions that update results
     def load_chat():
         try:
+            import time
+            start = time.time()
             _load_chat_brains_sync(app)
+            duration = time.time() - start
+            print(f"[DATA LOAD] Chat brains: {duration:.3f}s")
             results['chat']['done'] = True
         except Exception as e:
             results['chat']['error'] = str(e)
@@ -832,7 +927,11 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
     
     def load_brains():
         try:
+            import time
+            start = time.time()
             _load_brains_panel_sync(app)
+            duration = time.time() - start
+            print(f"[DATA LOAD] Brains panel: {duration:.3f}s")
             results['brains']['done'] = True
         except Exception as e:
             results['brains']['error'] = str(e)
@@ -841,7 +940,11 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
     
     def load_mcp():
         try:
+            import time
+            start = time.time()
             _load_mcp_panel_sync(app)
+            duration = time.time() - start
+            print(f"[DATA LOAD] MCP panel: {duration:.3f}s")
             results['mcp']['done'] = True
         except Exception as e:
             results['mcp']['error'] = str(e)
@@ -850,7 +953,11 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
     
     def load_resources():
         try:
+            import time
+            start = time.time()
             _load_resources_panel_sync(app)
+            duration = time.time() - start
+            print(f"[DATA LOAD] Resources panel: {duration:.3f}s")
             results['resources']['done'] = True
         except Exception as e:
             results['resources']['error'] = str(e)
@@ -859,7 +966,11 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
     
     def load_evaluation():
         try:
+            import time
+            start = time.time()
             _load_evaluation_panel_sync(app)
+            duration = time.time() - start
+            print(f"[DATA LOAD] Evaluation panel: {duration:.3f}s")
             results['evaluation']['done'] = True
         except Exception as e:
             results['evaluation']['error'] = str(e)
@@ -868,7 +979,11 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
     
     def load_help():
         try:
+            import time
+            start = time.time()
             _load_help_panel_sync(app)
+            duration = time.time() - start
+            print(f"[DATA LOAD] Help panel: {duration:.3f}s")
             results['help']['done'] = True
         except Exception as e:
             results['help']['error'] = str(e)
@@ -877,7 +992,11 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
     
     def load_hrm_training():
         try:
+            import time
+            start = time.time()
             _load_hrm_training_panel_sync(app)
+            duration = time.time() - start
+            print(f"[DATA LOAD] HRM training panel: {duration:.3f}s")
             results['hrm_training']['done'] = True
         except Exception as e:
             results['hrm_training']['error'] = str(e)
@@ -904,8 +1023,16 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
         completed = set()
         import time
         last_update = time.time()
+        update_count = 0
         
         while len(completed) < len(futures):
+            # Process minimal window events to keep window responsive
+            # This prevents hanging when user switches windows
+            try:
+                app.root.update()  # Process events without forcing widget updates
+            except Exception:
+                pass
+            
             # Check for newly completed tasks
             for future in list(futures.keys()):
                 if future not in completed and future.done():
@@ -913,34 +1040,37 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
                     task_name = futures[future]
                     logger.debug(f"Task '{task_name}' completed")
             
-            # Update status based on what's still loading (only every 500ms)
+            # Update status based on what's still loading (only every 2 seconds to minimize hangs)
             current_time = time.time()
-            if current_time - last_update >= 0.5:  # 500ms = 2 updates/sec
+            if current_time - last_update >= 2.0:  # 2 seconds = very infrequent
                 loading_items = []
                 if not results['chat']['done']:
-                    loading_items.append("chat")
+                    loading_items.append("chat models")
                 if not results['brains']['done']:
-                    loading_items.append("brains")
+                    loading_items.append("brain registry")
                 if not results['mcp']['done']:
-                    loading_items.append("MCP")
+                    loading_items.append("MCP servers")
                 if not results['resources']['done']:
-                    loading_items.append("resources")
+                    loading_items.append("GPU devices")
                 if not results['evaluation']['done']:
-                    loading_items.append("evaluation")
+                    loading_items.append("benchmarks")
                 if not results['help']['done']:
-                    loading_items.append("help")
+                    loading_items.append("documentation")
                 if not results['hrm_training']['done']:
-                    loading_items.append("training")
+                    loading_items.append("training data")
                 
                 if loading_items:
-                    update_status_fn(f"Loading {', '.join(loading_items)}...")
+                    # Show first 3 items to avoid long messages
+                    display_items = loading_items[:3]
+                    if len(loading_items) > 3:
+                        update_status_fn(f"Loading {', '.join(display_items)} +{len(loading_items)-3} more...")
+                    else:
+                        update_status_fn(f"Loading {', '.join(display_items)}...")
                 
-                # Only update_idletasks, not full update
-                app.root.update_idletasks()
                 last_update = current_time
             
-            # Sleep to avoid busy-waiting and reduce CPU usage
-            time.sleep(0.1)  # 100ms sleep
+            # Sleep to avoid busy-waiting (reduced to 100ms for more responsive event processing)
+            time.sleep(0.1)
     
     # NOW apply UI updates on main thread (after threads complete, before mainloop)
     try:
@@ -1029,11 +1159,64 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
         
         # Apply evaluation panel updates
         if hasattr(app, 'evaluation_panel') and hasattr(app.evaluation_panel, '_data_loaded'):
+            # Apply brains list
+            if hasattr(app.evaluation_panel, '_pending_brains'):
+                brains = app.evaluation_panel._pending_brains
+                if hasattr(app.evaluation_panel, 'brain_combo') and hasattr(app.evaluation_panel, 'model_name_var'):
+                    if brains:
+                        app.evaluation_panel.brain_combo["values"] = brains
+                        # Set default if nothing selected
+                        current = app.evaluation_panel.model_name_var.get()
+                        if not current or current not in brains:
+                            app.evaluation_panel.model_name_var.set(brains[0])
+                        logger.debug(f"Applied {len(brains)} brains to evaluation panel")
+                    else:
+                        app.evaluation_panel.brain_combo["values"] = []
+                delattr(app.evaluation_panel, '_pending_brains')
+            
             # Set history instance
             history = getattr(app.evaluation_panel, '_pending_history', None)
             if history:
                 app.evaluation_panel._set_history(history)
                 logger.debug("Evaluation history database initialized and set")
+            
+            # Apply benchmark tree structure (fast on main thread since data is prepared)
+            if hasattr(app.evaluation_panel, '_pending_tree_structure') and \
+               hasattr(app.evaluation_panel, '_pending_tree_items'):
+                try:
+                    tree_structure = app.evaluation_panel._pending_tree_structure
+                    tree_items = app.evaluation_panel._pending_tree_items
+                    
+                    # Clear existing tree (including placeholder)
+                    app.evaluation_panel.bench_tree.delete(*app.evaluation_panel.bench_tree.get_children())
+                    
+                    # Insert prepared items (fast since data is ready)
+                    id_mapping = {}  # Map prepared IDs to actual tree IDs
+                    for parent_id, item_id, text, values, item_info in tree_structure:
+                        # Map prepared parent ID to actual tree ID
+                        actual_parent = id_mapping.get(parent_id, parent_id)
+                        
+                        # Insert into tree
+                        actual_id = app.evaluation_panel.bench_tree.insert(
+                            actual_parent, "end",
+                            text=text,
+                            values=values
+                        )
+                        
+                        # Map prepared ID to actual ID
+                        id_mapping[item_id] = actual_id
+                        
+                        # Store item info with actual ID
+                        app.evaluation_panel._tree_items[actual_id] = item_info
+                    
+                    app.evaluation_panel._tree_populated = True
+                    
+                    logger.debug(f"Populated benchmark tree with {len(tree_structure)} items")
+                    
+                    delattr(app.evaluation_panel, '_pending_tree_structure')
+                    delattr(app.evaluation_panel, '_pending_tree_items')
+                except Exception as e:
+                    logger.warning(f"Failed to populate benchmark tree: {e}")
             
             # Clean up
             if hasattr(app.evaluation_panel, '_pending_history'):

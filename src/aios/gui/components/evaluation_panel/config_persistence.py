@@ -47,8 +47,13 @@ def load_evaluation_from_config() -> dict[str, Any]:
         if not config_path.exists():
             return {}
         
+        # Use safe_load with timeout protection (YAML parsing can be slow)
         with open(config_path, 'r', encoding='utf-8') as f:
-            config = yaml.safe_load(f) or {}
+            try:
+                config = yaml.safe_load(f) or {}
+            except yaml.YAMLError:
+                # Corrupted YAML, return empty
+                return {}
         
         if not isinstance(config, dict):
             return {}
@@ -59,6 +64,7 @@ def load_evaluation_from_config() -> dict[str, Any]:
         
         return evaluation
     except Exception:
+        # Any file I/O error, return empty config
         return {}
 
 

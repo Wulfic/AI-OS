@@ -43,7 +43,7 @@ def create_appearance_section(panel: "SettingsPanel", container: ttk.Frame) -> N
     theme_label = ttk.Label(theme_row, text="Theme:", width=15, anchor="e")
     theme_label.pack(side="left", padx=(0, 10))
 
-    panel.theme_var = tk.StringVar(value="Light Mode")
+    panel.theme_var = tk.StringVar(value="Dark Mode")
     theme_combo = ttk.Combobox(
         theme_row,
         textvariable=panel.theme_var,

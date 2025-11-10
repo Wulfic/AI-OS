@@ -18,12 +18,18 @@ def apply_theme(panel: "SettingsPanel", theme: str) -> None:
         panel: The settings panel instance
         theme: The theme name to apply
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[THEME] Applying theme: {theme}")
+    
     try:
         import tkinter.ttk as ttk_style
         import platform
         
         style = ttk_style.Style()
         colors = THEME_COLORS.get(theme, THEME_COLORS["Light Mode"])
+        
+        logger.info(f"[THEME] Using color scheme: bg={colors.get('bg_dark', 'N/A')}, fg={colors.get('fg_light', 'N/A')}")
 
         if theme == "Dark Mode":
             style.theme_use(colors["theme_base"])

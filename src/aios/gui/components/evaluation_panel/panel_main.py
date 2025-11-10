@@ -38,10 +38,16 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         worker_pool: Any = None,
         on_list_brains: Optional[Callable[[], list[str]]] = None,
     ) -> None:
+        import time
+        init_start = time.time()
+        
         if tk is None or ttk is None:
             raise RuntimeError("Tkinter not available")
         super().__init__(parent, text=title)
         self.pack(fill="both", expand=True, padx=8, pady=8)
+        
+        step1 = time.time()
+        print(f"[EVAL INIT] Superclass init: {step1 - init_start:.3f}s")
 
         self._run_cli = run_cli
         self._append_out = append_out or (lambda s: None)
@@ -58,6 +64,9 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         except Exception:
             self._project_root = os.getcwd()
         
+        step2 = time.time()
+        print(f"[EVAL INIT] Basic setup: {step2 - step1:.3f}s")
+        
         # Initialize HarnessWrapper
         self._harness = HarnessWrapper(
             log_callback=self._log_threadsafe,
@@ -69,6 +78,9 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         # and set via _set_history() on main thread
         self._history: Optional[EvaluationHistory] = None
         self._history_db_path = str(Path(self._project_root) / "artifacts" / "evaluation" / "history.db")
+
+        step3 = time.time()
+        print(f"[EVAL INIT] Harness/history setup: {step3 - step2:.3f}s")
 
         # Schedule save helper
         def _schedule_save(delay_ms: int = 400) -> None:
@@ -96,6 +108,9 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         self.selected_benchmarks_var = tk.StringVar(value="")
         self.benchmark_preset_var = tk.StringVar(value="")
         
+        step4 = time.time()
+        print(f"[EVAL INIT] State variables: {step4 - step3:.3f}s")
+        
         # Load configuration defaults from config file
         config_values = load_evaluation_from_config()
         defaults = {
@@ -108,6 +123,9 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
             'check_integrity': False,
         }
         merged = merge_config_with_defaults(config_values, defaults)
+        
+        step5 = time.time()
+        print(f"[EVAL INIT] Config loading: {step5 - step4:.3f}s")
         
         # Configuration (from config file or defaults)
         self.batch_size_var = tk.StringVar(value=merged['batch_size'])
@@ -123,22 +141,59 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         # Available benchmarks by category
         self.benchmarks = BENCHMARKS
         
+        step6 = time.time()
+        print(f"[EVAL INIT] More variables: {step6 - step5:.3f}s")
+        
         # Build UI
         self._build_ui()
         
+        step7 = time.time()
+        print(f"[EVAL INIT] UI building: {step7 - step6:.3f}s")
+        
         # Auto-persist on changes
         self._setup_auto_persist()
+        
+        step8 = time.time()
+        print(f"[EVAL INIT] Auto-persist setup: {step8 - step7:.3f}s")
+        print(f"[EVAL INIT] TOTAL: {step8 - init_start:.3f}s")
 
     def _build_ui(self) -> None:
         """Build the evaluation panel UI."""
+        import time
+        
+        t0 = time.time()
         ui_builders.create_model_selection(self)
+        t1 = time.time()
+        print(f"[EVAL UI] Model selection: {t1 - t0:.3f}s")
+        
         ui_builders.create_benchmark_selection(self)
+        t2 = time.time()
+        print(f"[EVAL UI] Benchmark selection: {t2 - t1:.3f}s")
+        
         ui_builders.create_configuration_section(self)
+        t3 = time.time()
+        print(f"[EVAL UI] Configuration section: {t3 - t2:.3f}s")
+        
         ui_builders.create_advanced_options(self)
+        t4 = time.time()
+        print(f"[EVAL UI] Advanced options: {t4 - t3:.3f}s")
+        
         ui_builders.create_control_buttons(self)
+        t5 = time.time()
+        print(f"[EVAL UI] Control buttons: {t5 - t4:.3f}s")
+        
         ui_builders.create_progress_section(self)
+        t6 = time.time()
+        print(f"[EVAL UI] Progress section: {t6 - t5:.3f}s")
+        
         ui_builders.create_output_section(self)
+        t7 = time.time()
+        print(f"[EVAL UI] Output section: {t7 - t6:.3f}s")
+        
         ui_builders.create_results_section(self)
+        t8 = time.time()
+        print(f"[EVAL UI] Results section: {t8 - t7:.3f}s")
+        print(f"[EVAL UI] TOTAL UI BUILD: {t8 - t0:.3f}s")
 
     def _populate_benchmark_tree(self) -> None:
         """Populate the benchmark tree with available benchmarks."""

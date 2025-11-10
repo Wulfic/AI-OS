@@ -168,7 +168,9 @@ class SettingsPanel:
             logger.error(f"Failed to restore theme: {e}", exc_info=True)
             # Ensure theme_var has a valid default value even if restore fails
             if not self.theme_var.get() or self.theme_var.get() not in ("Light Mode", "Dark Mode", "Matrix Mode", "Barbie Mode", "Halloween Mode"):
-                self.theme_var.set("Light Mode")
+                logger.warning("No valid theme found, defaulting to Dark Mode")
+                self.theme_var.set("Dark Mode")
+                self._apply_theme("Dark Mode")
         
         try:
             startup = state.get("startup_enabled")

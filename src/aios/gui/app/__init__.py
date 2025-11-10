@@ -177,6 +177,10 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
             # Function to update canvas when window resizes
             def update_loading_canvas(event=None):
                 """Redraw canvas content when window size changes."""
+                # Skip if loading is no longer active
+                if hasattr(self, '_loading_active') and not self._loading_active:
+                    return
+                    
                 # Get actual window dimensions
                 try:
                     w = canvas.winfo_width()
@@ -191,14 +195,15 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
                     if hasattr(canvas, '_bg_image_path') and canvas._bg_image_path:
                         try:
                             bg_img = Image.open(canvas._bg_image_path)
-                            # Scale to FIT INSIDE window (not crop) - use min instead of max
+                            # Scale to FIT INSIDE window (maintain aspect ratio)
                             img_w, img_h = bg_img.size
-                            scale = min(w / img_w, h / img_h)  # FIT inside, not fill/crop
+                            scale = min(w / img_w, h / img_h)  # FIT inside, not fill
                             new_w = int(img_w * scale)
                             new_h = int(img_h * scale)
                             bg_img = bg_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
                             bg_photo = ImageTk.PhotoImage(bg_img)
                             canvas._bg_photo = bg_photo  # Keep reference
+                            # Center the image
                             canvas.create_image(w // 2, h // 2, image=bg_photo, anchor='center', tags='bg')
                         except Exception as e:
                             print(f"[CANVAS] Failed to redraw background: {e}")
@@ -240,16 +245,52 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
             canvas._bg_image_path = bg_image_path if bg_image_path.exists() else None
             canvas._logo_image_path = logo_image_path if logo_image_path.exists() else None
             
-            # Bind canvas resize to update function
-            canvas.bind('<Configure>', update_loading_canvas)
+            # Bind canvas resize - simple, no debouncing during loading
+            # Only skip updates if window is not viewable to prevent hangs
+            def _safe_canvas_update(event=None):
+                """Canvas update that checks window state to prevent hangs."""
+                try:
+                    # Skip if loading is done
+                    if hasattr(self, '_loading_active') and not self._loading_active:
+                        return
+                    
+                    # Only update if window is viewable (prevents hangs during window switching)
+                    if self.root.winfo_viewable():
+                        update_loading_canvas(event)
+                except Exception:
+                    # Silently skip if window state is invalid
+                    pass
             
-            # Initial draw (will be called again on first Configure event)
+            # Store the handler so we can disable it during heavy operations
+            self._canvas_update_handler = _safe_canvas_update
+            canvas.bind('<Configure>', _safe_canvas_update)
+            
+            # Initial draw - schedule multiple times to ensure it appears
+            self.root.after(10, update_loading_canvas)
             self.root.after(50, update_loading_canvas)
             
             # Store references for updating during initialization
             self._loading_frame = loading_frame
             self._loading_canvas = canvas
+            self._loading_active = True  # Flag to track if loading screen is active
             # Note: status text ID will be set by update_loading_canvas
+            
+            # Protect against hanging during window focus/visibility changes
+            def _on_loading_visibility(event=None):
+                """Handle visibility events during loading to prevent hanging."""
+                try:
+                    # Just log visibility changes, don't force updates
+                    if event and hasattr(event, 'state'):
+                        logger.debug(f"Loading screen visibility changed: {event.state}")
+                except Exception:
+                    pass
+            
+            # Bind visibility event (but don't do heavy work in handler)
+            try:
+                self.root.bind('<Visibility>', _on_loading_visibility)
+            except Exception:
+                pass
+
             
             # CRITICAL: Update the window to render the loading screen BEFORE showing it
             self.root.update_idletasks()
@@ -272,12 +313,10 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
             print(f"[INIT] Loading screen displayed: {time.time() - init_start:.3f}s")
             
         except Exception as e:
-            logger.warning(f"Failed to create loading screen: {e}")
-            print(f"[INIT] Failed to create loading screen: {e}")
-            # Fall back to hiding window during init
-            self.root.withdraw()
-            self._loading_frame = None
-            self._loading_status_label = None
+            # Log error but don't fall back - let it fail visibly so we can fix it
+            logger.error(f"CRITICAL: Failed to create loading screen: {e}", exc_info=True)
+            print(f"[INIT] CRITICAL ERROR creating loading screen: {e}")
+            raise  # Re-raise to make failures obvious
         
         # Determine project root
         # Navigate up from src/aios/gui/app/__init__.py to project root

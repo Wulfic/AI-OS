@@ -43,9 +43,8 @@ def create_model_selection(panel: "EvaluationPanel") -> None:
     add_tooltip(panel.refresh_brains_btn, "Refresh list of available brains from artifacts/brains folder")
     panel.refresh_brains_btn.pack(side="left", padx=(4, 0))
     
-    # Load initial brain list
-    if panel._on_list_brains:
-        panel._refresh_brains()
+    # Don't load brains here - will be loaded async after panel creation
+    # This avoids blocking the UI thread with a 9+ second subprocess call
 
 
 def create_benchmark_selection(panel: "EvaluationPanel") -> None:
@@ -122,8 +121,13 @@ def create_benchmark_selection(panel: "EvaluationPanel") -> None:
     panel.bench_tree.pack(side="left", fill="both", expand=True)
     scrollbar.pack(side="right", fill="y")
     
-    # Populate tree
-    tree_management.populate_benchmark_tree(panel)
+    # Create empty tree - will be populated async
+    panel._tree_populated = False
+    panel._tree_items = {}
+    
+    # Show "Loading benchmarks..." placeholder
+    placeholder_id = panel.bench_tree.insert("", "end", text="", values=("Loading benchmarks...", "", ""))
+    panel._tree_placeholder_id = placeholder_id
     
     # Bind click to toggle selection
     panel.bench_tree.bind("<Button-1>", lambda e: tree_management.on_benchmark_click(panel, e))

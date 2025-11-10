@@ -242,6 +242,27 @@ class HelpPanel(ttk.LabelFrame):  # type: ignore[misc]
         
         if HtmlFrame is not None:
             try:
+                # Monkey-patch tkinterweb to suppress "main thread not in main loop" errors
+                # that occur when HtmlFrame starts background downloads before app startup completes
+                try:
+                    import tkinterweb.bindings as twb
+                    original_post_event = twb.TkinterWeb.post_event
+                    
+                    def safe_post_event(self, event):
+                        """Wrap post_event to catch RuntimeError from background threads."""
+                        try:
+                            return original_post_event(self, event)
+                        except RuntimeError as e:
+                            if "main thread is not in main loop" in str(e):
+                                # Silently ignore - this happens during startup
+                                pass
+                            else:
+                                raise
+                    
+                    twb.TkinterWeb.post_event = safe_post_event
+                except Exception:
+                    pass  # If monkey-patch fails, continue anyway
+                
                 # Use on_link_click callback to handle link clicks
                 self.html_view = HtmlFrame(
                     self.html_frame,
