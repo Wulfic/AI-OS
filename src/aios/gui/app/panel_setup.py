@@ -189,7 +189,8 @@ def initialize_panels(app: Any) -> None:
             app.settings_tab,
             save_state_fn=app._save_state,
             chat_panel=None,  # Will be set after chat_panel is created
-            help_panel=None   # Will be set after help_panel is created
+            help_panel=None,  # Will be set after help_panel is created
+            debug_panel=app.debug_panel if hasattr(app, 'debug_panel') else None,  # Connect to debug panel
         )
         log_timing("Settings panel")
     except Exception as e:

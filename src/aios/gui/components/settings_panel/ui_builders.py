@@ -168,7 +168,88 @@ def create_general_settings_section(panel: "SettingsPanel", container: ttk.Frame
     )
 
 
-def create_help_section(panel: "SettingsPanel", container: ttk.Frame) -> None:
+def create_logging_section(panel: "SettingsPanel", container: ttk.Frame) -> None:
+    """Create the logging configuration section.
+    
+    Args:
+        panel: The settings panel instance
+        container: The main container frame
+    """
+    logging_frame = ttk.LabelFrame(container, text="Logging Configuration", padding=8)
+    logging_frame.pack(fill="x", pady=(0, 8))
+
+    # Logging level description
+    log_desc_label = ttk.Label(
+        logging_frame,
+        text="Configure how much detail to show in the Debug panel.\nChanges apply immediately to the current session.",
+        foreground="gray"
+    )
+    log_desc_label.pack(anchor="w", pady=(0, 10))
+
+    # Logging level selection row
+    log_level_row = ttk.Frame(logging_frame)
+    log_level_row.pack(fill="x", pady=5)
+
+    log_level_label = ttk.Label(log_level_row, text="Logging Level:", width=15, anchor="e")
+    log_level_label.pack(side="left", padx=(0, 10))
+
+    panel.log_level_var = tk.StringVar(value="Normal")
+    log_levels = ["DEBUG", "Advanced", "Normal"]
+    log_level_combo = ttk.Combobox(
+        log_level_row,
+        textvariable=panel.log_level_var,
+        values=log_levels,
+        state="readonly",
+        width=15
+    )
+    log_level_combo.pack(side="left")
+
+    add_tooltip(
+        log_level_combo,
+        "Select the logging detail level:\n\n"
+        "• Normal: Shows only essential outputs and CRITICAL errors\n"
+        "  Best for regular use - shows training progress, chat responses,\n"
+        "  and important system messages without clutter.\n\n"
+        "• Advanced: Shows Normal outputs plus INFO and WARNING messages\n"
+        "  Good for troubleshooting - includes additional diagnostics,\n"
+        "  warnings about potential issues, and detailed status updates.\n\n"
+        "• DEBUG: Shows absolutely everything\n"
+        "  For developers and deep debugging - includes all internal\n"
+        "  operations, API calls, and low-level system details.\n\n"
+        "Note: Changes apply immediately to already-running operations.\n"
+        "The setting is saved and persists across application restarts."
+    )
+
+    # Logging level change callback
+    def _on_log_level_change(*args):
+        # Don't trigger during state restoration to avoid race conditions
+        if hasattr(panel, '_restoring_state') and panel._restoring_state:
+            return
+        
+        # Apply the logging level immediately to debug panel
+        level = panel.log_level_var.get()
+        if hasattr(panel, '_apply_log_level'):
+            panel._apply_log_level(level)
+        
+        if panel._save_state_fn:
+            panel._save_state_fn()
+
+    panel.log_level_var.trace_add("write", _on_log_level_change)
+
+    # Info label explaining each level
+    level_info_text = (
+        "Normal: Essentials only  |  Advanced: +INFO & WARNING  |  DEBUG: Everything"
+    )
+    level_info_label = ttk.Label(
+        logging_frame,
+        text=level_info_text,
+        foreground="blue",
+        font=("TkDefaultFont", 8, "italic")
+    )
+    level_info_label.pack(anchor="w", pady=(5, 0))
+
+
+def create_general_settings_section(panel: "SettingsPanel", container: ttk.Frame) -> None:
     """Create the help documentation management section.
     
     Args:

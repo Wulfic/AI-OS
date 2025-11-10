@@ -21,11 +21,13 @@ class SettingsPanel:
         save_state_fn: Callable[[], None] | None = None,
         chat_panel: Any | None = None,
         help_panel: Any | None = None,
+        debug_panel: Any | None = None,
     ) -> None:
         self.parent = parent
         self._save_state_fn = save_state_fn
         self._chat_panel = chat_panel
         self._help_panel = help_panel
+        self._debug_panel = debug_panel
         
         # Flag to prevent trace callbacks during state restoration
         self._restoring_state = False
@@ -52,7 +54,8 @@ class SettingsPanel:
         ui_builders.create_general_settings_section(self, left_column)
         ui_builders.create_support_section(self, left_column)
         
-        # Right column: Help, Cache
+        # Right column: Logging, Help, Cache
+        ui_builders.create_logging_section(self, right_column)
         ui_builders.create_help_section(self, right_column)
         ui_builders.create_cache_section(self, right_column)
         
@@ -150,6 +153,7 @@ class SettingsPanel:
             "startup_enabled": self.startup_var.get(),
             "start_minimized": self.start_minimized_var.get(),
             "minimize_to_tray": self.minimize_to_tray_var.get(),
+            "log_level": self.log_level_var.get(),
         }
 
     def set_state(self, state: dict[str, Any]) -> None:
@@ -198,5 +202,34 @@ class SettingsPanel:
         except Exception:
             pass
         
+        try:
+            log_level = state.get("log_level")
+            if log_level in ("DEBUG", "Advanced", "Normal"):
+                self.log_level_var.set(log_level)
+                logger.info(f"Restored logging level: {log_level}")
+                # Apply to debug panel immediately if available
+                self._apply_log_level(log_level)
+            else:
+                # Default to Normal if not set or invalid
+                self.log_level_var.set("Normal")
+                logger.info("No valid logging level found, defaulting to Normal")
+                self._apply_log_level("Normal")
+        except Exception:
+            self.log_level_var.set("Normal")  # Default to Normal on error
+            self._apply_log_level("Normal")
+        
         # Clear flag after restoration is complete
         self._restoring_state = False
+
+    def _apply_log_level(self, level: str) -> None:
+        """Apply the logging level to the debug panel.
+        
+        Args:
+            level: One of "Normal", "Advanced", or "DEBUG"
+        """
+        if self._debug_panel and hasattr(self._debug_panel, 'set_global_log_level'):
+            try:
+                self._debug_panel.set_global_log_level(level)
+                logger.debug(f"Applied logging level to debug panel: {level}")
+            except Exception as e:
+                logger.error(f"Failed to apply logging level: {e}")

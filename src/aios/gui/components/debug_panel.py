@@ -41,26 +41,12 @@ class DebugPanel(ttk.LabelFrame):  # type: ignore[misc]
             raise RuntimeError("Tkinter not available")
         self.pack(fill="both", expand=True, padx=8, pady=8)
 
-        # Top control bar with log level dropdown and quick actions
+        # Global logging level (set from settings panel)
+        self.global_log_level = "Normal"  # Default to Normal
+        
+        # Top control bar with quick actions
         top_bar = ttk.Frame(self)
         top_bar.pack(fill="x", padx=4, pady=(4, 2))
-        
-        # Log level selector
-        ttk.Label(top_bar, text="Min Log Level:").pack(side="left", padx=(0, 4))
-        self.log_level_var = tk.StringVar(value="DEBUG")
-        log_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-        log_level_combo = ttk.Combobox(
-            top_bar,
-            textvariable=self.log_level_var,
-            values=log_levels,
-            state="readonly",
-            width=10
-        )
-        log_level_combo.pack(side="left", padx=2)
-        log_level_combo.bind("<<ComboboxSelected>>", lambda e: self._apply_filters())
-        add_tooltip(log_level_combo, "Minimum log level to display. Lower levels are filtered out.")
-        
-        ttk.Separator(top_bar, orient="vertical").pack(side="left", fill="y", padx=8)
         
         # Quick filter: Hide Dataset Logs button
         self.hide_dataset_var = tk.BooleanVar(value=False)
@@ -352,13 +338,32 @@ class DebugPanel(ttk.LabelFrame):  # type: ignore[misc]
         else:
             return 'DEBUG'
     
+    def set_global_log_level(self, level: str) -> None:
+        """Set the global logging level from settings panel.
+        
+        Args:
+            level: One of "Normal", "Advanced", or "DEBUG"
+        """
+        self.global_log_level = level
+        self._apply_filters()
+    
     def _should_display_message(self, category: str, level: str) -> bool:
         """Check if message should be displayed based on current filters."""
-        # Check log level filter
-        min_level = self._log_level_map.get(self.log_level_var.get(), logging.DEBUG)
+        # Check global log level filter (set from settings)
+        # Normal: Only CRITICAL errors + essential outputs
+        # Advanced: Normal + WARNING + INFO
+        # DEBUG: Everything
         msg_level = self._log_level_map.get(level, logging.DEBUG)
-        if msg_level < min_level:
-            return False
+        
+        if self.global_log_level == "Normal":
+            # Only show CRITICAL and essential messages (errors)
+            if msg_level < logging.ERROR:
+                return False
+        elif self.global_log_level == "Advanced":
+            # Show INFO and above (filters out DEBUG)
+            if msg_level < logging.INFO:
+                return False
+        # DEBUG shows everything (no filtering by level)
         
         # Check dataset filter
         if self.hide_dataset_var.get() and category == "dataset":
