@@ -5,9 +5,12 @@ Builds TrainingConfig from GUI state with proper device/CUDA/DDP detection.
 
 from __future__ import annotations
 from typing import TYPE_CHECKING, Any
+import logging
 
 if TYPE_CHECKING:
     from .panel_main import HRMTrainingPanel
+
+logger = logging.getLogger(__name__)
 
 
 def build_training_config(panel: HRMTrainingPanel) -> Any:
@@ -68,7 +71,7 @@ def build_training_config(panel: HRMTrainingPanel) -> Any:
     
     # Debug: Check checkbox state before building config
     auto_adjust_value = panel.auto_adjust_lr_var.get()
-    print(f"[GUI DEBUG] Building config: auto_adjust_lr checkbox state = {auto_adjust_value}")
+    logger.debug(f"Building config: auto_adjust_lr checkbox state = {auto_adjust_value}")
     
     # Get device from resources panel if available
     device = "auto"
@@ -91,13 +94,13 @@ def build_training_config(panel: HRMTrainingPanel) -> Any:
     world_size = None
     try:
         rp = getattr(panel, "_resources_panel", None)
-        print(f"[Config DEBUG] Resources panel found: {rp is not None}")
+        logger.debug(f"Resources panel found: {rp is not None}")
         if rp is not None:
             rvals = rp.get_values()
             sel_train = rvals.get("train_cuda_selected") or []
             training_mode = rvals.get("training_mode", "ddp")  # Get training mode from resources
-            print(f"[Config DEBUG] train_cuda_selected from resources: {sel_train}")
-            print(f"[Config DEBUG] training_mode from resources: {training_mode}")
+            logger.debug(f"train_cuda_selected from resources: {sel_train}")
+            logger.debug(f"training_mode from resources: {training_mode}")
             if isinstance(sel_train, list) and len(sel_train) > 0:
                 cuda_ids = ",".join(str(int(i)) for i in sel_train)
                 if len(sel_train) > 1:
@@ -109,13 +112,11 @@ def build_training_config(panel: HRMTrainingPanel) -> Any:
                         ddp = True
                         parallel_independent = False
                     world_size = len(sel_train)
-                print(f"[Config DEBUG] Multi-GPU config: cuda_ids={cuda_ids}, mode={training_mode}, ddp={ddp}, parallel={parallel_independent}, world_size={world_size}")
+                logger.debug(f"Multi-GPU config: cuda_ids={cuda_ids}, mode={training_mode}, ddp={ddp}, parallel={parallel_independent}, world_size={world_size}")
             else:
-                print(f"[Config DEBUG] No GPUs selected or invalid selection")
+                logger.debug("No GPUs selected or invalid selection")
     except Exception as e:
-        print(f"[Config DEBUG] Error getting GPU config: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Error getting GPU config: {e}", exc_info=True)
         pass
     
     # Get sys_mem_cap_pct from resources CPU util
@@ -143,7 +144,7 @@ def build_training_config(panel: HRMTrainingPanel) -> Any:
     
     # Check for incompatible DDP + ZeRO-3 configuration
     zero_stage_val = _str(panel.zero_stage_var, "none")
-    print(f"[Config DEBUG] Before ZeRO check: ddp={ddp}, world_size={world_size}, zero_stage={zero_stage_val}")
+    logger.debug(f"Before ZeRO check: ddp={ddp}, world_size={world_size}, zero_stage={zero_stage_val}")
     if ddp and world_size and world_size > 1 and zero_stage_val == "zero3":
         # DDP with multiple GPUs + ZeRO-3 is not supported - fall back to single GPU
         log(panel, "[hrm] WARNING: Multi-GPU DDP + ZeRO-3 is not supported")
@@ -153,7 +154,7 @@ def build_training_config(panel: HRMTrainingPanel) -> Any:
             cuda_ids = cuda_ids.split(',')[0]
         ddp = False
         world_size = None
-    print(f"[Config DEBUG] After ZeRO check: ddp={ddp}, world_size={world_size}, cuda_ids={cuda_ids}")
+    logger.debug(f"After ZeRO check: ddp={ddp}, world_size={world_size}, cuda_ids={cuda_ids}")
     
     # Build config
     config = TrainingConfig(

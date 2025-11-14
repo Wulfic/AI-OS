@@ -15,9 +15,13 @@ This module initializes all panel components including:
 """
 
 from __future__ import annotations
-from typing import Any, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING, Callable
+from contextlib import suppress
 import logging
 import time
+from pathlib import Path
+
+import yaml
 
 if TYPE_CHECKING:
     import tkinter as tk
@@ -27,6 +31,7 @@ if TYPE_CHECKING:
 # Components will be imported in their respective initialization functions
 
 from ..services import LogCategory
+from ..utils.resource_management import submit_background
 
 # Apply safety monkeypatches early (no-ops if not applicable)
 try:
@@ -35,6 +40,25 @@ except Exception:
     pass
 
 logger = logging.getLogger(__name__)
+
+
+def _get_debounced_save_state(app: Any, delay_ms: int = 500) -> Callable[[], None]:
+    """Return a zero-argument callback that schedules a debounced state save."""
+    schedule_fn = getattr(app, "schedule_state_save", None)
+    save_fn = getattr(app, "_save_state", None)
+
+    if callable(schedule_fn):
+        def _callback() -> None:
+            try:
+                schedule_fn(delay_ms)
+            except TypeError:
+                schedule_fn()
+        return _callback
+
+    if callable(save_fn):
+        return save_fn  # type: ignore[return-value]
+
+    return lambda: None
 
 
 def initialize_panels(app: Any) -> None:
@@ -60,17 +84,19 @@ def initialize_panels(app: Any) -> None:
     """
     import time as time_module
     
+    logger.info("Starting panel initialization")
     start_time = time_module.time()
     last_time = start_time
     
     def update_loading(text: str) -> None:
-        """Update loading screen if available."""
+        """Update loading screen if available with minimal UI blocking."""
+        logger.debug(f"Panel loading: {text}")
         try:
             if hasattr(app, '_loading_canvas') and app._loading_canvas:
-                # Get the status text ID from canvas (set by update_loading_canvas)
                 if hasattr(app._loading_canvas, '_status_text_id'):
                     app._loading_canvas.itemconfig(app._loading_canvas._status_text_id, text=text)
-                app.root.update_idletasks()
+                    # Use after_idle instead of update_idletasks to prevent blocking
+                    app.root.after_idle(lambda: None)
         except Exception:
             pass
     
@@ -81,7 +107,6 @@ def initialize_panels(app: Any) -> None:
         step_duration = current - last_time
         msg = f"[PANEL TIMING] {panel_name}: {step_duration:.3f}s"
         logger.info(msg)
-        print(msg)  # Also print to console for visibility
         last_time = current
     
     # ===== DATASET PANELS =====
@@ -106,11 +131,21 @@ def initialize_panels(app: Any) -> None:
         
         # Create output callback that writes to this widget
         def _dataset_output_callback(msg: str) -> None:
+            """Append *msg* to the shared dataset output pane on the UI thread."""
+
+            text = f"{msg}\n"
+
+            def _write() -> None:
+                try:
+                    app.dataset_output_text.insert(tk.END, text)
+                    app.dataset_output_text.see(tk.END)
+                except Exception:
+                    pass
+
             try:
-                app.dataset_output_text.insert(tk.END, msg + "\n")
-                app.dataset_output_text.see(tk.END)
+                app.post_to_ui(_write)
             except Exception:
-                pass
+                _write()
         
         app._dataset_output = _dataset_output_callback
         log_timing("Dataset output panel")
@@ -143,6 +178,7 @@ def initialize_panels(app: Any) -> None:
             app.datasets_tab,
             log_callback=app._dataset_output,  # Use shared output callback
             output_parent=None,  # Panel won't create its own output
+            worker_pool=app._worker_pool,
         )
         log_timing("Dataset download panel")
     except Exception as e:
@@ -167,7 +203,12 @@ def initialize_panels(app: Any) -> None:
     
     # ===== RESOURCES PANEL =====
     update_loading("Loading Resources panel...")
-    _initialize_resources_panel(app)
+    resources_save_cb = _get_debounced_save_state(app, delay_ms=900)
+    settings_save_cb = _get_debounced_save_state(app, delay_ms=600)
+    general_save_cb = _get_debounced_save_state(app, delay_ms=700)
+    hrm_save_cb = _get_debounced_save_state(app, delay_ms=1200)
+
+    _initialize_resources_panel(app, resources_save_cb)
     log_timing("Resources panel")
     
     # ===== DEBUG PANEL =====
@@ -187,14 +228,17 @@ def initialize_panels(app: Any) -> None:
         
         app.settings_panel = SettingsPanel(
             app.settings_tab,
-            save_state_fn=app._save_state,
+            save_state_fn=settings_save_cb,
             chat_panel=None,  # Will be set after chat_panel is created
             help_panel=None,  # Will be set after help_panel is created
             debug_panel=app.debug_panel if hasattr(app, 'debug_panel') else None,  # Connect to debug panel
+            worker_pool=app._worker_pool,
         )
         log_timing("Settings panel")
     except Exception as e:
-        logger.error(f"Failed to initialize settings panel: {e}")
+        logger.error(f"Failed to initialize settings panel: {e}", exc_info=True)
+        # Ensure app.settings_panel exists even if initialization failed
+        app.settings_panel = None
     
     # ===== LOGGING CONFIGURATION =====
     _configure_python_logging(app)
@@ -215,10 +259,11 @@ def initialize_panels(app: Any) -> None:
         )
         
         # Connect chat_panel to settings panel for theme updates
-        app.settings_panel._chat_panel = app.chat_panel
+        if hasattr(app, 'settings_panel') and app.settings_panel:
+            app.settings_panel._chat_panel = app.chat_panel
         log_timing("Chat panel")
     except Exception as e:
-        logger.error(f"Failed to initialize chat panel: {e}")
+        logger.error(f"Failed to initialize chat panel: {e}", exc_info=True)
     
     # ===== BRAINS PANEL =====
     update_loading("Loading Brains panel...")
@@ -247,7 +292,8 @@ def initialize_panels(app: Any) -> None:
             app.mcp_tab,
             run_cli=app._run_cli,
             append_out=app._append_out,
-            save_state_fn=app._save_state,
+            save_state_fn=general_save_cb,
+            post_to_ui=app.post_to_ui,
         )
         log_timing("MCP Manager panel")
     except Exception as e:
@@ -262,13 +308,15 @@ def initialize_panels(app: Any) -> None:
             app.training_tab,
             run_cli=app._run_cli,
             append_out=app._append_out,
-            save_state_fn=app._save_state,
+            save_state_fn=hrm_save_cb,
             worker_pool=app._worker_pool,
             resources_panel=app.resources_panel,
+            post_to_ui=app.post_to_ui,
         )
         log_timing("HRM Training panel")
     except Exception as e:
-        logger.error(f"Failed to initialize HRM training panel: {e}")
+        logger.error(f"Failed to initialize HRM training panel: {e}", exc_info=True)
+        app.hrm_training_panel = None
     
     # ===== EVALUATION PANEL =====
     # Load evaluation panel during startup
@@ -288,19 +336,19 @@ def initialize_panels(app: Any) -> None:
         
         from ..components import EvaluationPanel  # Lazy import
         import_time = time.time() - eval_start
-        print(f"[EVAL TIMING] Import time: {import_time:.3f}s")
+        logger.info(f"[EVAL TIMING] Import time: {import_time:.3f}s")
         
         panel_start = time.time()
         app.evaluation_panel = EvaluationPanel(
             app.evaluation_tab,
             run_cli=app._run_cli,
             append_out=app._append_out,
-            save_state_fn=app._save_state,
+            save_state_fn=general_save_cb,
             worker_pool=app._worker_pool,
             on_list_brains=app._on_list_brains if hasattr(app, '_on_list_brains') else None,
         )
         panel_create_time = time.time() - panel_start
-        print(f"[EVAL TIMING] Panel creation time: {panel_create_time:.3f}s")
+        logger.info(f"[EVAL TIMING] Panel creation time: {panel_create_time:.3f}s")
         
         log_timing("Evaluation panel")
     except Exception as e:
@@ -319,11 +367,16 @@ def initialize_panels(app: Any) -> None:
     try:
         from ..components import HelpPanel  # Lazy import
         
-        app.help_panel = HelpPanel(app.help_tab, project_root=app._project_root)
+        app.help_panel = HelpPanel(
+            app.help_tab,
+            project_root=app._project_root,
+            worker_pool=app._worker_pool,
+        )
         
-        # Connect help_panel to settings panel for theme updates
+        # Connect help_panel to settings panel for theme updates and vice versa
         if hasattr(app, 'settings_panel') and app.settings_panel:
             app.settings_panel._help_panel = app.help_panel
+            app.help_panel._settings_panel = app.settings_panel
         log_timing("Help panel")
     except Exception as e:
         logger.error(f"Failed to initialize help panel: {e}")
@@ -340,7 +393,7 @@ def initialize_panels(app: Any) -> None:
     total_time = time_module.time() - start_time
     msg = f"[PANEL TIMING] Total panel initialization time: {total_time:.3f}s"
     logger.info(msg)
-    print(msg)  # Also print to console for visibility
+    logger.info(f"Panel initialization complete: {total_time:.3f}s")
 
 
 def deferred_panel_initialization(app: Any) -> None:
@@ -441,36 +494,103 @@ def _load_resources_panel_sync(app: Any) -> None:
     Args:
         app: AiosTkApp instance
     """
+    import time
+
     try:
         if not hasattr(app, 'resources_panel') or not app.resources_panel:
             return
-        
-        # Load caps (CLI calls - slow)
-        caps_data = None
+
+        logger.debug("Resources panel data load started")
+        caps_data: dict[str, Any] = {}
+        device_info: dict[str, Any] | None = None
+        needs_device_refresh = False
+        caps_refresh_needed = True
+
         if hasattr(app, '_resources_fetch_caps_fn'):
+            logger.debug("Resource caps loading deferred to background refresh")
+        else:
+            logger.debug("Resource caps fetch function unavailable during startup; skipping immediate load")
+
+        detect_started = time.time()
+
+        cached_loader = getattr(app, '_resources_cached_devices_fn', None)
+        if callable(cached_loader):
             try:
-                caps_data = app._resources_fetch_caps_fn()
-                logger.debug(f"Resource caps loaded: {caps_data}")
+                cached = cached_loader() or {}
+                if cached:
+                    gpu_count = len(cached.get('cuda_devices', [])) if isinstance(cached, dict) else 0
+                    logger.debug(
+                        "Cached device info loaded in %.3fs: %d GPU(s)",
+                        time.time() - detect_started,
+                        gpu_count,
+                    )
+                    device_info = dict(cached)
+                    needs_device_refresh = True  # always refresh cached data in background
+                else:
+                    logger.debug(
+                        "No cached device info available after %.3fs",
+                        time.time() - detect_started,
+                    )
+                    device_info = {}
+                    needs_device_refresh = True
             except Exception as e:
-                logger.warning(f"Failed to load resource caps: {e}")
-        
-        # Detect devices (torch calls - can be slow)
-        device_info = None
-        if hasattr(app, '_resources_detect_devices_fn'):
-            try:
-                device_info = app._resources_detect_devices_fn()
-                logger.debug(f"Device detection complete: {len(device_info.get('cuda_devices', []))} GPU(s)")
-            except Exception as e:
-                logger.warning(f"Device detection failed: {e}")
-        
+                logger.warning("Failed to load cached device info: %s", e, exc_info=True)
+                device_info = {}
+                needs_device_refresh = True
+        else:
+            logger.debug("Cached device loader unavailable; scheduling fresh detection")
+            device_info = {}
+            needs_device_refresh = True
+
         # Store results for main thread to apply
         # NO Tkinter calls from this thread!
-        app.resources_panel._pending_caps = caps_data
-        app.resources_panel._pending_devices = device_info
-        app.resources_panel._data_loaded = True
+        pending_caps: dict[str, Any] = dict(caps_data)
+        if caps_refresh_needed:
+            pending_caps.setdefault('_needs_refresh', True)
+        app.resources_panel._pending_caps = pending_caps
+        if needs_device_refresh:
+            if not isinstance(device_info, dict):
+                device_info = {}
+            device_info.setdefault('_needs_refresh', True)
+        app.resources_panel._pending_devices = device_info if isinstance(device_info, dict) else {}
+    except Exception as e:
+        logger.warning("Failed to load resources panel data: %s", e, exc_info=True)
+    finally:
+        # Ensure UI knows loading completed even if partial data
+        try:
+            if hasattr(app, 'resources_panel') and app.resources_panel:
+                app.resources_panel._data_loaded = True
+        except Exception:
+            logger.debug("Unable to mark resources panel as loaded", exc_info=True)
+
+
+def _load_settings_panel_sync(app: Any) -> None:
+    """Load settings panel config values from config file.
+    
+    This loads settings from config/default.yaml so that config values
+    take precedence over hardcoded defaults.
+    
+    Args:
+        app: AiosTkApp instance
+    """
+    try:
+        if not hasattr(app, 'settings_panel') or not app.settings_panel:
+            logger.debug("Settings panel not available, skipping config load")
+            return
+        
+        from ..components.settings_panel.config_persistence import load_settings_from_config
+        settings = load_settings_from_config()
+        
+        if not settings:
+            logger.debug("No settings found in config file")
+            return
+        
+        # Store loaded settings for main thread to apply
+        app.settings_panel._pending_config = settings
+        logger.info(f"Loaded settings from config: {settings}")
         
     except Exception as e:
-        logger.warning(f"Failed to load resources panel data: {e}")
+        logger.warning(f"Failed to load settings from config: {e}", exc_info=True)
 
 
 def _load_evaluation_panel_sync(app: Any) -> None:
@@ -665,46 +785,101 @@ def create_evaluation_panel_on_demand(app: Any) -> None:
         logger.error(f"Failed to create evaluation panel: {e}", exc_info=True)
 
 
-def _initialize_resources_panel(app: Any) -> None:
+def _initialize_resources_panel(app: Any, save_state_cb: Callable[[], None] | None = None) -> None:
     """Initialize Resources panel with device detection."""
     import os
     
+    logger.info("Initializing Resources panel")
+    
     # Detect CPU cores
     cores = os.cpu_count() or 4
+    logger.debug(f"Detected {cores} CPU cores")
     
-    # Device detection function
-    def _detect_devices_info() -> dict:
-        # Devices command not yet implemented - use default device detection
+    project_root_value = getattr(app, "_project_root", None)
+    try:
+        project_root_path = Path(project_root_value) if project_root_value else Path(__file__).resolve().parents[3]
+    except Exception:
+        project_root_path = Path(__file__).resolve().parents[3]
+
+    from ..components.resources_panel import device_cache
+
+    cache_max_age_seconds = 12 * 3600
+
+    def _perform_device_detection() -> dict:
+        import time as _time
+
+        detection_result: dict[str, Any] = {
+            "cuda_available": False,
+            "cuda_devices": [],
+            "nvidia_smi_devices": [],
+            "detected_at": _time.time(),
+            "source": "torch",
+        }
+
         try:
             import torch
+
             cuda_available = torch.cuda.is_available() if hasattr(torch, "cuda") else False
-            cuda_devices = []
-            
+            detection_result["cuda_available"] = bool(cuda_available)
+            cuda_devices: list[dict[str, Any]] = []
+
             if cuda_available:
+                logger.debug("CUDA is available, enumerating devices")
                 try:
                     device_count = torch.cuda.device_count()
+                    logger.info(f"Found {device_count} CUDA device(s)")
                     for i in range(device_count):
                         try:
                             name = torch.cuda.get_device_name(i)
                             props = torch.cuda.get_device_properties(i)
-                            total_mem_mb = props.total_memory // (1024 * 1024)
+                            total_mem_mb = int(props.total_memory // (1024 * 1024))
                             cuda_devices.append({
                                 "id": i,
                                 "name": name,
                                 "total_mem_mb": total_mem_mb,
                             })
-                        except Exception:
+                            logger.debug(f"CUDA device {i}: {name} ({total_mem_mb} MB)")
+                        except Exception as exc:
+                            logger.warning(f"Failed to get info for CUDA device {i}: {exc}")
                             cuda_devices.append({"id": i, "name": f"CUDA Device {i}", "total_mem_mb": 0})
-                except Exception:
-                    pass
-            
-            return {
-                "cuda_available": cuda_available,
-                "cuda_devices": cuda_devices,
-                "nvidia_smi_devices": cuda_devices,  # Same for now
-            }
+                except Exception as exc:
+                    logger.error(f"Failed to enumerate CUDA devices: {exc}")
+            else:
+                logger.info("CUDA is not available on this system")
+
+            detection_result["cuda_devices"] = cuda_devices
+            detection_result["nvidia_smi_devices"] = list(cuda_devices)
+        except Exception as exc:
+            logger.error(f"Device detection failed: {exc}", exc_info=True)
+
+        return detection_result
+
+    def _load_cached_devices() -> dict | None:
+        try:
+            return device_cache.load_device_cache(project_root_path, max_age_seconds=cache_max_age_seconds)
         except Exception:
-            return {"cuda_available": False, "cuda_devices": [], "nvidia_smi_devices": []}
+            logger.debug("Failed to load cached CUDA device info", exc_info=True)
+            return None
+
+    def _detect_devices_info(force_refresh: bool = False) -> dict:
+        if not force_refresh:
+            cached = _load_cached_devices()
+            if cached:
+                age = cached.get("_cache_age_seconds")
+                if isinstance(age, (int, float)):
+                    logger.info("Using cached CUDA device info (age %.1fs)", age)
+                else:
+                    logger.info("Using cached CUDA device info")
+                cached.setdefault("source", "cache")
+                return cached
+
+        fresh_info = _perform_device_detection()
+        fresh_info["_from_cache"] = False
+        try:
+            device_cache.save_device_cache(project_root_path, fresh_info)
+        except Exception:
+            logger.debug("Failed to persist CUDA detection cache", exc_info=True)
+        return fresh_info
     
     # Apply resource caps function
     def _apply_caps(dataset_cap_gb, model_cap_gb, per_brain_cap_gb) -> dict:
@@ -734,58 +909,96 @@ def _initialize_resources_panel(app: Any) -> None:
     
     # Fetch current caps function
     def _fetch_caps() -> dict:
-        data = {}
+        """Fetch current storage caps without invoking the CLI."""
+
+        start_time = time.perf_counter()
+        dataset_duration = 0.0
+        config_duration = 0.0
+        data: dict[str, float] = {}
+
         try:
-            ds = app._parse_cli_dict(app._run_cli(["datasets-stats"]) or "{}")
-            if isinstance(ds, dict):
-                cap = ds.get("cap_gb")
-                if isinstance(cap, (int, float)):
-                    data["dataset_cap_gb"] = float(cap)
-        except Exception:
-            pass
+            dataset_start = time.perf_counter()
+            from aios.data.datasets import datasets_storage_cap_gb
+
+            cap_val = datasets_storage_cap_gb()
+            dataset_duration = time.perf_counter() - dataset_start
+            if isinstance(cap_val, (int, float)):
+                data["dataset_cap_gb"] = float(cap_val)
+        except Exception as exc:
+            dataset_duration = time.perf_counter() - dataset_start
+            logger.debug("Dataset cap lookup failed: %s", exc, exc_info=True)
+
         try:
-            cfg = app._parse_cli_dict(app._run_cli(["brains", "config-show"]) or "{}")
-            brains = cfg.get("brains") if isinstance(cfg, dict) else {}
-            if isinstance(brains, dict):
-                mg = brains.get("storage_limit_gb")
-                if not isinstance(mg, (int, float)):
-                    mb = brains.get("storage_limit_mb")
-                    if isinstance(mb, (int, float)):
-                        mg = float(mb) / 1024.0
-                if isinstance(mg, (int, float)):
-                    data["model_cap_gb"] = float(mg)
-                tovr = brains.get("trainer_overrides") or {}
-                if isinstance(tovr, dict):
-                    pbg = tovr.get("width_storage_limit_gb")
-                    if not isinstance(pbg, (int, float)):
-                        pbm = tovr.get("width_storage_limit_mb")
-                        if isinstance(pbm, (int, float)):
-                            pbg = float(pbm) / 1024.0
-                    if isinstance(pbg, (int, float)):
-                        data["per_brain_cap_gb"] = float(pbg)
-        except Exception:
-            pass
+            config_start = time.perf_counter()
+            cfg_path = Path("config/default.yaml")
+            if cfg_path.exists():
+                with cfg_path.open("r", encoding="utf-8") as fh:
+                    cfg = yaml.safe_load(fh) or {}
+                brains_cfg = cfg.get("brains") if isinstance(cfg, dict) else {}
+                if isinstance(brains_cfg, dict):
+                    global_cap = brains_cfg.get("storage_limit_gb")
+                    if not isinstance(global_cap, (int, float)):
+                        cap_mb = brains_cfg.get("storage_limit_mb")
+                        if isinstance(cap_mb, (int, float)):
+                            global_cap = float(cap_mb) / 1024.0
+                    if isinstance(global_cap, (int, float)):
+                        data["model_cap_gb"] = float(global_cap)
+
+                    overrides = brains_cfg.get("trainer_overrides") or {}
+                    if isinstance(overrides, dict):
+                        per_brain = overrides.get("width_storage_limit_gb")
+                        if not isinstance(per_brain, (int, float)):
+                            per_brain_mb = overrides.get("width_storage_limit_mb")
+                            if isinstance(per_brain_mb, (int, float)):
+                                per_brain = float(per_brain_mb) / 1024.0
+                        if isinstance(per_brain, (int, float)):
+                            data["per_brain_cap_gb"] = float(per_brain)
+            config_duration = time.perf_counter() - config_start
+        except Exception as exc:
+            config_duration = time.perf_counter() - config_start
+            logger.debug("Brains config parse failed: %s", exc, exc_info=True)
+
+        if logger.isEnabledFor(logging.DEBUG):
+            total_ms = (time.perf_counter() - start_time) * 1000
+            dataset_ms = dataset_duration * 1000
+            config_ms = config_duration * 1000
+            logger.debug(
+                "Fetched storage caps without CLI in %.1f ms (dataset %.1f ms, config %.1f ms)",
+                total_ms,
+                dataset_ms,
+                config_ms,
+            )
+
         return data
     
     # Create resources panel
     try:
         from ..components import ResourcesPanel  # Lazy import
         
+        logger.debug("Creating ResourcesPanel instance")
+        save_state_fn = save_state_cb or getattr(app, "_save_state", None)
+
         app.resources_panel = ResourcesPanel(
             app.resources_tab,
             cores=cores,
             detect_fn=_detect_devices_info,
             apply_caps_fn=_apply_caps,
             fetch_caps_fn=_fetch_caps,
-            save_state_fn=app._save_state,
+            save_state_fn=save_state_fn,
             root=app.root,
+            worker_pool=app._worker_pool,
         )
         
         # Store functions for async loading
         app._resources_fetch_caps_fn = _fetch_caps
         app._resources_detect_devices_fn = _detect_devices_info
+        app._resources_cached_devices_fn = _load_cached_devices
+        app._resources_device_refresh_submitted = False
+        app._resources_caps_refresh_submitted = False
+        logger.info("Resources panel created successfully")
             
     except Exception as e:
+        logger.error(f"Failed to initialize resources panel: {e}", exc_info=True)
         logger.error(f"Failed to initialize resources panel: {e}")
         return
     
@@ -807,29 +1020,42 @@ def _configure_python_logging(app: Any) -> None:
     
     # Register debug panel as handler for all log categories
     try:
+        def _register(category: LogCategory, category_name: str | None = None) -> None:
+            target_name = category_name or category.value
+
+            def _handler(message: str, level: str | None = None, _cat=target_name) -> None:
+                if not hasattr(app, 'debug_panel') or not app.debug_panel:
+                    return
+                try:
+                    app.post_to_ui(app.debug_panel.write, message, _cat, level)
+                except Exception:
+                    try:
+                        app.debug_panel.write(message, _cat, level)
+                    except Exception:
+                        pass
+
+            app._log_router.register_handler(category, _handler)
+
         for category in LogCategory:
-            if category != LogCategory.DATASET:
-                app._log_router.register_handler(
-                    category,
-                    lambda msg, lvl=None, cat=category: app.debug_panel.write(msg, cat.value, lvl)
-                )
+            if category == LogCategory.DATASET:
+                _register(category, "dataset")
             else:
-                # Dataset logs route to debug panel with "dataset" category
-                app._log_router.register_handler(
-                    category,
-                    lambda msg, lvl=None: app.debug_panel.write(msg, "dataset", lvl)
-                )
+                _register(category)
     except Exception as e:
         logger.error(f"Failed to register log handlers: {e}")
     
     # Bridge Python logging to Debug tab
     try:
+        import threading
+
         class _TkDebugHandler(logging.Handler):
-            def __init__(self, root: tk.Tk, log_router, err_cb):
+            def __init__(self, root: tk.Tk, log_router, err_cb, dispatcher):
                 super().__init__()
                 self._root = root
                 self._log_router = log_router
                 self._err = err_cb
+                self._dispatcher = dispatcher
+                self._ui_thread_id = threading.get_ident()
                 self.setFormatter(logging.Formatter(
                     "%(asctime)s | %(levelname)s | %(name)s | %(filename)s:%(lineno)d | %(message)s"
                 ))
@@ -854,26 +1080,384 @@ def _configure_python_logging(app: Any) -> None:
                 else:
                     category = LogCategory.DEBUG
                 
-                def _do_write() -> None:
-                    try:
-                        self._log_router.log(msg, category, level_name)
-                        if record.levelno >= logging.ERROR:
-                            exc_text = getattr(record, "exc_text", None)
-                            self._err(exc_text or msg)
-                    except Exception:
-                        pass
-                
                 try:
-                    self._root.after(0, _do_write)
+                    self._log_router.log(msg, category, level_name)
                 except Exception:
-                    _do_write()
+                    return
+
+                if record.levelno >= logging.ERROR:
+                    exc_text = getattr(record, "exc_text", None)
+                    self._dispatch_error(exc_text or msg)
+
+            def _dispatch_error(self, message: str) -> None:
+                if self._err is None:
+                    return
+                try:
+                    if self._dispatcher is not None:
+                        self._dispatcher.dispatch(self._err, message)
+                        return
+                except Exception:
+                    pass
+
+                try:
+                    self._root.after(0, lambda: self._err(message))
+                except Exception:
+                    if threading.get_ident() == self._ui_thread_id:
+                        try:
+                            self._err(message)
+                        except Exception:
+                            pass
         
-        app._debug_log_handler = _TkDebugHandler(app.root, app._log_router, app.debug_panel.set_error)
+        app._debug_log_handler = _TkDebugHandler(app.root, app._log_router, app.debug_panel.set_error, getattr(app, '_ui_dispatcher', None))
         app._debug_log_handler.setLevel(logging.DEBUG)
         logging.getLogger("aios").addHandler(app._debug_log_handler)
         logging.getLogger().addHandler(app._debug_log_handler)
     except Exception as e:
         logger.error(f"Failed to configure Python logging handler: {e}")
+
+
+def _apply_loaded_panel_data(app: Any) -> None:
+    """Apply any panel data that finished loading in background threads."""
+    start_total = time.perf_counter()
+
+    def _log_duration(label: str, start_marker: float) -> None:
+        """Emit timing logs for sections that risk blocking the UI."""
+        elapsed_ms = (time.perf_counter() - start_marker) * 1000.0
+        if elapsed_ms >= 220.0:
+            logger.warning("UI apply '%s' took %.1f ms", label, elapsed_ms)
+        elif elapsed_ms >= 140.0:
+            logger.info("UI apply '%s' took %.1f ms", label, elapsed_ms)
+
+    try:
+        section_start = time.perf_counter()
+        # Apply any queued brains panel updates that were scheduled before Tk mainloop started
+        if hasattr(app, 'brains_panel') and hasattr(app.brains_panel, '_startup_callbacks'):
+            callbacks = getattr(app.brains_panel, '_startup_callbacks') or []
+            for cb in list(callbacks):
+                try:
+                    cb()
+                except Exception as cb_err:
+                    logger.warning(f"Failed to apply queued brains panel update: {cb_err}")
+            try:
+                delattr(app.brains_panel, '_startup_callbacks')
+            except Exception:
+                pass
+        _log_duration("brains panel startup callbacks", section_start)
+
+        section_start = time.perf_counter()
+        # Apply chat panel updates
+        if hasattr(app, 'chat_panel') and hasattr(app.chat_panel, '_pending_brains'):
+            brains = app.chat_panel._pending_brains
+            if hasattr(app.chat_panel, 'brain_combo') and hasattr(app.chat_panel, 'brain_var'):
+                if brains:
+                    app.chat_panel.brain_combo["values"] = brains
+                    if not app.chat_panel.brain_var.get() or app.chat_panel.brain_var.get() == "<default>":
+                        app.chat_panel.brain_var.set(brains[0] if brains else "<default>")
+                else:
+                    app.chat_panel.brain_combo["values"] = ["<no brains>"]
+                    app.chat_panel.brain_var.set("<no brains>")
+            delattr(app.chat_panel, '_pending_brains')
+        _log_duration("chat panel apply", section_start)
+
+        section_start = time.perf_counter()
+        # Apply brains panel updates
+        if hasattr(app, 'brains_panel') and hasattr(app.brains_panel, '_data_loaded'):
+            total_experts = int(app.brains_panel.total_experts_var.get() or "0")
+            total_brains = int(app.brains_panel.brain_count_var.get() or "0")
+            if hasattr(app.brains_panel, 'status_var'):
+                app.brains_panel.status_var.set(f"{total_brains} brains, {total_experts} experts")
+            with suppress(AttributeError):
+                delattr(app.brains_panel, '_data_loaded')
+        _log_duration("brains panel apply", section_start)
+
+        section_start = time.perf_counter()
+        # Apply MCP panel updates
+        if hasattr(app, 'mcp_panel') and hasattr(app.mcp_panel, '_data_loaded'):
+            # Populate UI with loaded data
+            from ..components.mcp_manager_panel.ui_updaters import populate_servers_tree, populate_tools_tree, update_summary
+
+            servers = getattr(app.mcp_panel, '_pending_servers', None)
+            tools = getattr(app.mcp_panel, '_pending_tools', None)
+
+            if servers is not None:
+                populate_servers_tree(app.mcp_panel.servers_tree, servers)
+            if tools is not None:
+                category_filter = app.mcp_panel.tool_category_var.get()
+                populate_tools_tree(app.mcp_panel.tools_tree, tools, category_filter)
+
+            # Update summary
+            if servers is not None and tools is not None:
+                update_summary(
+                    servers,
+                    tools,
+                    app.mcp_panel.servers_count_var,
+                    app.mcp_panel.servers_active_var,
+                    app.mcp_panel.tools_enabled_var,
+                )
+
+            # Clean up
+            if hasattr(app.mcp_panel, '_pending_servers'):
+                delattr(app.mcp_panel, '_pending_servers')
+            if hasattr(app.mcp_panel, '_pending_tools'):
+                delattr(app.mcp_panel, '_pending_tools')
+            with suppress(AttributeError):
+                delattr(app.mcp_panel, '_data_loaded')
+        _log_duration("mcp panel apply", section_start)
+
+        section_start = time.perf_counter()
+        # Apply resources panel updates
+        if hasattr(app, 'resources_panel') and hasattr(app.resources_panel, '_data_loaded'):
+            # Apply caps if loaded
+            caps_needs_refresh = False
+            caps_data = getattr(app.resources_panel, '_pending_caps', None)
+            caps_start = time.perf_counter()
+            if isinstance(caps_data, dict):
+                caps_copy = dict(caps_data)
+                caps_needs_refresh = bool(caps_copy.pop('_needs_refresh', False))
+                if caps_copy:
+                    caps_signature = tuple(sorted(caps_copy.items()))
+                    last_caps = getattr(app.resources_panel, '_last_caps_snapshot', None)
+                    if caps_signature != last_caps:
+                        app.resources_panel.set_caps(caps_copy)
+                        try:
+                            app.resources_panel._last_caps_snapshot = caps_signature
+                        except Exception:
+                            pass
+                        logger.debug("Resource caps applied to UI")
+                    else:
+                        logger.debug("Resource caps unchanged; skipping UI update")
+                elif caps_needs_refresh:
+                    logger.info("Resource caps refresh deferred during startup; awaiting background refresh")
+            elif caps_data is not None:
+                logger.debug("Ignoring unexpected resource caps payload: %r", type(caps_data).__name__)
+            _log_duration("resources panel apply[caps]", caps_start)
+
+            # Apply device detection if loaded
+            device_info = getattr(app.resources_panel, '_pending_devices', None)
+            if device_info:
+                detect_start = time.perf_counter()
+                info_copy = dict(device_info)
+                needs_refresh = bool(info_copy.pop('_needs_refresh', False))
+                from_cache = bool(info_copy.pop('_from_cache', False))
+                cache_age = info_copy.pop('_cache_age_seconds', None)
+                info_copy.pop('_cache_timestamp', None)
+
+                if info_copy:
+                    set_detected_start = time.perf_counter()
+                    app.resources_panel.set_detected(info_copy)
+                    _log_duration("resources panel apply[set_detected]", set_detected_start)
+
+                    gpu_count = len(info_copy.get('cuda_devices', []))
+                    source_label = "cache" if from_cache else info_copy.get('source', 'fresh')
+                    if from_cache and isinstance(cache_age, (int, float)):
+                        logger.info(
+                            "Device detection applied from %s (age %.1fs): %d GPU(s) found",
+                            source_label,
+                            cache_age,
+                            gpu_count,
+                        )
+                    else:
+                        logger.info(
+                            "Device detection applied from %s: %d GPU(s) found",
+                            source_label,
+                            gpu_count,
+                        )
+                else:
+                    if needs_refresh:
+                        logger.info("Device detection deferred during startup; awaiting background refresh")
+
+                if (from_cache or needs_refresh) and not getattr(app, '_resources_device_refresh_submitted', False):
+                    app._resources_device_refresh_submitted = True
+
+                    def _run_device_refresh() -> None:
+                        try:
+                            fresh = app._resources_detect_devices_fn(force_refresh=True)
+                        except Exception:
+                            logger.debug("Deferred device refresh failed", exc_info=True)
+                            return
+
+                        if not fresh:
+                            return
+
+                        fresh_copy = dict(fresh)
+                        fresh_copy.pop('_from_cache', None)
+                        fresh_copy.pop('_cache_age_seconds', None)
+                        fresh_copy.pop('_cache_timestamp', None)
+
+                        def _apply_refresh() -> None:
+                            try:
+                                if hasattr(app, 'resources_panel') and app.resources_panel:
+                                    app.resources_panel.refresh_detected(fresh_copy)
+                                    gpu_total = len(fresh_copy.get('cuda_devices', []))
+                                    logger.info(
+                                        "Device detection refreshed from torch: %d GPU(s) found",
+                                        gpu_total,
+                                    )
+                            except Exception:
+                                logger.debug("Failed to apply refreshed device info", exc_info=True)
+
+                        app.post_to_ui(_apply_refresh)
+
+                    try:
+                        submit_background(
+                            "panel-setup-device-refresh",
+                            _run_device_refresh,
+                            pool=getattr(app, "_worker_pool", None),
+                        )
+                    except RuntimeError as exc:
+                        logger.error("Failed to queue device refresh task: %s", exc)
+                        _run_device_refresh()
+
+                _log_duration("resources panel apply[device_info block]", detect_start)
+
+            if caps_needs_refresh and not getattr(app, '_resources_caps_refresh_submitted', False):
+                app._resources_caps_refresh_submitted = True
+
+                def _begin_caps_refresh() -> None:
+                    try:
+                        if hasattr(app, 'resources_panel') and app.resources_panel:
+                            logger.info("Starting deferred resource caps refresh")
+                            app.resources_panel.schedule_caps_refresh(delay_ms=1500, source="startup")
+                    except Exception:
+                        logger.debug("Deferred resource caps refresh failed", exc_info=True)
+
+                try:
+                    app.root.after(200, _begin_caps_refresh)
+                except Exception:
+                    _begin_caps_refresh()
+
+            # Clean up
+            if hasattr(app.resources_panel, '_pending_caps'):
+                with suppress(AttributeError):
+                    delattr(app.resources_panel, '_pending_caps')
+            if hasattr(app.resources_panel, '_pending_devices'):
+                with suppress(AttributeError):
+                    delattr(app.resources_panel, '_pending_devices')
+            with suppress(AttributeError):
+                delattr(app.resources_panel, '_data_loaded')
+        _log_duration("resources panel apply", section_start)
+
+        section_start = time.perf_counter()
+        # Apply settings panel config
+        if hasattr(app, 'settings_panel') and hasattr(app.settings_panel, '_pending_config'):
+            try:
+                settings_config = app.settings_panel._pending_config
+                if settings_config:
+                    if 'cache_max_size_mb' in settings_config and hasattr(app.settings_panel, 'cache_size_var'):
+                        app.settings_panel.cache_size_var.set(str(int(settings_config['cache_max_size_mb'])))
+                        logger.info(f"Applied cache size from config: {settings_config['cache_max_size_mb']} MB")
+            except Exception as e:
+                logger.warning(f"Failed to apply settings from config: {e}", exc_info=True)
+            finally:
+                if hasattr(app.settings_panel, '_pending_config'):
+                    delattr(app.settings_panel, '_pending_config')
+        _log_duration("settings panel apply", section_start)
+
+        section_start = time.perf_counter()
+        # Apply evaluation panel updates
+        if hasattr(app, 'evaluation_panel') and hasattr(app.evaluation_panel, '_data_loaded'):
+            panel = app.evaluation_panel
+
+            if hasattr(panel, '_pending_brains'):
+                brains_start = time.perf_counter()
+                brains = panel._pending_brains
+                if hasattr(panel, 'brain_combo') and hasattr(panel, 'model_name_var'):
+                    if brains:
+                        panel.brain_combo["values"] = brains
+                        current = panel.model_name_var.get()
+                        if not current or current not in brains:
+                            panel.model_name_var.set(brains[0])
+                        logger.debug(f"Applied {len(brains)} brains to evaluation panel")
+                    else:
+                        panel.brain_combo["values"] = []
+                _log_duration("evaluation panel apply[brains]", brains_start)
+                delattr(panel, '_pending_brains')
+
+            history = getattr(panel, '_pending_history', None)
+            if history:
+                history_start = time.perf_counter()
+                panel._set_history(history)
+                logger.debug("Evaluation history database initialized and set")
+                _log_duration("evaluation panel apply[history]", history_start)
+
+            if hasattr(panel, '_pending_tree_structure') and hasattr(panel, '_pending_tree_items'):
+                tree_start = time.perf_counter()
+                try:
+                    tree_structure = list(panel._pending_tree_structure)
+                    tree_items = dict(panel._pending_tree_items)
+                    delattr(panel, '_pending_tree_structure')
+                    delattr(panel, '_pending_tree_items')
+
+                    tree = panel.bench_tree
+                    items_cache = panel._tree_items
+                    try:
+                        delete_start = time.perf_counter()
+                        tree.delete(*tree.get_children())
+                        _log_duration("evaluation panel apply[tree delete]", delete_start)
+                    except Exception:
+                        pass
+                    items_cache.clear()
+
+                    id_mapping: dict[str, str] = {}
+                    total_items = len(tree_structure)
+                    batch_size = 18
+                    delay_ms = 8
+
+                    if total_items > 0 and logger.isEnabledFor(logging.INFO):
+                        logger.info("Evaluation panel enqueuing %d tree items (batch %d, delay %dms)", total_items, batch_size, delay_ms)
+
+                    def _insert_batch(start: int = 0) -> None:
+                        end = min(start + batch_size, total_items)
+                        for parent_id, item_id, text, values, item_info in tree_structure[start:end]:
+                            actual_parent = id_mapping.get(parent_id, parent_id)
+                            try:
+                                actual_id = tree.insert(actual_parent, "end", text=text, values=values)
+                            except Exception:
+                                actual_id = tree.insert("", "end", text=text, values=values)
+                            id_mapping[item_id] = actual_id
+                            items_cache[actual_id] = item_info
+
+                        if end < total_items:
+                            try:
+                                tree.after(delay_ms, lambda idx=end: _insert_batch(idx))
+                            except Exception:
+                                _insert_batch(end)
+                        else:
+                            panel._tree_populated = True
+                            logger.debug(f"Populated benchmark tree with {total_items} items (batched)")
+
+                    _insert_batch(0)
+                except Exception as e:
+                    logger.warning(f"Failed to populate benchmark tree: {e}")
+                finally:
+                    _log_duration("evaluation panel apply[tree structure]", tree_start)
+
+            if hasattr(panel, '_pending_history'):
+                with suppress(AttributeError):
+                    delattr(panel, '_pending_history')
+            with suppress(AttributeError):
+                delattr(panel, '_data_loaded')
+        _log_duration("evaluation panel apply", section_start)
+
+        section_start = time.perf_counter()
+        # Apply help panel updates
+        if hasattr(app, 'help_panel') and hasattr(app.help_panel, '_data_loaded'):
+            logger.debug("Help panel search index loaded and ready")
+            with suppress(AttributeError):
+                delattr(app.help_panel, '_data_loaded')
+        _log_duration("help panel apply", section_start)
+
+        section_start = time.perf_counter()
+        # Apply HRM training panel updates
+        if hasattr(app, 'hrm_training_panel') and hasattr(app.hrm_training_panel, '_data_loaded'):
+            logger.debug("HRM training panel data loaded and ready")
+            with suppress(AttributeError):
+                delattr(app.hrm_training_panel, '_data_loaded')
+        _log_duration("hrm training panel apply", section_start)
+    except Exception as e:
+        logger.warning(f"Error applying UI updates: {e}")
+    finally:
+        _log_duration("apply panel totals", start_total)
 
 
 def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
@@ -891,15 +1475,14 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
         app: AiosTkApp instance with panels already created
         update_status_fn: Function to call to update loading status message
     """
-    import threading
-    import concurrent.futures
-    import os
-    
     logger.info("Loading all panel data with threading...")
-    
-    # Use maximum available threads (CPU count or default to 4)
-    max_workers = os.cpu_count() or 4
-    logger.info(f"Using {max_workers} worker threads for data loading")
+
+    pool = getattr(app, "_worker_pool", None)
+    if pool is None:
+        raise RuntimeError("Worker pool unavailable during panel data loading")
+
+    pool_workers = getattr(pool, "max_workers", "unknown")
+    logger.info("Submitting panel data loads to shared worker pool (%s workers)", pool_workers)
     
     # Track completion status
     results = {
@@ -907,6 +1490,7 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
         'brains': {'done': False, 'error': None},
         'mcp': {'done': False, 'error': None},
         'resources': {'done': False, 'error': None},
+        'settings': {'done': False, 'error': None},
         'evaluation': {'done': False, 'error': None},
         'help': {'done': False, 'error': None},
         'hrm_training': {'done': False, 'error': None},
@@ -919,7 +1503,7 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
             start = time.time()
             _load_chat_brains_sync(app)
             duration = time.time() - start
-            print(f"[DATA LOAD] Chat brains: {duration:.3f}s")
+            logger.info(f"[DATA LOAD] Chat brains: {duration:.3f}s")
             results['chat']['done'] = True
         except Exception as e:
             results['chat']['error'] = str(e)
@@ -932,7 +1516,7 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
             start = time.time()
             _load_brains_panel_sync(app)
             duration = time.time() - start
-            print(f"[DATA LOAD] Brains panel: {duration:.3f}s")
+            logger.info(f"[DATA LOAD] Brains panel: {duration:.3f}s")
             results['brains']['done'] = True
         except Exception as e:
             results['brains']['error'] = str(e)
@@ -945,7 +1529,7 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
             start = time.time()
             _load_mcp_panel_sync(app)
             duration = time.time() - start
-            print(f"[DATA LOAD] MCP panel: {duration:.3f}s")
+            logger.info(f"[DATA LOAD] MCP panel: {duration:.3f}s")
             results['mcp']['done'] = True
         except Exception as e:
             results['mcp']['error'] = str(e)
@@ -958,12 +1542,25 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
             start = time.time()
             _load_resources_panel_sync(app)
             duration = time.time() - start
-            print(f"[DATA LOAD] Resources panel: {duration:.3f}s")
+            logger.info(f"[DATA LOAD] Resources panel: {duration:.3f}s")
             results['resources']['done'] = True
         except Exception as e:
             results['resources']['error'] = str(e)
             logger.error(f"Error loading resources data: {e}")
         return 'resources'
+    
+    def load_settings():
+        try:
+            import time
+            start = time.time()
+            _load_settings_panel_sync(app)
+            duration = time.time() - start
+            logger.info(f"[DATA LOAD] Settings panel: {duration:.3f}s")
+            results['settings']['done'] = True
+        except Exception as e:
+            results['settings']['error'] = str(e)
+            logger.error(f"Error loading settings data: {e}")
+        return 'settings'
     
     def load_evaluation():
         try:
@@ -971,7 +1568,7 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
             start = time.time()
             _load_evaluation_panel_sync(app)
             duration = time.time() - start
-            print(f"[DATA LOAD] Evaluation panel: {duration:.3f}s")
+            logger.info(f"[DATA LOAD] Evaluation panel: {duration:.3f}s")
             results['evaluation']['done'] = True
         except Exception as e:
             results['evaluation']['error'] = str(e)
@@ -984,7 +1581,7 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
             start = time.time()
             _load_help_panel_sync(app)
             duration = time.time() - start
-            print(f"[DATA LOAD] Help panel: {duration:.3f}s")
+            logger.info(f"[DATA LOAD] Help panel: {duration:.3f}s")
             results['help']['done'] = True
         except Exception as e:
             results['help']['error'] = str(e)
@@ -997,255 +1594,98 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
             start = time.time()
             _load_hrm_training_panel_sync(app)
             duration = time.time() - start
-            print(f"[DATA LOAD] HRM training panel: {duration:.3f}s")
+            logger.info(f"[DATA LOAD] HRM training panel: {duration:.3f}s")
             results['hrm_training']['done'] = True
         except Exception as e:
             results['hrm_training']['error'] = str(e)
             logger.error(f"Error loading HRM training data: {e}")
         return 'hrm_training'
     
-    # Start loading with thread pool executor
+    # Start loading with available executor
     update_status_fn("Loading data in parallel...")
     app.root.update_idletasks()
-    
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all tasks
-        futures = {
-            executor.submit(load_chat): 'chat',
-            executor.submit(load_brains): 'brains',
-            executor.submit(load_mcp): 'mcp',
-            executor.submit(load_resources): 'resources',
-            executor.submit(load_evaluation): 'evaluation',
-            executor.submit(load_help): 'help',
-            executor.submit(load_hrm_training): 'hrm_training',
+    futures = {
+        pool.submit(load_chat): 'chat',
+        pool.submit(load_brains): 'brains',
+        pool.submit(load_mcp): 'mcp',
+        pool.submit(load_resources): 'resources',
+        pool.submit(load_settings): 'settings',
+        pool.submit(load_evaluation): 'evaluation',
+        pool.submit(load_help): 'help',
+        pool.submit(load_hrm_training): 'hrm_training',
+    }
+
+    import threading
+
+    remaining = set(results.keys())
+    results_lock = threading.Lock()
+    completion_logged = False
+
+    def _compose_status_message() -> str | None:
+        labels = {
+            'chat': "chat models",
+            'brains': "brain registry",
+            'mcp': "MCP servers",
+            'resources': "GPU devices",
+            'settings': "settings",
+            'evaluation': "benchmarks",
+            'help': "documentation",
+            'hrm_training': "training data",
         }
-        
-        # Wait for completion with VERY infrequent UI updates to prevent hangs
-        completed = set()
-        import time
-        last_update = time.time()
-        update_count = 0
-        
-        while len(completed) < len(futures):
-            # Process minimal window events to keep window responsive
-            # This prevents hanging when user switches windows
+        with results_lock:
+            pending_keys = [key for key, info in results.items() if not info['done']]
+        if not pending_keys:
+            return None
+        display_items = [labels.get(key, key) for key in pending_keys[:3]]
+        if len(pending_keys) > 3:
+            return f"Loading {', '.join(display_items)} +{len(pending_keys) - 3} more..."
+        return f"Loading {', '.join(display_items)}..."
+
+    def _handle_completion(task_name: str):
+        def _callback(future):
+            nonlocal completion_logged
             try:
-                app.root.update()  # Process events without forcing widget updates
-            except Exception:
-                pass
-            
-            # Check for newly completed tasks
-            for future in list(futures.keys()):
-                if future not in completed and future.done():
-                    completed.add(future)
-                    task_name = futures[future]
-                    logger.debug(f"Task '{task_name}' completed")
-            
-            # Update status based on what's still loading (only every 2 seconds to minimize hangs)
-            current_time = time.time()
-            if current_time - last_update >= 2.0:  # 2 seconds = very infrequent
-                loading_items = []
-                if not results['chat']['done']:
-                    loading_items.append("chat models")
-                if not results['brains']['done']:
-                    loading_items.append("brain registry")
-                if not results['mcp']['done']:
-                    loading_items.append("MCP servers")
-                if not results['resources']['done']:
-                    loading_items.append("GPU devices")
-                if not results['evaluation']['done']:
-                    loading_items.append("benchmarks")
-                if not results['help']['done']:
-                    loading_items.append("documentation")
-                if not results['hrm_training']['done']:
-                    loading_items.append("training data")
-                
-                if loading_items:
-                    # Show first 3 items to avoid long messages
-                    display_items = loading_items[:3]
-                    if len(loading_items) > 3:
-                        update_status_fn(f"Loading {', '.join(display_items)} +{len(loading_items)-3} more...")
-                    else:
-                        update_status_fn(f"Loading {', '.join(display_items)}...")
-                
-                last_update = current_time
-            
-            # Sleep to avoid busy-waiting (reduced to 100ms for more responsive event processing)
-            time.sleep(0.1)
-    
-    # NOW apply UI updates on main thread (after threads complete, before mainloop)
-    try:
-        # Apply chat panel updates
-        if hasattr(app, 'chat_panel') and hasattr(app.chat_panel, '_pending_brains'):
-            brains = app.chat_panel._pending_brains
-            if hasattr(app.chat_panel, 'brain_combo') and hasattr(app.chat_panel, 'brain_var'):
-                if brains:
-                    app.chat_panel.brain_combo["values"] = brains
-                    if not app.chat_panel.brain_var.get() or app.chat_panel.brain_var.get() == "<default>":
-                        app.chat_panel.brain_var.set(brains[0] if brains else "<default>")
-                else:
-                    app.chat_panel.brain_combo["values"] = ["<no brains>"]
-                    app.chat_panel.brain_var.set("<no brains>")
-            delattr(app.chat_panel, '_pending_brains')
-        
-        # Apply brains panel updates
-        if hasattr(app, 'brains_panel') and hasattr(app.brains_panel, '_data_loaded'):
-            total_experts = int(app.brains_panel.total_experts_var.get() or "0")
-            total_brains = int(app.brains_panel.brain_count_var.get() or "0")
-            if hasattr(app.brains_panel, 'status_var'):
-                app.brains_panel.status_var.set(f"{total_brains} brains, {total_experts} experts")
-            delattr(app.brains_panel, '_data_loaded')
-        
-        # Apply MCP panel updates
-        if hasattr(app, 'mcp_panel') and hasattr(app.mcp_panel, '_data_loaded'):
-            # Populate UI with loaded data
-            from ..components.mcp_manager_panel.ui_updaters import populate_servers_tree, populate_tools_tree, update_summary
-            
-            servers = getattr(app.mcp_panel, '_pending_servers', None)
-            tools = getattr(app.mcp_panel, '_pending_tools', None)
-            
-            if servers is not None:
-                populate_servers_tree(app.mcp_panel.servers_tree, servers)
-            if tools is not None:
-                category_filter = app.mcp_panel.tool_category_var.get()
-                populate_tools_tree(app.mcp_panel.tools_tree, tools, category_filter)
-            
-            # Update summary
-            if servers is not None and tools is not None:
-                update_summary(
-                    servers,
-                    tools,
-                    app.mcp_panel.servers_count_var,
-                    app.mcp_panel.servers_active_var,
-                    app.mcp_panel.tools_enabled_var,
-                )
-            
-            # Clean up
-            if hasattr(app.mcp_panel, '_pending_servers'):
-                delattr(app.mcp_panel, '_pending_servers')
-            if hasattr(app.mcp_panel, '_pending_tools'):
-                delattr(app.mcp_panel, '_pending_tools')
-            delattr(app.mcp_panel, '_data_loaded')
-        
-        # Apply resources panel updates
-        if hasattr(app, 'resources_panel') and hasattr(app.resources_panel, '_data_loaded'):
-            # Apply caps if loaded
-            caps_data = getattr(app.resources_panel, '_pending_caps', None)
-            if caps_data:
-                app.resources_panel.set_caps(caps_data)
-                logger.debug("Resource caps applied to UI")
-            
-            # Apply device detection if loaded
-            device_info = getattr(app.resources_panel, '_pending_devices', None)
-            if device_info:
-                app.resources_panel.set_detected(device_info)
-                logger.info(f"Device detection applied: {len(device_info.get('cuda_devices', []))} GPU(s) found")
-            
-            # Load resources settings from config file (source of truth)
-            try:
-                from ..components.resources_panel.config_persistence import load_resources_from_config
-                config_resources = load_resources_from_config()
-                if config_resources:
-                    app.resources_panel.set_values(config_resources)
-                    logger.info("Loaded resources settings from config/default.yaml")
-            except Exception as e:
-                logger.warning(f"Failed to load resources from config: {e}")
-            
-            # Clean up
-            if hasattr(app.resources_panel, '_pending_caps'):
-                delattr(app.resources_panel, '_pending_caps')
-            if hasattr(app.resources_panel, '_pending_devices'):
-                delattr(app.resources_panel, '_pending_devices')
-            delattr(app.resources_panel, '_data_loaded')
-        
-        # Apply evaluation panel updates
-        if hasattr(app, 'evaluation_panel') and hasattr(app.evaluation_panel, '_data_loaded'):
-            # Apply brains list
-            if hasattr(app.evaluation_panel, '_pending_brains'):
-                brains = app.evaluation_panel._pending_brains
-                if hasattr(app.evaluation_panel, 'brain_combo') and hasattr(app.evaluation_panel, 'model_name_var'):
-                    if brains:
-                        app.evaluation_panel.brain_combo["values"] = brains
-                        # Set default if nothing selected
-                        current = app.evaluation_panel.model_name_var.get()
-                        if not current or current not in brains:
-                            app.evaluation_panel.model_name_var.set(brains[0])
-                        logger.debug(f"Applied {len(brains)} brains to evaluation panel")
-                    else:
-                        app.evaluation_panel.brain_combo["values"] = []
-                delattr(app.evaluation_panel, '_pending_brains')
-            
-            # Set history instance
-            history = getattr(app.evaluation_panel, '_pending_history', None)
-            if history:
-                app.evaluation_panel._set_history(history)
-                logger.debug("Evaluation history database initialized and set")
-            
-            # Apply benchmark tree structure (fast on main thread since data is prepared)
-            if hasattr(app.evaluation_panel, '_pending_tree_structure') and \
-               hasattr(app.evaluation_panel, '_pending_tree_items'):
-                try:
-                    tree_structure = app.evaluation_panel._pending_tree_structure
-                    tree_items = app.evaluation_panel._pending_tree_items
-                    
-                    # Clear existing tree (including placeholder)
-                    app.evaluation_panel.bench_tree.delete(*app.evaluation_panel.bench_tree.get_children())
-                    
-                    # Insert prepared items (fast since data is ready)
-                    id_mapping = {}  # Map prepared IDs to actual tree IDs
-                    for parent_id, item_id, text, values, item_info in tree_structure:
-                        # Map prepared parent ID to actual tree ID
-                        actual_parent = id_mapping.get(parent_id, parent_id)
-                        
-                        # Insert into tree
-                        actual_id = app.evaluation_panel.bench_tree.insert(
-                            actual_parent, "end",
-                            text=text,
-                            values=values
-                        )
-                        
-                        # Map prepared ID to actual ID
-                        id_mapping[item_id] = actual_id
-                        
-                        # Store item info with actual ID
-                        app.evaluation_panel._tree_items[actual_id] = item_info
-                    
-                    app.evaluation_panel._tree_populated = True
-                    
-                    logger.debug(f"Populated benchmark tree with {len(tree_structure)} items")
-                    
-                    delattr(app.evaluation_panel, '_pending_tree_structure')
-                    delattr(app.evaluation_panel, '_pending_tree_items')
-                except Exception as e:
-                    logger.warning(f"Failed to populate benchmark tree: {e}")
-            
-            # Clean up
-            if hasattr(app.evaluation_panel, '_pending_history'):
-                delattr(app.evaluation_panel, '_pending_history')
-            delattr(app.evaluation_panel, '_data_loaded')
-        
-        # Apply help panel updates
-        if hasattr(app, 'help_panel') and hasattr(app.help_panel, '_data_loaded'):
-            # Index is already loaded in background thread
-            # Just mark as complete - no UI updates needed
-            logger.debug("Help panel search index loaded and ready")
-            
-            # Clean up
-            delattr(app.help_panel, '_data_loaded')
-        
-        # Apply HRM training panel updates  
-        if hasattr(app, 'hrm_training_panel') and hasattr(app.hrm_training_panel, '_data_loaded'):
-            # Data already loaded in background thread (prefill and VRAM estimate)
-            # Just mark as complete - no UI updates needed
-            logger.debug("HRM training panel data loaded and ready")
-            
-            # Clean up
-            delattr(app.hrm_training_panel, '_data_loaded')
-    except Exception as e:
-        logger.warning(f"Error applying UI updates: {e}")
-    
-    # Final status update
-    update_status_fn("Data loading complete!")
-    app.root.update_idletasks()
-    
-    logger.info("All panel data loaded successfully")
+                future.result()
+            except Exception as exc:
+                logger.exception(f"Task '{task_name}' failed", exc_info=True)
+                with results_lock:
+                    if not results[task_name]['error']:
+                        results[task_name]['error'] = str(exc)
+
+            with results_lock:
+                results[task_name]['done'] = True
+                remaining.discard(task_name)
+                all_done = not remaining
+
+            logger.debug(f"Task '{task_name}' completed (all_done={all_done})")
+
+            def _on_ui_complete() -> None:
+                nonlocal completion_logged
+                _apply_loaded_panel_data(app)
+
+                if all_done and not completion_logged:
+                    completion_logged = True
+                    update_status_fn("Data loading complete!")
+                    try:
+                        app.root.after_idle(app.root.update_idletasks)
+                    except Exception:
+                        try:
+                            app.root.update_idletasks()
+                        except Exception:
+                            pass
+                    logger.info("All panel data loaded successfully")
+                elif not all_done:
+                    message = _compose_status_message()
+                    if message:
+                        update_status_fn(message)
+
+            app.post_to_ui(_on_ui_complete)
+
+        return _callback
+
+    for future, task_name in futures.items():
+        future.add_done_callback(_handle_completion(task_name))
+
+    message = _compose_status_message()
+    if message:
+        update_status_fn(message)

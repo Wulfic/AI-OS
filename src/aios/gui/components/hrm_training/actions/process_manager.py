@@ -11,12 +11,15 @@ This module handles:
 from __future__ import annotations
 import os
 import time
-import threading
+import logging
 from typing import Any
 from multiprocessing import Process, Queue
 import queue
 
 from aios.python_exec import get_preferred_python_executable
+from ....utils.resource_management import submit_background
+
+logger = logging.getLogger(__name__)
 
 
 def launch_training_process(panel: Any, args: list[str], config: Any, stop_event: Any, graceful_stop_event: Any) -> None:
@@ -32,9 +35,13 @@ def launch_training_process(panel: Any, args: list[str], config: Any, stop_event
     """
     from aios.cli.hrm_hf.train_actv1 import run_training_multiprocessing_entry
     
+    logger.info("Launching training process via multiprocessing.Process")
+    logger.debug(f"Config: dataset={config.dataset_file}, batch_size={config.batch_size}, steps={config.steps}")
+    
     # Create Queue for output communication
     output_queue = Queue()
     panel._output_queue = output_queue
+    logger.debug("Created multiprocessing.Queue for process output")
     
     try:
         # CRITICAL: Set CUDA device IDs in environment BEFORE creating the Process
@@ -44,8 +51,10 @@ def launch_training_process(panel: Any, args: list[str], config: Any, stop_event
             cuda_ids_str = str(config.cuda_ids) if isinstance(config.cuda_ids, str) else ','.join(map(str, config.cuda_ids))
             cuda_ids_env['AIOS_CUDA_IDS'] = cuda_ids_str
             panel._log(f"[hrm] Setting CUDA devices for training process: {cuda_ids_str}")
+            logger.info(f"Setting CUDA devices for training process: {cuda_ids_str}")
         
         # Create and start multiprocessing.Process
+        logger.debug("Creating multiprocessing.Process for training")
         proc = Process(
             target=_training_process_wrapper,
             args=(run_training_multiprocessing_entry, config, stop_event, graceful_stop_event, output_queue, cuda_ids_env),
@@ -54,8 +63,10 @@ def launch_training_process(panel: Any, args: list[str], config: Any, stop_event
         proc.start()
         panel._proc = proc
         panel._log(f"[hrm] Training process started (PID={proc.pid})")
+        logger.info(f"Training process started successfully (PID={proc.pid})")
         
         # Start output monitoring thread
+        logger.debug("Starting output queue monitoring thread")
         _start_queue_monitoring(panel, output_queue)
         
         # Update UI state
@@ -63,22 +74,34 @@ def launch_training_process(panel: Any, args: list[str], config: Any, stop_event
         
         # Start a separate thread to wait for process completion and cleanup
         def _wait_and_cleanup():
+            logger.debug(f"Starting process wait thread for PID {proc.pid}")
             _wait_for_process(panel, proc)
             
             # Get exit code
             proc.join(timeout=1.0)
             rc = proc.exitcode if proc.exitcode is not None else 1
             panel._log(f"[hrm] Training process exited (rc={rc})")
+            logger.info(f"Training process exited with code {rc}")
+            logger.debug(f"Process wait thread completed for PID {proc.pid}")
             
             # Cleanup and update UI
             _update_ui_done(panel)
             _cleanup_process_resources(panel)
         
-        wait_thread = threading.Thread(target=_wait_and_cleanup, daemon=True)
-        wait_thread.start()
+        try:
+            submit_background(
+                "hrm-process-wait",
+                _wait_and_cleanup,
+                pool=getattr(panel, "_worker_pool", None),
+            )
+            logger.debug("Process wait task queued for PID %s", proc.pid)
+        except RuntimeError as exc:
+            logger.error("Failed to queue process wait task: %s", exc)
+            _wait_and_cleanup()
         
     except Exception as e:
         panel._log(f"[hrm] Process launch error: {e}")
+        logger.error(f"Failed to launch training process: {e}", exc_info=True)
         import traceback
         traceback.print_exc()
         _update_ui_done(panel)
@@ -138,40 +161,58 @@ def _training_process_wrapper(entry_func, config, stop_event, graceful_stop_even
 
 
 def _start_queue_monitoring(panel: Any, output_queue: Queue) -> None:
-    """Start thread to monitor output Queue and update GUI."""
-    def _monitor_queue():
-        while True:
-            try:
-                item = output_queue.get(timeout=0.1)
+    """Monitor output Queue using the Tkinter event loop."""
+    logger.debug("Starting queue monitor via Tk callbacks")
+
+    def _pump() -> None:
+        drained = False
+        try:
+            while True:
+                try:
+                    item = output_queue.get_nowait()
+                except queue.Empty:
+                    break
+
                 if item is None:
-                    break
-                
+                    logger.debug("Received stop signal (None), exiting queue monitor")
+                    return
+
+                drained = True
                 msg_type, content = item
-                
-                if msg_type == 'stdout' or msg_type == 'stderr':
-                    # Log output
+                logger.debug("Queue monitor processing event: type=%s", msg_type)
+
+                if msg_type in ("stdout", "stderr"):
                     _thread_safe_log(panel, content.rstrip())
-                    # Parse for progress updates
-                    if msg_type == 'stdout':
+                    if msg_type == "stdout":
                         _parse_and_update_progress(panel, content.rstrip())
-                        
-                elif msg_type == 'exit':
-                    break
-                elif msg_type == 'error':
+                elif msg_type == "exit":
+                    logger.debug("Received exit signal from training process (code=%s)", content)
+                    return
+                elif msg_type == "error":
                     _thread_safe_log(panel, f"[ERROR] {content}")
-                    
-            except queue.Empty:
-                # Check if process is dead
-                proc = getattr(panel, "_proc", None)
-                if proc and not proc.is_alive():
-                    break
-                continue
-            except Exception as e:
-                print(f"Queue monitoring error: {e}")
-                break
-    
-    monitor_thread = threading.Thread(target=_monitor_queue, daemon=True)
-    monitor_thread.start()
+                    logger.error("Training process error: %s", content)
+        except Exception as exc:
+            logger.error("Queue monitoring error: %s", exc, exc_info=True)
+            return
+
+        try:
+            proc = getattr(panel, "_proc", None)
+            if proc is not None and not proc.is_alive():
+                logger.debug("Training process ended; stopping queue monitor")
+                return
+        except Exception:
+            pass
+
+        delay = 25 if drained else 100
+        try:
+            panel.after(delay, _pump)
+        except Exception as exc:
+            logger.debug("Queue monitor scheduling failed: %s", exc, exc_info=True)
+
+    try:
+        panel.after(0, _pump)
+    except Exception:
+        _pump()
     panel._queue_monitor_thread = monitor_thread
 
 
@@ -191,11 +232,13 @@ def _wait_for_process(panel: Any, proc: Process) -> None:
 
 def _cleanup_process_resources(panel: Any) -> None:
     """Clean up multiprocessing resources."""
+    logger.debug("Starting process resource cleanup")
     try:
         # Signal queue monitor to stop
         if hasattr(panel, "_output_queue"):
             try:
                 panel._output_queue.put(None)
+                logger.debug("Sent stop signal to queue monitor")
             except:
                 pass
         
@@ -204,7 +247,9 @@ def _cleanup_process_resources(panel: Any) -> None:
             try:
                 panel._training_manager.shutdown()
                 panel._log("[hrm] Manager shutdown complete")
-            except:
+                logger.info("Training manager shutdown complete")
+            except Exception as e:
+                logger.warning(f"Error during manager shutdown: {e}")
                 pass
             finally:
                 panel._training_manager = None
@@ -212,9 +257,10 @@ def _cleanup_process_resources(panel: Any) -> None:
         # Clear Events
         panel._stop_event = None
         panel._graceful_stop_event = None
+        logger.debug("Process resource cleanup complete")
         
     except Exception as e:
-        print(f"Cleanup error: {e}")
+        logger.error(f"Error during process resource cleanup: {e}", exc_info=True)
 
 
 def _thread_safe_log(panel: Any, msg: str) -> None:

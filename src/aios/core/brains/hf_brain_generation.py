@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+import traceback
 from typing import Any, Dict, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aios.core.brains.hf_brain import HFHRMBrain
+
+logger = logging.getLogger(__name__)
 
 
 def build_prompt(brain: "HFHRMBrain", user_msg: str) -> str:
@@ -196,8 +200,8 @@ def generate_response(brain: "HFHRMBrain", user_msg: str) -> Dict[str, Any]:
                 error_msg = f"{e}\n[DEBUG] Model dtype: {model_dtype}. Try restarting the application to reload experts with correct dtype."
             except Exception:
                 pass
-        print(f"[ERROR] Generation failed: {error_msg}")
-        print(f"[ERROR] Traceback: {traceback.format_exc()[:500]}")
+        logger.error(f"[ERROR] Generation failed: {error_msg}")
+        logger.error(f"[ERROR] Traceback: {traceback.format_exc()[:500]}")
         return {"ok": False, "error": f"gen_error: {e}"}
 
 

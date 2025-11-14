@@ -4,12 +4,15 @@ This module handles loading brain.json metadata and updating the HRM training pa
 """
 
 from __future__ import annotations
+import logging
 import os
 import json
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     pass  # Panel type is external
+
+logger = logging.getLogger(__name__)
 
 
 def load_brain_to_panel(panel: Any, brain_dir: str, brain_name: str) -> None:
@@ -28,6 +31,9 @@ def load_brain_to_panel(panel: Any, brain_dir: str, brain_name: str) -> None:
         brain_dir: Path to brain directory
         brain_name: Name of the brain
     """
+    logger.info(f"Loading brain to training panel: {brain_name}")
+    logger.debug(f"Brain directory: {brain_dir}")
+    
     # Set basic paths
     pt_path = os.path.join(brain_dir, "actv1_student.safetensors")
     panel.student_init_var.set(pt_path)
@@ -37,6 +43,7 @@ def load_brain_to_panel(panel: Any, brain_dir: str, brain_name: str) -> None:
     # Read brain.json to populate training steps and architecture
     brain_json_path = os.path.join(brain_dir, "brain.json")
     if not os.path.isfile(brain_json_path):
+        logger.warning(f"No brain.json found for {brain_name}")
         panel._log(f"[hrm] Warning: No brain.json found for {brain_name}")
         panel._set_arch_widgets_state("disabled")
         return
@@ -44,6 +51,8 @@ def load_brain_to_panel(panel: Any, brain_dir: str, brain_name: str) -> None:
     try:
         with open(brain_json_path, 'r', encoding='utf-8') as f:
             brain_data = json.load(f)
+        
+        logger.debug(f"Loaded brain metadata: {len(brain_data)} fields")
         
         # Update training steps if available
         if "training_steps" in brain_data:
@@ -74,6 +83,7 @@ def load_brain_to_panel(panel: Any, brain_dir: str, brain_name: str) -> None:
             panel._log(f"[hrm] Brain stats populated from metadata")
         except Exception as e:
             panel._log(f"[hrm] Warning: Could not populate brain stats: {e}")
+            logger.error(f"Failed to populate brain stats: {e}")
             import traceback
             panel._log(f"[hrm] Traceback: {traceback.format_exc()}")
         
@@ -83,8 +93,12 @@ def load_brain_to_panel(panel: Any, brain_dir: str, brain_name: str) -> None:
             update_vram_estimate(panel)
         except Exception as e:
             panel._log(f"[hrm] Note: VRAM/RAM estimates not available (will update after training start): {e}")
+            logger.debug(f"VRAM estimates not available during brain load: {e}")
+        
+        logger.info(f"Brain '{brain_name}' loaded successfully to training panel")
         
     except Exception as e:
+        logger.error(f"Failed to read brain.json for {brain_name}: {e}")
         panel._log(f"[hrm] Warning: Could not read brain.json: {e}")
     
     # Disable architecture widgets (can't modify loaded brain architecture)
@@ -184,6 +198,8 @@ def load_brain_from_file(panel: Any, checkpoint_path: str) -> None:
         panel: HRM training panel instance
         checkpoint_path: Path to .pt or .safetensors checkpoint file
     """
+    logger.info(f"Loading brain from checkpoint: {checkpoint_path}")
+    
     panel.student_init_var.set(checkpoint_path)
     panel._set_arch_widgets_state("disabled")
     panel._log(f"[hrm] Selected student init: {checkpoint_path}")
@@ -192,6 +208,8 @@ def load_brain_from_file(panel: Any, checkpoint_path: str) -> None:
     try:
         brain_dir = os.path.dirname(checkpoint_path)
         panel.log_file_var.set(os.path.join(brain_dir, "metrics.jsonl"))
-        panel.brain_name_var.set(os.path.basename(brain_dir))
-    except Exception:
-        pass  # Silently fail if can't infer
+        brain_name = os.path.basename(brain_dir)
+        panel.brain_name_var.set(brain_name)
+        logger.debug(f"Inferred brain directory: {brain_dir}, name: {brain_name}")
+    except Exception as e:
+        logger.warning(f"Could not infer brain directory from checkpoint path: {e}")

@@ -125,6 +125,11 @@ def gui(
     
     print(f"[GUI TIMING] Imports done: {time.time() - gui_start:.3f}s")
     
+    # Initialize logging early so all GUI components can use it
+    cfg = load_config(None)
+    setup_logging(cfg)
+    print(f"[GUI TIMING] Logging configured: {time.time() - gui_start:.3f}s")
+    
     # Only set if not already set by aios.py
     if not os.environ.get("HF_HOME"):
         # Use same logic as aios.py for consistency

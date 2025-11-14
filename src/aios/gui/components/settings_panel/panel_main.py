@@ -3,11 +3,14 @@
 from __future__ import annotations
 import webbrowser
 import logging
+import os
+import time
 from typing import Any, Callable
 from tkinter import ttk
 import tkinter as tk
 
 from . import ui_builders, theme_manager, startup_settings, cache_management
+from ...utils.resource_management import submit_background
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +25,17 @@ class SettingsPanel:
         chat_panel: Any | None = None,
         help_panel: Any | None = None,
         debug_panel: Any | None = None,
+        worker_pool: Any | None = None,
     ) -> None:
         self.parent = parent
         self._save_state_fn = save_state_fn
         self._chat_panel = chat_panel
         self._help_panel = help_panel
         self._debug_panel = debug_panel
+        self._worker_pool = worker_pool
+        self._debug_file_handler: logging.Handler | None = None
+        self._last_theme_applied: str | None = None
+        self._last_theme_applied_at: float = 0.0
         
         # Flag to prevent trace callbacks during state restoration
         self._restoring_state = False
@@ -109,42 +117,52 @@ class SettingsPanel:
 
     def _rebuild_help_index(self) -> None:
         """Rebuild the help documentation search index."""
-        import threading
         from pathlib import Path
-        
-        def rebuild():
+
+        def _dispatch(callback: Callable[[], None]) -> None:
             try:
-                # Update status
-                self.help_index_status_label.config(text="Building...")
-                
-                # Find docs root
+                self.parent.after(0, callback)
+            except Exception:
+                try:
+                    callback()
+                except Exception:
+                    logger.debug("Help index UI update failed", exc_info=True)
+
+        def rebuild() -> None:
+            status_text = "✗ Failed to rebuild"
+            try:
                 from ...gui.components.help_panel import utils
                 project_root = utils.find_project_root(Path(__file__))
                 docs_root = utils.resolve_docs_root(project_root)
-                
-                # Delete old index
+
                 index_file = docs_root / "search_index.json"
                 if index_file.exists():
                     index_file.unlink()
                     logger.info("Deleted old search index")
-                
-                # Build new index
+
                 from ...gui.components.help_panel.search_engine import SearchEngine
                 engine = SearchEngine(docs_root)
                 success = engine.build_index()
-                
                 if success:
-                    self.help_index_status_label.config(text=f"✓ Ready ({len(engine.index)} docs)")
-                    logger.info(f"Rebuilt help index with {len(engine.index)} documents")
+                    doc_count = len(engine.index)
+                    status_text = f"✓ Ready ({doc_count} docs)"
+                    logger.info("Rebuilt help index with %s documents", doc_count)
                 else:
-                    self.help_index_status_label.config(text="✗ Failed to rebuild")
+                    status_text = "✗ Failed to rebuild"
                     logger.error("Failed to rebuild help index")
-            except Exception as e:
-                self.help_index_status_label.config(text="✗ Error")
-                logger.error(f"Error rebuilding help index: {e}")
-        
-        # Run in background thread
-        threading.Thread(target=rebuild, daemon=True).start()
+            except Exception as exc:
+                status_text = "✗ Error"
+                logger.error("Error rebuilding help index: %s", exc, exc_info=True)
+            finally:
+                _dispatch(lambda: self.help_index_status_label.config(text=status_text))
+
+        _dispatch(lambda: self.help_index_status_label.config(text="Building..."))
+
+        try:
+            submit_background("settings-help-index", rebuild, pool=self._worker_pool)
+        except RuntimeError as exc:
+            logger.error("Failed to queue help index rebuild: %s", exc)
+            _dispatch(lambda: self.help_index_status_label.config(text=f"✗ Queue error: {exc}"))
 
     def get_state(self) -> dict[str, Any]:
         """Return current settings state for persistence."""
@@ -227,9 +245,270 @@ class SettingsPanel:
         Args:
             level: One of "Normal", "Advanced", or "DEBUG"
         """
+        enable_debug_logs = level == "DEBUG"
+        self._manage_debug_file_handler(enable_debug_logs)
+
         if self._debug_panel and hasattr(self._debug_panel, 'set_global_log_level'):
             try:
                 self._debug_panel.set_global_log_level(level)
                 logger.debug(f"Applied logging level to debug panel: {level}")
             except Exception as e:
                 logger.error(f"Failed to apply logging level: {e}")
+
+    def _manage_debug_file_handler(self, enable_debug: bool) -> None:
+        """Enable or disable the rotating debug file handler.
+
+        Integrates with async logging (QueueListener) when available to avoid
+        duplicate handlers while keeping timestamp formatting consistent.
+        """
+
+        start_time = time.perf_counter()
+        action = "unchanged"
+
+        try:
+            from logging.handlers import QueueHandler
+            from aios.utils.async_logging import (
+                NonBlockingRotatingFileHandler,
+                NonBlockingTimedRotatingFileHandler,
+                AsyncMemoryHandler,
+                DebugAndTraceFilter,
+                _QUEUE_LISTENERS,
+            )
+
+            root_logger = logging.getLogger()
+            aios_logger = logging.getLogger("aios")
+
+            def _ensure_formatter(handler: logging.Handler) -> None:
+                handler.setFormatter(
+                    logging.Formatter(
+                        "%(asctime)s.%(msecs)03d | %(levelname)s | %(name)s | %(message)s",
+                        "%Y-%m-%d %H:%M:%S",
+                    )
+                )
+
+            def _ensure_debug_filter(handler: logging.Handler) -> None:
+                has_filter = any(isinstance(f, DebugAndTraceFilter) for f in getattr(handler, "filters", []))
+                if not has_filter:
+                    handler.addFilter(DebugAndTraceFilter(level=logging.DEBUG))
+
+            def _is_debug_handler(handler: logging.Handler) -> bool:
+                base = getattr(handler, "baseFilename", "")
+                return bool(base) and "aios_debug" in os.path.basename(str(base))
+
+            queue_mode = any(isinstance(h, QueueHandler) for h in root_logger.handlers)
+
+            if queue_mode and _QUEUE_LISTENERS:
+                debug_handlers: list[tuple[logging.handlers.QueueListener, NonBlockingRotatingFileHandler]] = []
+                for listener in list(_QUEUE_LISTENERS):
+                    handlers = list(getattr(listener, "handlers", ()))
+                    logger.debug(
+                        "QueueListener %s has handlers: %s",
+                        listener,
+                        [type(h).__name__ for h in handlers],
+                    )
+                    if not handlers:
+                        logger.warning("QueueListener has no handlers; regular log file cannot be created")
+                    for existing in handlers:
+                        candidate = getattr(existing, "target", existing)
+                        if isinstance(candidate, NonBlockingTimedRotatingFileHandler):
+                            logger.debug(
+                                "Standard handler state: base=%s level=%s flushLevel=%s interval=%s",
+                                getattr(candidate, "baseFilename", "<unknown>"),
+                                logging.getLevelName(candidate.level),
+                                getattr(existing, "flushLevel", None),
+                                getattr(existing, "flushInterval", None),
+                            )
+                        if isinstance(candidate, NonBlockingRotatingFileHandler):
+                            logger.debug(
+                                "Debug handler state: base=%s level=%s flushLevel=%s interval=%s",
+                                getattr(candidate, "baseFilename", "<unknown>"),
+                                logging.getLevelName(candidate.level),
+                                getattr(existing, "flushLevel", None),
+                                getattr(existing, "flushInterval", None),
+                            )
+                    has_standard = False
+                    for existing in handlers:
+                        target = getattr(existing, "target", None)
+                        if isinstance(existing, AsyncMemoryHandler) and isinstance(target, NonBlockingTimedRotatingFileHandler):
+                            existing.flushLevel = logging.INFO
+                            existing.flushInterval = min(getattr(existing, "flushInterval", 5.0), 1.0)
+                            existing.flush()
+                        if isinstance(existing, NonBlockingTimedRotatingFileHandler) or (
+                            isinstance(target, NonBlockingTimedRotatingFileHandler)
+                        ):
+                            has_standard = True
+                            break
+
+                    if not has_standard:
+                        # Make sure the primary timed rotating file handler remains reachable via the listener queue.
+                        os.makedirs("logs", exist_ok=True)
+                        standard = NonBlockingTimedRotatingFileHandler(
+                            filename="logs/aios.log",
+                            when="midnight",
+                            interval=1,
+                            backupCount=10,
+                            encoding="utf-8",
+                            utc=False,
+                            maxBytes=20971520,
+                            include_tracebacks=False,
+                        )
+                        standard.setLevel(logging.INFO)
+                        standard.setFormatter(
+                            logging.Formatter(
+                                "%(asctime)s.%(msecs)03d | %(levelname)s | %(name)s | %(filename)s:%(lineno)d | %(message)s",
+                                "%Y-%m-%d %H:%M:%S",
+                            )
+                        )
+                        logger.debug("Created NonBlockingTimedRotatingFileHandler for aios.log")
+
+                        memory_wrapper = AsyncMemoryHandler(
+                            capacity=5000,
+                            flushLevel=logging.INFO,
+                            target=standard,
+                            flushOnClose=True,
+                            flushInterval=1.0,
+                        )
+                        memory_wrapper.setLevel(standard.level)
+                        logger.debug(
+                            "Wrapped standard handler in AsyncMemoryHandler (flushLevel=%s, interval=%s)",
+                            logging.getLevelName(memory_wrapper.flushLevel),
+                            getattr(memory_wrapper, "flushInterval", None),
+                        )
+
+                        listener.stop()
+                        handlers.append(memory_wrapper)
+                        listener.handlers = tuple(handlers)
+                        listener.start()
+                        logger.info("Added standard log file handler (aios.log)")
+                        handlers = list(getattr(listener, "handlers", ()))
+                        if not handlers:
+                            logger.warning("Standard handler failed to attach to QueueListener")
+                        for wrapper in handlers:
+                            if isinstance(wrapper, AsyncMemoryHandler):
+                                logger.debug(
+                                    "Post-add memory handler flushLevel=%s interval=%s buffer=%s",
+                                    logging.getLevelName(wrapper.flushLevel),
+                                    getattr(wrapper, "flushInterval", None),
+                                    len(getattr(wrapper, "buffer", [])),
+                                )
+
+                    for handler in handlers:
+                        candidate = handler
+                        if isinstance(handler, AsyncMemoryHandler):
+                            target = getattr(handler, "target", None)
+                            if isinstance(target, logging.Handler):
+                                handler.setLevel(target.level)
+                            if isinstance(handler.target, NonBlockingRotatingFileHandler):
+                                handler.flushLevel = logging.DEBUG
+                                handler.flushInterval = min(getattr(handler, "flushInterval", 5.0), 1.0)
+                                handler.flush()
+                        if not isinstance(handler, NonBlockingRotatingFileHandler):
+                            candidate = getattr(handler, "target", None)
+                        if isinstance(candidate, NonBlockingRotatingFileHandler) and _is_debug_handler(candidate):
+                            debug_handlers.append((listener, candidate))
+
+                if enable_debug:
+                    if debug_handlers:
+                        for _listener, handler in debug_handlers:
+                            handler.setLevel(logging.DEBUG)
+                            _ensure_formatter(handler)
+                            _ensure_debug_filter(handler)
+                        self._debug_file_handler = debug_handlers[0][1]
+                        logger.debug("Re-enabled existing debug file handler (async mode)")
+                        return
+                    else:
+                        debug_base = NonBlockingRotatingFileHandler(
+                            filename="logs/aios_debug.log",
+                            maxBytes=20971520,
+                            backupCount=10,
+                        )
+                        _ensure_formatter(debug_base)
+                        _ensure_debug_filter(debug_base)
+                        debug_base.setLevel(logging.DEBUG)
+
+                        listener = _QUEUE_LISTENERS[0]
+                        listener.stop()
+                        handlers = list(getattr(listener, "handlers", ()))
+                        memory_wrapper = AsyncMemoryHandler(
+                            capacity=1000,
+                            flushLevel=logging.DEBUG,
+                            target=debug_base,
+                            flushOnClose=True,
+                            flushInterval=1.0,
+                        )
+                        memory_wrapper.setLevel(debug_base.level)
+                        logger.debug(
+                            "Wrapped debug handler in AsyncMemoryHandler (flushLevel=%s, interval=%s)",
+                            logging.getLevelName(memory_wrapper.flushLevel),
+                            getattr(memory_wrapper, "flushInterval", None),
+                        )
+                        handlers.append(memory_wrapper)
+                        listener.handlers = tuple(handlers)
+                        listener.start()
+
+                        self._debug_file_handler = debug_base
+                        action = "added"
+                        elapsed = time.perf_counter() - start_time
+                        logger.info(f"Added debug file handler in {elapsed:.3f}s: logs/aios_debug.log")
+                        return
+                else:
+                    if debug_handlers:
+                        for _listener, handler in debug_handlers:
+                            handler.setLevel(logging.CRITICAL + 1)
+                        self._debug_file_handler = debug_handlers[0][1]
+                        logger.info("Disabled debug file handler output (async mode)")
+                        action = "disabled"
+                    return
+
+            # Fallback: async logging disabled, manage handlers directly on loggers.
+            NBHandler = NonBlockingRotatingFileHandler
+
+            existing_handler = None
+            for handler in list(root_logger.handlers) + list(aios_logger.handlers):
+                if isinstance(handler, NBHandler) and _is_debug_handler(handler):
+                    existing_handler = handler
+                    break
+
+            if enable_debug:
+                debug_handler = existing_handler or self._debug_file_handler
+                if debug_handler is None:
+                    os.makedirs("logs", exist_ok=True)
+                    debug_handler = NBHandler(
+                        filename="logs/aios_debug.log",
+                        maxBytes=20971520,
+                        backupCount=10,
+                    )
+                    action = "added"
+                else:
+                    action = "enabled"
+
+                debug_handler.setLevel(logging.DEBUG)
+                _ensure_formatter(debug_handler)
+                _ensure_debug_filter(debug_handler)
+
+                if debug_handler not in aios_logger.handlers:
+                    aios_logger.addHandler(debug_handler)
+                if debug_handler not in root_logger.handlers:
+                    root_logger.addHandler(debug_handler)
+
+                self._debug_file_handler = debug_handler
+
+            else:
+                if existing_handler:
+                    existing_handler.setLevel(logging.CRITICAL + 1)
+                    self._debug_file_handler = existing_handler
+                    action = "disabled"
+                return
+
+        except Exception:
+            action = "error"
+            logger.exception("Failed to manage debug file handler")
+        finally:
+            elapsed = time.perf_counter() - start_time
+            if action != "error":
+                logger.debug(
+                    "Debug file handler action=%s (enable_debug=%s) in %.3fs",
+                    action,
+                    enable_debug,
+                    elapsed,
+                )

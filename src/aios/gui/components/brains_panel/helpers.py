@@ -8,10 +8,70 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Any, Optional
+from typing import Any, Optional, Tuple, Dict
 
 # Import centralized parameter calculation
 from aios.cli.hrm_hf.model_building import calculate_actv1_params
+
+
+# Cache training step calculations keyed by metrics file path.
+_TRAINING_STEPS_CACHE: Dict[str, Tuple[float, int]] = {}
+
+
+def _extract_latest_step_from_lines(lines: list[str]) -> int:
+    """Return the most recent ``step`` field from JSON lines.
+
+    Iterates from the end of ``lines`` so we stop at the first parseable value.
+    """
+    for line in reversed(lines):
+        payload = line.strip()
+        if not payload:
+            continue
+        try:
+            entry = json.loads(payload)
+        except Exception:
+            continue
+        step = entry.get("step")
+        if isinstance(step, (int, float)):
+            return int(step)
+    return 0
+
+
+def _read_training_steps_from_metrics(metrics_path: str) -> int:
+    """Best-effort extraction of the latest training step from metrics.jsonl.
+
+    Reads only the tail of large files to avoid multi-second blocking on big logs.
+    Falls back to scanning the whole file if the tail chunk lacks a ``step`` field.
+    """
+    try:
+        size = os.path.getsize(metrics_path)
+    except Exception:
+        return 0
+
+    # Start with a reasonable tail chunk; enlarge before falling back to full scan.
+    chunk_plan = [256_000, 1_048_576, 4_194_304]
+
+    for chunk_size in chunk_plan:
+        try:
+            if size <= chunk_size:
+                with open(metrics_path, "r", encoding="utf-8") as mf:
+                    return _extract_latest_step_from_lines(mf.readlines())
+
+            with open(metrics_path, "rb") as mf:
+                offset = max(size - chunk_size, 0)
+                mf.seek(offset)
+                data = mf.read().decode("utf-8", errors="ignore")
+
+            lines = data.splitlines()
+            step = _extract_latest_step_from_lines(lines)
+            if step > 0:
+                return step
+        except Exception:
+            continue
+
+    # Unable to find a step field in the recent portion of the file; avoid
+    # scanning the full log to keep the UI responsive.
+    return 0
 
 
 def find_project_root() -> str:
@@ -185,34 +245,49 @@ def load_training_steps(brain_path: str, brain_metadata: dict[str, Any]) -> int:
     training_steps = int(brain_metadata.get("training_steps", 0) or 0)
     if training_steps > 0:
         return training_steps
-    
-    # Try loading from brain.json
+
+    # Track candidate metrics files (primary first) to avoid redundant lookups.
+    metrics_candidates: list[str] = []
+    log_file = (brain_metadata.get("log_file") or "metrics.jsonl") if brain_metadata else "metrics.jsonl"
+    if log_file:
+        metrics_candidates.append(os.path.join(brain_path, log_file))
+
+    # Try loading from brain.json for additional metadata/log path hints.
     brain_json_path = os.path.join(brain_path, "brain.json")
     if os.path.exists(brain_json_path):
         try:
             with open(brain_json_path, "r", encoding="utf-8") as f:
                 meta = json.load(f)
-                training_steps = int(meta.get("training_steps", 0) or 0)
-                
-                # If still 0, try reading from metrics.jsonl
-                if training_steps == 0:
-                    metrics_file = meta.get("log_file", "metrics.jsonl")
-                    metrics_path = os.path.join(brain_path, metrics_file)
-                    if os.path.exists(metrics_path):
-                        max_step = 0
-                        with open(metrics_path, 'r', encoding='utf-8') as mf:
-                            for line in mf:
-                                try:
-                                    entry = json.loads(line.strip())
-                                    if "step" in entry:
-                                        max_step = max(max_step, entry["step"])
-                                except Exception:
-                                    continue
-                        training_steps = max_step
+            training_steps = int(meta.get("training_steps", 0) or 0)
+            if training_steps > 0:
+                return training_steps
+
+            alt_log = meta.get("log_file")
+            if isinstance(alt_log, str) and alt_log:
+                candidate_path = os.path.join(brain_path, alt_log)
+                if candidate_path not in metrics_candidates:
+                    metrics_candidates.insert(0, candidate_path)
         except Exception:
             pass
-    
-    return training_steps
+
+    # Parse metrics files (tail-first) with caching to avoid repeated large reads.
+    for metrics_path in metrics_candidates:
+        if not metrics_path or not os.path.exists(metrics_path):
+            continue
+        try:
+            mtime = os.path.getmtime(metrics_path)
+            cached = _TRAINING_STEPS_CACHE.get(metrics_path)
+            if cached and cached[0] == mtime:
+                step = cached[1]
+            else:
+                step = _read_training_steps_from_metrics(metrics_path)
+                _TRAINING_STEPS_CACHE[metrics_path] = (mtime, step)
+            if step > 0:
+                return step
+        except Exception:
+            continue
+
+    return 0
 
 
 def get_selected_tree_value(tree: Any, column_index: int) -> Optional[str]:

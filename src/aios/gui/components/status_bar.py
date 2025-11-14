@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+# Import safe variable wrappers
+from ..utils import safe_variables
+
+import logging
 from typing import Any, cast
+
+logger = logging.getLogger(__name__)
 
 try:  # pragma: no cover - environment dependent
     import tkinter as tk  # type: ignore
@@ -32,7 +38,7 @@ class StatusBar:
         inner = tk.Frame(frame, bd=1, relief="sunken", bg="#f0f0f0")  # type: ignore[misc]
         # Add more internal padding so the bar is thicker and easier to read
         inner.pack(fill="x", padx=0, pady=2, ipady=8)
-        self.var = tk.StringVar(value="Ready")
+        self.var = safe_variables.StringVar(value="Ready")
         # Explicit label background helps on some Windows themes
         try:
             # Slightly larger, readable font for system status (Windows-friendly)
@@ -48,6 +54,7 @@ class StatusBar:
 
     def set(self, text: str) -> None:
         try:
+            logger.debug(f"Status updated: {text}")
             self.var.set(text)
         except Exception:
             pass

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess as _sp
 import time
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 try:  # pragma: no cover - optional dependency
     import psutil  # type: ignore
@@ -14,14 +17,14 @@ except Exception:  # pragma: no cover - optional dependency
     psutil = None  # type: ignore
 
 
-def get_cpu_stats() -> tuple[float, str]:
+def get_cpu_stats() -> tuple[float, float | None]:
     """Get CPU utilization and temperature.
     
     Returns:
-        Tuple of (utilization_percent, temperature_string)
+        Tuple of (utilization_percent, temperature_celsius_or_none)
     """
     cpu_usage = 0.0
-    cpu_temp = "N/A"
+    cpu_temp = None
     
     try:
         if psutil:
@@ -35,17 +38,19 @@ def get_cpu_stats() -> tuple[float, str]:
                         if sensor_name in temps:
                             entries = temps[sensor_name]
                             if entries:
-                                cpu_temp = f"{entries[0].current:.0f}°C"
+                                cpu_temp = float(entries[0].current)
                                 break
                     # If no known sensor, use first available
-                    if cpu_temp == "N/A":
+                    if cpu_temp is None:
                         first_sensor = list(temps.values())[0]
                         if first_sensor:
-                            cpu_temp = f"{first_sensor[0].current:.0f}°C"
-            except Exception:
-                pass
-    except Exception:
-        pass
+                            cpu_temp = float(first_sensor[0].current)
+            except Exception as e:
+                logger.debug(f"CPU temperature not available: {e}")
+        else:
+            logger.warning("psutil not available - CPU stats unavailable")
+    except Exception as e:
+        logger.error(f"CPU stats collection failed: {e}", exc_info=True)
     
     return cpu_usage, cpu_temp
 
@@ -66,8 +71,10 @@ def get_ram_stats() -> tuple[float, float, float]:
             ram_usage = float(mem.percent)
             ram_used = float(mem.used) / (1024**3)  # Convert to GB
             ram_total = float(mem.total) / (1024**3)  # Convert to GB
-    except Exception:
-        pass
+        else:
+            logger.warning("psutil not available - RAM stats unavailable")
+    except Exception as e:
+        logger.error(f"RAM stats collection failed: {e}", exc_info=True)
     
     return ram_usage, ram_used, ram_total
 
@@ -98,8 +105,10 @@ def get_network_stats(last_net_io: Any = None, last_io_time: float = 0.0) -> tup
                     bytes_recv = current_io.bytes_recv - last_net_io.bytes_recv
                     upload_rate = max(0.0, bytes_sent / time_diff / (1024**2))  # MB/s
                     download_rate = max(0.0, bytes_recv / time_diff / (1024**2))  # MB/s
-    except Exception:
-        pass
+        else:
+            logger.warning("psutil not available - Network stats unavailable")
+    except Exception as e:
+        logger.error(f"Network stats collection failed: {e}", exc_info=True)
     
     return upload_rate, download_rate, current_io
 
@@ -130,8 +139,10 @@ def get_disk_stats(last_disk_io: Any = None, last_io_time: float = 0.0) -> tuple
                     bytes_write = current_io.write_bytes - last_disk_io.write_bytes
                     read_rate = max(0.0, bytes_read / time_diff / (1024**2))  # MB/s
                     write_rate = max(0.0, bytes_write / time_diff / (1024**2))  # MB/s
-    except Exception:
-        pass
+        else:
+            logger.warning("psutil not available - Disk stats unavailable")
+    except Exception as e:
+        logger.error(f"Disk stats collection failed: {e}", exc_info=True)
     
     return read_rate, write_rate, current_io, current_time
 
@@ -148,6 +159,7 @@ def get_gpu_stats() -> list[dict[str, Any]]:
     try:
         nvsmi = shutil.which("nvidia-smi")
         if nvsmi:
+            nv_start = time.perf_counter()
             res = _sp.run(
                 [
                     nvsmi,
@@ -159,6 +171,9 @@ def get_gpu_stats() -> list[dict[str, Any]]:
                 text=True,
                 timeout=1.0,  # Reduced from 2.0s to 1.0s to avoid blocking GUI
             )
+            nv_duration = time.perf_counter() - nv_start
+            if nv_duration > 0.5:
+                logger.debug(f"nvidia-smi resources query latency: {nv_duration:.3f}s")
             if res.stdout:
                 for line in res.stdout.strip().splitlines():
                     try:
@@ -172,11 +187,14 @@ def get_gpu_stats() -> list[dict[str, Any]]:
                                 "mem_total_mb": float(parts[4]),
                                 "temp": float(parts[5]),
                             })
-                    except Exception:
+                    except Exception as e:
+                        logger.warning(f"Failed to parse nvidia-smi output line: {e}")
                         continue
+                if gpu_stats:
+                    logger.debug(f"GPU stats collected via nvidia-smi: {len(gpu_stats)} GPUs")
                 return gpu_stats
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"nvidia-smi not available or failed: {e}")
 
     # Fallback to torch.cuda (no temperature available)
     try:
@@ -197,9 +215,15 @@ def get_gpu_stats() -> list[dict[str, Any]]:
                         "mem_total_mb": total_b / (1024**2),
                         "temp": None,
                     })
-                except Exception:
+                except Exception as e:
+                    logger.error(f"GPU stats collection failed for GPU {i}: {e}", exc_info=True)
                     continue
-    except Exception:
-        pass
+            if gpu_stats:
+                logger.debug(f"GPU stats collected via torch.cuda: {len(gpu_stats)} GPUs")
+    except Exception as e:
+        logger.debug(f"torch.cuda not available: {e}")
+
+    if not gpu_stats:
+        logger.debug("No GPUs detected")
 
     return gpu_stats

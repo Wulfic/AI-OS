@@ -16,10 +16,13 @@ Example:
     >>> print(f"Current status: {enabled}")
 """
 
+import logging
 import sys
 import os
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 # Windows-specific registry module
 try:
@@ -28,6 +31,7 @@ try:
 except ImportError:
     winreg = None  # type: ignore
     HAS_WINREG = False
+    logger.debug("winreg module not available (non-Windows platform)")
 
 
 # Constants
@@ -87,8 +91,10 @@ def get_startup_command(minimized: bool = False) -> str:
     for exe_path in possible_exe_paths:
         try:
             if exe_path.exists() and exe_path.is_file():
+                logger.debug(f"Found installed executable: {exe_path}")
                 return f'"{exe_path}" gui{minimized_flag}'
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Failed to check exe path {exe_path}: {e}")
             continue
     
     # Option 2: Check for batch script in current directory or parent
@@ -97,12 +103,14 @@ def get_startup_command(minimized: bool = False) -> str:
         current_dir = Path(__file__).parent.parent.parent.parent.parent
         batch_path = current_dir / "aios.bat"
         if batch_path.exists() and batch_path.is_file():
+            logger.debug(f"Found batch script: {batch_path}")
             return f'"{batch_path}" gui{minimized_flag}'
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Failed to check batch script: {e}")
     
     # Option 3: Fall back to Python module invocation
     python_exe = sys.executable
+    logger.debug(f"Using Python module invocation: {python_exe}")
     return f'"{python_exe}" -m aios.gui{minimized_flag}'
 
 
@@ -141,6 +149,7 @@ def set_startup_enabled(enabled: bool, minimized: bool = False) -> bool:
         - On non-Windows platforms, returns False silently
     """
     if not is_windows() or not HAS_WINREG:
+        logger.debug("Startup configuration not available (non-Windows or winreg missing)")
         return False
     
     try:
@@ -156,22 +165,26 @@ def set_startup_enabled(enabled: bool, minimized: bool = False) -> bool:
             # Add startup entry with optional minimize flag
             command = get_startup_command(minimized=minimized)
             winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, command)  # type: ignore[union-attr]
+            logger.info(f"Startup enabled: {command}")
         else:
             # Remove startup entry
             try:
                 winreg.DeleteValue(key, APP_NAME)  # type: ignore[union-attr]
+                logger.info("Startup disabled")
             except FileNotFoundError:
                 # Already not set - this is fine
-                pass
+                logger.debug("Startup entry already absent")
         
         winreg.CloseKey(key)  # type: ignore[union-attr]
         return True
         
-    except PermissionError:
+    except PermissionError as e:
         # User doesn't have permission to modify registry
+        logger.error(f"Permission denied to modify registry: {e}")
         return False
-    except Exception:
+    except Exception as e:
         # Other registry errors
+        logger.error(f"Failed to modify startup configuration: {e}", exc_info=True)
         return False
 
 
@@ -212,13 +225,17 @@ def is_startup_enabled() -> bool:
         winreg.CloseKey(key)  # type: ignore[union-attr]
         
         # Check if value is valid (non-empty string)
-        return value is not None and len(str(value)) > 0
+        is_enabled = value is not None and len(str(value)) > 0
+        logger.debug(f"Startup {'enabled' if is_enabled else 'disabled'}")
+        return is_enabled
         
     except FileNotFoundError:
         # Key or value doesn't exist
+        logger.debug("Startup entry not found in registry")
         return False
-    except Exception:
+    except Exception as e:
         # Other registry errors
+        logger.error(f"Failed to check startup status: {e}", exc_info=True)
         return False
 
 
@@ -254,13 +271,17 @@ def get_startup_path() -> Optional[str]:
         value, reg_type = winreg.QueryValueEx(key, APP_NAME)  # type: ignore[union-attr]
         winreg.CloseKey(key)  # type: ignore[union-attr]
         
-        return str(value) if value else None
+        path = str(value) if value else None
+        logger.debug(f"Startup path: {path}")
+        return path
         
     except FileNotFoundError:
         # Key or value doesn't exist
+        logger.debug("Startup path not found in registry")
         return None
-    except Exception:
+    except Exception as e:
         # Other registry errors
+        logger.error(f"Failed to get startup path: {e}", exc_info=True)
         return None
 
 
@@ -292,14 +313,18 @@ def verify_startup_command() -> tuple[bool, str]:
     try:
         parts = shlex.split(path)
         if not parts:
+            logger.warning("Empty startup command")
             return False, "Empty command"
         
         exe_path = Path(parts[0])
         if exe_path.exists() and exe_path.is_file():
+            logger.debug(f"Startup command valid: {exe_path.name}")
             return True, f"Valid: {exe_path.name}"
         else:
+            logger.warning(f"Startup executable not found: {exe_path}")
             return False, f"File not found: {exe_path}"
     except Exception as e:
+        logger.error(f"Failed to verify startup command: {e}", exc_info=True)
         return False, f"Invalid command: {str(e)}"
 
 

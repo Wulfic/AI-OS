@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def load_tokenizer(model_or_path: str):
@@ -57,16 +60,24 @@ def load_tokenizer(model_or_path: str):
             (c / "vocab.json").exists() and (c / "merges.txt").exists()
         ):
             try:
+                logger.info(f"Loading tokenizer from local cache: {c}")
                 return _post_config(AutoTokenizer.from_pretrained(str(c), use_fast=True, local_files_only=True))
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Failed to load local tokenizer from {c}: {e}")
                 pass
 
+    logger.info(f"Downloading tokenizer from HuggingFace: {model_or_path}")
     try:
-        return _post_config(AutoTokenizer.from_pretrained(model_or_path, use_fast=True))
-    except Exception:
+        tok = _post_config(AutoTokenizer.from_pretrained(model_or_path, use_fast=True))
+        logger.info(f"Successfully loaded tokenizer for {model_or_path}")
+        return tok
+    except Exception as e:
+        logger.warning(f"Failed to download fast tokenizer for {model_or_path}: {e}, trying slow tokenizer")
         for c in candidates:
             try:
+                logger.debug(f"Trying slow tokenizer from {c}")
                 return _post_config(AutoTokenizer.from_pretrained(str(c), use_fast=False, local_files_only=True))
             except Exception:
                 pass
+        logger.error(f"All tokenizer loading attempts failed for {model_or_path}")
         raise

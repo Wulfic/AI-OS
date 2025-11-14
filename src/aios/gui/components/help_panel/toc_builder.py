@@ -1,6 +1,9 @@
 """Table of Contents tree builder for the Help Panel."""
 
+import logging
 from typing import Any, Dict, List, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 class TOCBuilder:
@@ -26,8 +29,12 @@ class TOCBuilder:
         Returns:
             List of top-level tree item IDs
         """
+        logger.info(f"[TOCBuilder] build_toc called with {len(index)} documents")
+        
         # Clear existing tree
-        for i in self.tree_widget.get_children():
+        existing_children = self.tree_widget.get_children()
+        logger.info(f"[TOCBuilder] Clearing {len(existing_children)} existing tree items")
+        for i in existing_children:
             self.tree_widget.delete(i)
         
         # Build nested directory structure
@@ -118,6 +125,7 @@ class TOCBuilder:
         except Exception:
             pass
         
+        logger.info(f"[TOCBuilder] TOC build complete: {len(top_items)} top-level items, {len(self.tree_widget.get_children())} total tree children")
         return top_items
     
     def populate_search_results(

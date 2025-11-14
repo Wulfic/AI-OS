@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -8,6 +9,8 @@ from rich import print
 
 from aios.core.train import Trainer, TrainConfig
 from aios.memory.store import get_db, init_db
+
+logger = logging.getLogger(__name__)
 
 
 def english_eval(
@@ -122,15 +125,21 @@ def english_eval(
         ok = (req_ok and any_ok and forbid_ok and len_ok and char_ok and bullets_ok and sentences_ok and (not passive))
         return ok, {"words": wcount, "chars": chars, "req_ok": req_ok, "any_ok": any_ok, "forbid_ok": forbid_ok, "len_ok": len_ok, "char_ok": char_ok, "bullets_ok": bullets_ok, "sentences_ok": sentences_ok, "passive": passive}
 
+    logger.info(f"Starting English evaluation: dataset={dataset_file}, max_lines={max_lines}, checkpoint={checkpoint}")
+    
     raw_lines = read_text_lines_sample_any(dataset_file, max_lines=max_lines)
     lines = _normalize_lines(raw_lines)
     if not lines:
+        logger.warning(f"No lines found in dataset {dataset_file}")
         print({"evaluated": False, "error": "no lines found", "dataset_file": dataset_file})
         return
 
+    logger.debug(f"Loaded {len(lines)} lines from dataset")
+    
     try:
         from aios.ml.english_metrics import summarize_corpus
         corpus = summarize_corpus(lines, max_samples=max_lines)
+        logger.debug(f"Corpus summary: {corpus.get('count', 0)} samples analyzed")
     except Exception:
         corpus = {"count": len(lines)}
 
@@ -155,14 +164,18 @@ def english_eval(
     tr = None
     model_dim: Optional[int] = None
     if checkpoint:
+        logger.info(f"Loading checkpoint for evaluation: {checkpoint}")
         try:
             tcfg = TrainConfig()
             tr = Trainer(tcfg)
             if not tr.load_checkpoint(checkpoint):
+                logger.warning(f"Failed to load checkpoint: {checkpoint}")
                 tr = None
             else:
                 model_dim = int(tr.model_np.W1.shape[0])
-        except Exception:
+                logger.info(f"Checkpoint loaded successfully, model dimension: {model_dim}")
+        except Exception as e:
+            logger.error(f"Error loading checkpoint {checkpoint}: {e}")
             tr = None
 
     dim: Optional[int] = None
@@ -179,6 +192,7 @@ def english_eval(
     }
 
     if instr_spec is not None:
+        logger.info(f"Evaluating instruction adherence with spec: {instr}")
         passes = 0
         passive = 0
         for ln in lines:
@@ -190,9 +204,12 @@ def english_eval(
             except Exception:
                 continue
         total = len(lines)
-        eval_out["adherence"] = {"spec": instr, "count": total, "pass": passes, "rate": (passes / max(1, total)), "passive": passive}
+        pass_rate = passes / max(1, total)
+        logger.info(f"Instruction adherence: {passes}/{total} passed ({pass_rate:.1%}), passive voice: {passive}")
+        eval_out["adherence"] = {"spec": instr, "count": total, "pass": passes, "rate": pass_rate, "passive": passive}
 
     if rx is not None:
+        logger.info(f"Evaluating task extraction with regex: {task}")
         import re as _re
         labels: list[int] = []
         for ln in lines:
@@ -202,10 +219,13 @@ def english_eval(
                 labels.append(0)
         matches = int(sum(labels))
         total = len(labels)
+        match_rate = matches / max(1, total)
+        logger.info(f"Task extraction: {matches}/{total} matches ({match_rate:.1%})")
         eval_out.setdefault("task", {})
-        eval_out["task"].update({"spec": task, "matches": matches, "total": total, "match_rate": (matches / max(1, total))})
+        eval_out["task"].update({"spec": task, "matches": matches, "total": total, "match_rate": match_rate})
 
         if tr and dim:
+            logger.debug(f"Running model predictions with feature dimension {dim}")
             X = []
             for ln in lines:
                 try:
@@ -235,6 +255,8 @@ def english_eval(
             rec = (tp / (tp + fn)) if (tp + fn) > 0 else 0.0
             f1 = (2 * prec * rec / (prec + rec)) if (prec + rec) > 0 else 0.0
             acc = ((tp + tn) / max(1, (tp + tn + fp + fn)))
+            logger.info(f"Model prediction metrics: precision={prec:.3f}, recall={rec:.3f}, f1={f1:.3f}, accuracy={acc:.3f}")
+            logger.debug(f"Confusion matrix: TP={tp}, FP={fp}, TN={tn}, FN={fn}")
             eval_out["task"].update({
                 "pred_threshold": thr,
                 "precision": float(prec),
@@ -247,15 +269,19 @@ def english_eval(
                 "fn": int(fn),
             })
 
+    logger.debug("Saving evaluation results to database")
     try:
         conn = get_db()
         init_db(conn)
         from aios.memory.store import save_artifact
         lbl = label or Path(dataset_file).stem
         save_artifact(conn, kind="english_eval", label=str(lbl), data=eval_out)
+        logger.info(f"Evaluation results saved with label '{lbl}'")
     finally:
         try:
             conn.close()  # type: ignore[name-defined]
         except Exception:
             pass
+    
+    logger.info(f"Evaluation completed successfully: {len(lines)} lines evaluated")
     print({"evaluated": True, "label": (label or Path(dataset_file).stem), "lines": len(lines)})

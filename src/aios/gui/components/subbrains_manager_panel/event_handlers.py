@@ -5,10 +5,14 @@ Provides event handling functions for expert management actions.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Optional, cast
+from ...utils.resource_management import submit_background
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 try:  # pragma: no cover - environment dependent
     from tkinter import messagebox, simpledialog  # type: ignore
@@ -29,10 +33,14 @@ def handle_create_expert(append_out_callback: Any) -> None:
     # Get expert details from user
     name = simpledialog.askstring("Create Expert", "Expert name:")
     if not name:
+        logger.debug("User cancelled expert creation (no name provided)")
         return
     
     category = simpledialog.askstring("Create Expert", "Category (e.g., Programming, Math):") or "General"
     description = simpledialog.askstring("Create Expert", "Description:") or ""
+    
+    logger.info(f"User action: Creating expert '{name}' (category: {category})")
+    logger.debug(f"Expert details: name='{name}', category='{category}', description='{description}'")
     
     # NOTE: Expert management CLI commands are planned for next phase
     # Will use: aios experts create --name <name> --category <category>
@@ -54,6 +62,7 @@ def handle_delete_expert(expert_id: Optional[str], append_out_callback: Any) -> 
         append_out_callback: Callback for logging output
     """
     if not expert_id:
+        logger.debug("Delete expert cancelled: no expert selected")
         if messagebox is not None:
             messagebox.showwarning("Delete Expert", "Please select an expert first.")
         return
@@ -61,13 +70,17 @@ def handle_delete_expert(expert_id: Optional[str], append_out_callback: Any) -> 
     if messagebox is None:
         return
     
+    logger.info(f"User action: Deleting expert {expert_id[:8]}...")
+    
     # Confirm
     ok = messagebox.askyesno("Delete Expert", f"Are you sure you want to delete expert {expert_id[:8]}...?")
     if not ok:
+        logger.info(f"User cancelled deletion of expert {expert_id[:8]}...")
         return
     
     # NOTE: Expert deletion CLI command planned for next phase
     # Will use: aios experts delete <expert_id>
+    logger.debug(f"Expert deletion confirmed for {expert_id}")
     append_out_callback(f"[Subbrains] Delete expert: {expert_id}\n"
                        f"[Subbrains] CLI command needed: not yet implemented")
     
@@ -84,9 +97,12 @@ def handle_set_status(expert_id: Optional[str], action: str, append_out_callback
         append_out_callback: Callback for logging output
     """
     if not expert_id:
+        logger.debug(f"Set status cancelled: no expert selected (action: {action})")
         if messagebox is not None:
             messagebox.showwarning("Set Status", "Please select an expert first.")
         return
+    
+    logger.info(f"User action: Setting expert {expert_id[:8]}... status to '{action}'")
     
     # NOTE: Expert status CLI commands planned for next phase
     # Will use: aios experts set-status <expert_id> <status>
@@ -107,14 +123,19 @@ def handle_set_parent(expert_id: Optional[str], parent_id: str, append_out_callb
         append_out_callback: Callback for logging output
     """
     if not expert_id:
+        logger.debug("Set parent cancelled: no expert selected")
         if messagebox is not None:
             messagebox.showwarning("Set Parent", "Please select an expert first.")
         return
     
     if not parent_id:
+        logger.debug("Set parent cancelled: no parent ID provided")
         if messagebox is not None:
             messagebox.showwarning("Set Parent", "Please enter a parent expert ID.")
         return
+    
+    logger.info(f"User action: Setting parent for expert {expert_id[:8]}... to {parent_id}")
+    logger.debug(f"Expert parent assignment: expert={expert_id}, parent={parent_id}")
     
     # NOTE: Expert parent management CLI command planned for next phase
     # Will use: aios experts set-parent <expert_id> <parent_id>
@@ -134,9 +155,12 @@ def handle_clear_parent(expert_id: Optional[str], append_out_callback: Any) -> N
         append_out_callback: Callback for logging output
     """
     if not expert_id:
+        logger.debug("Clear parent cancelled: no expert selected")
         if messagebox is not None:
             messagebox.showwarning("Clear Parent", "Please select an expert first.")
         return
+    
+    logger.info(f"User action: Clearing parent for expert {expert_id[:8]}...")
     
     # NOTE: Clear parent CLI command planned for next phase
     # Will use: aios experts clear-parent <expert_id>
@@ -167,17 +191,23 @@ def handle_link_goal(
     import threading
     
     if not expert_id:
+        logger.debug("Link goal cancelled: no expert selected")
         if messagebox is not None:
             messagebox.showwarning("Link Goal", "Please select an expert first.")
         return
     
     if not goal_text:
+        logger.debug("Link goal cancelled: no goal text provided")
         return
+    
+    logger.info(f"User action: Linking goal to expert {expert_id[:8]}...")
+    logger.debug(f"Goal text: '{goal_text[:50]}{'...' if len(goal_text) > 50 else ''}'")
     
     append_out_callback(f"[Subbrains] Linking goal to expert {expert_id[:8]}...")
     
     def run_link():
-        # NOTE: Goal-expert linking CLI command planned for next phase
+        logger.debug("Starting goal link background task")
+        # NOTE: Goal linking CLI support planned for next phase
         # Will use: aios goals link-expert <goal_id> <expert_id>
         append_out_callback(f"[Subbrains] Link goal to expert: expert={expert_id[:8]}..., goal='{goal_text}'\n"
                            f"[Subbrains] Using CLI: goals-link-expert <goal_id> {expert_id}")
@@ -193,8 +223,15 @@ def handle_link_goal(
             tk._default_root.after(0, update_ui)  # type: ignore
         except Exception:
             update_ui()  # Fallback to direct call
+        finally:
+            logger.debug("Goal link background task completed")
     
-    threading.Thread(target=run_link, daemon=True).start()
+    logger.debug(f"Queueing goal link background task for expert {expert_id[:8]}")
+    try:
+        submit_background("subbrains-link-goal", run_link)
+    except RuntimeError as exc:
+        logger.error("Failed to queue goal link task: %s", exc)
+        run_link()
 
 
 def handle_unlink_goals(
@@ -211,18 +248,21 @@ def handle_unlink_goals(
         append_out_callback: Callback for logging output
         on_expert_select_callback: Callback to refresh goals list
     """
-    import threading
-    
     if not expert_id or goals_list is None:
+        logger.debug("Unlink goals cancelled: no expert or goals list")
         return
     
     sel = goals_list.curselection()
     if not sel:
+        logger.debug("Unlink goals cancelled: no goals selected")
         return
+    
+    logger.info(f"User action: Unlinking {len(sel)} goal(s) from expert {expert_id[:8]}...")
     
     append_out_callback(f"[Subbrains] Unlinking goals from expert {expert_id[:8]}...")
     
     def run_unlink():
+        logger.debug("Starting goal unlink background task")
         # NOTE: Goal-expert unlinking CLI command planned for next phase
         # Will use: aios goals unlink-expert <goal_id> <expert_id>
         append_out_callback(f"[Subbrains] Unlink goals from expert {expert_id[:8]}...\n"
@@ -234,5 +274,12 @@ def handle_unlink_goals(
             tk._default_root.after(0, on_expert_select_callback)  # type: ignore
         except Exception:
             on_expert_select_callback()  # Fallback to direct call
+        finally:
+            logger.debug("Goal unlink background task completed")
     
-    threading.Thread(target=run_unlink, daemon=True).start()
+    logger.debug(f"Queueing goal unlink background task for expert {expert_id[:8]}")
+    try:
+        submit_background("subbrains-unlink-goals", run_unlink)
+    except RuntimeError as exc:
+        logger.error("Failed to queue goal unlink task: %s", exc)
+        run_unlink()

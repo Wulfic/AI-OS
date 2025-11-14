@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from typing import Any, Callable, cast
+import logging
 import threading
+
+logger = logging.getLogger(__name__)
 
 try:
     import tkinter as tk  # type: ignore
@@ -9,6 +12,9 @@ try:
 except Exception:  # pragma: no cover - environment dependent
     tk = cast(Any, None)
     ttk = cast(Any, None)
+
+# Import safe variable wrappers
+from ..utils import safe_variables
 
 
 class ChatPanel:
@@ -35,6 +41,9 @@ class ChatPanel:
     ) -> None:
         if tk is None:
             raise RuntimeError("Tkinter not available")
+        
+        logger.info("Initializing Chat Panel")
+        
         self._on_send = on_send
         self._on_load_brain = on_load_brain
         self._on_list_brains = on_list_brains
@@ -54,7 +63,7 @@ class ChatPanel:
             brain_lbl = ttk.Label(brain_bar, text="Active Brain:")
             brain_lbl.pack(side="left")
             
-            self.brain_var = tk.StringVar(value="<default>")
+            self.brain_var = safe_variables.StringVar(value="<default>")
             self.brain_combo = ttk.Combobox(brain_bar, textvariable=self.brain_var, state="readonly", width=30)
             self.brain_combo.pack(side="left", padx=(4, 4))
             
@@ -99,7 +108,7 @@ class ChatPanel:
         bar.pack(fill="x")
         you_lbl = ttk.Label(bar, text="You:")
         you_lbl.pack(side="left")
-        self.text_var = tk.StringVar(value="status")
+        self.text_var = safe_variables.StringVar(value="status")
         self.entry = ttk.Entry(bar, textvariable=self.text_var)
         self.entry.pack(side="left", fill="x", expand=True, padx=(4, 8))
         try:
@@ -125,16 +134,21 @@ class ChatPanel:
             add_tooltip(you_lbl, "Label for your input line.")
         except Exception:
             pass
+        
+        logger.info("Chat Panel initialized successfully")
 
     # public helpers
     def clear(self) -> None:
+        logger.info("User action: Clearing chat log")
         try:
             self.log.delete("1.0", tk.END)
-        except Exception:
-            pass
+            logger.debug("Chat log cleared successfully")
+        except Exception as e:
+            logger.error(f"Failed to clear chat log: {e}")
 
     def _stop(self) -> None:
         """Stop the current response generation."""
+        logger.info("User action: Stopping response generation")
         try:
             self._stop_event.set()
             self.log.insert(tk.END, "\n[Stopping...]\n")
@@ -145,6 +159,7 @@ class ChatPanel:
             except Exception:
                 pass
         except Exception as e:
+            logger.error(f"Error during stop operation: {e}")
             try:
                 self.log.insert(tk.END, f"Error stopping: {e}\n")
             except Exception:
@@ -156,6 +171,7 @@ class ChatPanel:
             self.log.insert(tk.END, "Unload not available.\n")
             return
         try:
+            logger.info("User action: Unloading model to free memory")
             self.log.insert(tk.END, "Unloading model...\n")
             self.log.see(tk.END)
             
@@ -164,7 +180,9 @@ class ChatPanel:
             def _work():
                 try:
                     result = unload_callback()
+                    logger.info("Model unloaded successfully")
                 except Exception as e:
+                    logger.error(f"Failed to unload model: {e}", exc_info=True)
                     result = f"Error: {e}"
                 
                 def _render():
@@ -179,6 +197,7 @@ class ChatPanel:
             
             threading.Thread(target=_work, daemon=True).start()
         except Exception as e:
+            logger.error(f"Failed to initiate model unload: {e}", exc_info=True)
             self.log.insert(tk.END, f"Failed to unload: {e}\n")
     
     def update_status(self, status: str) -> None:
@@ -205,16 +224,21 @@ class ChatPanel:
         if not self._on_list_brains:
             return
         try:
+            logger.debug("Refreshing brain list")
             brains = self._on_list_brains()
             if brains:
                 self.brain_combo["values"] = brains
+                logger.info(f"Brain list refreshed: {len(brains)} brain(s) available")
                 # Select first brain if available
                 if not self.brain_var.get() or self.brain_var.get() == "<default>":
                     self.brain_var.set(brains[0] if brains else "<default>")
+                    logger.debug(f"Auto-selected brain: {brains[0] if brains else '<default>'}")
             else:
                 self.brain_combo["values"] = ["<no brains>"]
                 self.brain_var.set("<no brains>")
+                logger.warning("No brains available")
         except Exception as e:
+            logger.error(f"Failed to refresh brain list: {e}", exc_info=True)
             self.log.insert(tk.END, f"[ui] Failed to refresh brains: {e}\n")
 
     def _load_brain(self) -> None:
@@ -223,9 +247,11 @@ class ChatPanel:
             return
         brain_name = self.brain_var.get()
         if not brain_name or brain_name in {"<default>", "<no brains>"}:
+            logger.warning("Attempted to load brain but no valid brain selected")
             self.log.insert(tk.END, "No brain selected.\n")
             return
         try:
+            logger.info(f"User action: Loading brain '{brain_name}'")
             self.log.insert(tk.END, f"Loading {brain_name}...\n")
             self.update_status("Loading...")
             self.log.see(tk.END)
@@ -237,7 +263,12 @@ class ChatPanel:
                 try:
                     result = load_callback(brain_name)  # Now guaranteed non-None
                     success = "error" not in result.lower()
+                    if success:
+                        logger.info(f"Brain '{brain_name}' loaded successfully")
+                    else:
+                        logger.warning(f"Brain '{brain_name}' load failed: {result}")
                 except Exception as e:
+                    logger.error(f"Failed to load brain '{brain_name}': {e}", exc_info=True)
                     result = f"Error: {e}"
                     success = False
                 
@@ -256,6 +287,7 @@ class ChatPanel:
             
             threading.Thread(target=_work, daemon=True).start()
         except Exception as e:
+            logger.error(f"Failed to initiate brain load for '{brain_name}': {e}", exc_info=True)
             self.log.insert(tk.END, f"Failed to load brain: {e}\n")
             self.update_status("Load failed")
 
@@ -265,8 +297,10 @@ class ChatPanel:
         Args:
             theme: Theme name (e.g., 'Light Mode', 'Dark Mode', 'Matrix Mode', etc.)
         """
+        logger.debug(f"Applying theme '{theme}' to chat panel")
         # Get theme colors
         colors = self._get_theme_colors(theme)
+        logger.debug(f"Theme colors: bg={colors['bg']}, fg={colors['fg']}")
         
         # Update Text widget
         try:
@@ -275,8 +309,8 @@ class ChatPanel:
                 fg=colors["fg"],
                 insertbackground=colors["fg"]
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Failed to apply theme to chat panel: {e}")
     
     def _get_theme_colors(self, theme: str) -> dict[str, str]:
         """Get colors for the specified theme.
@@ -306,6 +340,7 @@ class ChatPanel:
         if not msg:
             return
         try:
+            logger.info(f"User message: '{msg[:100]}{'...' if len(msg) > 100 else ''}' ({len(msg)} chars)")
             # Echo user
             self.log.insert(tk.END, f"You: {msg}\n")
             # Insert a temporary loading line (brief - model stays loaded now)
@@ -327,11 +362,16 @@ class ChatPanel:
 
             def _work():
                 try:
+                    logger.debug("Calling chat handler")
                     resp = self._on_send(msg)
                     # Check if stopped
                     if self._stop_event.is_set():
+                        logger.info("Chat response stopped by user")
                         resp = "[Response stopped by user]"
+                    else:
+                        logger.info(f"Chat response received: {len(str(resp))} chars")
                 except Exception as e:  # capture errors and render in UI thread
+                    logger.error(f"Chat handler error: {e}", exc_info=True)
                     resp = f"Error: {e}"
 
                 def _render():
@@ -361,5 +401,64 @@ class ChatPanel:
             self._current_thread = threading.Thread(target=_work, daemon=True)
             self._current_thread.start()
         except Exception as e:
+            logger.error(f"Failed to send message: {e}", exc_info=True)
             self.log.insert(tk.END, f"Error: {e}\n")
-            self.log.see(tk.END)
+
+    def get_state(self) -> dict[str, Any]:
+        """Get current chat panel state for persistence.
+        
+        Returns:
+            Dictionary containing chat panel state
+        """
+        state = {}
+        
+        # Save selected brain if brain selector exists
+        if hasattr(self, 'brain_var'):
+            try:
+                selected_brain = self.brain_var.get()
+                if selected_brain and selected_brain != "<default>":
+                    state['selected_brain'] = selected_brain
+                    logger.debug(f"Chat panel state: selected_brain={selected_brain}")
+            except Exception as e:
+                logger.warning(f"Failed to get brain_var state: {e}")
+        
+        return state
+    
+    def set_state(self, state: dict[str, Any]) -> None:
+        """Restore chat panel state from saved data.
+        
+        Args:
+            state: Dictionary containing chat panel state
+        """
+        if not state:
+            return
+        
+        logger.info(f"Restoring chat panel state with {len(state)} parameters")
+        
+        # Restore selected brain
+        if 'selected_brain' in state and hasattr(self, 'brain_var'):
+            try:
+                brain_name = state['selected_brain']
+                self.brain_var.set(brain_name)
+                logger.debug(f"Restored selected brain: {brain_name}")
+            except Exception as e:
+                logger.warning(f"Failed to restore selected brain: {e}")
+        
+        logger.debug("Chat panel state restoration complete")
+    
+    def cleanup(self) -> None:
+        """Clean up chat panel resources on shutdown."""
+        logger.info("Cleaning up Chat Panel")
+        
+        # Stop any active response generation
+        if self._current_thread and self._current_thread.is_alive():
+            logger.info("Stopping active chat response generation")
+            try:
+                self._stop_event.set()
+                self._current_thread.join(timeout=2.0)
+                if self._current_thread.is_alive():
+                    logger.warning("Chat response thread did not terminate within timeout")
+            except Exception as e:
+                logger.error(f"Error stopping chat thread during cleanup: {e}")
+        
+        logger.info("Chat Panel cleanup complete")

@@ -9,11 +9,14 @@ Provides functions for:
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from tkinter import ttk
+
+logger = logging.getLogger(__name__)
 
 
 def get_selected_expert_id(experts_tree: "ttk.Treeview") -> Optional[str]:
@@ -60,14 +63,18 @@ def load_and_refresh_experts(
         append_out_callback: Callback for logging output
     """
     try:
+        logger.info(f"Loading experts from registry: {registry_path}")
         # Load expert registry
         if os.path.exists(registry_path):
             with open(registry_path, "r", encoding="utf-8") as f:
                 registry_data = json.load(f)
             
             experts = registry_data.get("experts", [])
+            logger.info(f"Found {len(experts)} expert(s) in registry")
+            logger.debug(f"Expert IDs: {[e.get('expert_id', 'Unknown')[:8] for e in experts]}")
         else:
             experts = []
+            logger.warning(f"No registry found at {registry_path}")
             append_out_callback(f"[Subbrains] No registry found at {registry_path}")
         
         # Update summary stats
@@ -75,6 +82,8 @@ def load_and_refresh_experts(
         active = sum(1 for e in experts if e.get("is_active", False))
         frozen = sum(1 for e in experts if e.get("is_frozen", False))
         total_acts = sum(e.get("total_activations", 0) for e in experts)
+        
+        logger.debug(f"Expert stats - Total: {total}, Active: {active}, Frozen: {frozen}, Activations: {total_acts}")
         
         total_experts_var.set(str(total))
         active_experts_var.set(str(active))
@@ -134,12 +143,14 @@ def load_and_refresh_experts(
                 experts_tree.insert("", "end", values=values, tags=(expert_id,))
                 
             except Exception as e:
+                logger.error(f"Error displaying expert {expert.get('expert_id', 'Unknown')}: {e}")
                 append_out_callback(f"[Subbrains] Error displaying expert: {e}")
                 continue
         
         append_out_callback(f"[Subbrains] Loaded {total} expert(s)")
         
     except Exception as e:
+        logger.error(f"Error refreshing experts from {registry_path}: {e}", exc_info=True)
         append_out_callback(f"[Subbrains] Error refreshing: {e}")
         import traceback
         append_out_callback(traceback.format_exc())
@@ -166,6 +177,8 @@ def load_goals_for_expert(
     except Exception:
         return
     
+    logger.info(f"Loading goals for expert: {expert_id[:8]}...")
+    
     goals_list.delete(0, tk.END)
     goals_count_var.set(f"Expert: {expert_id[:8]}...")
     
@@ -179,6 +192,8 @@ def load_goals_for_expert(
             for expert in experts:
                 if expert.get("expert_id") == expert_id:
                     goals = expert.get("goals", [])
+                    logger.info(f"Found {len(goals)} goal(s) for expert {expert_id[:8]}")
+                    logger.debug(f"Goal IDs: {goals}")
                     for goal_id in goals:
                         goals_list.insert(tk.END, f"Goal #{goal_id}")
                     
@@ -186,4 +201,5 @@ def load_goals_for_expert(
                     goals_count_var.set(f"{count} goal{'s' if count != 1 else ''} linked")
                     break
     except Exception as e:
+        logger.error(f"Error loading goals for expert {expert_id[:8]}: {e}")
         append_out_callback(f"[Subbrains] Error loading goals: {e}")

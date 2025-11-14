@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+# Import safe variable wrappers
+from ...utils import safe_variables
+
 from typing import TYPE_CHECKING, Any, cast
 
 try:
@@ -16,6 +19,33 @@ if TYPE_CHECKING:
 
 from .themes import get_colors
 from . import event_handlers
+
+
+def _trigger_state_save(panel: RichChatPanel) -> None:
+    """Trigger state save in the main app.
+    
+    This is called when chat panel settings change to persist the state.
+    
+    Args:
+        panel: Rich chat panel instance
+    """
+    try:
+        # Walk up the widget hierarchy to find the root Tk instance
+        root = panel._parent
+        while root and not isinstance(root, tk.Tk):
+            root = root.master if hasattr(root, 'master') else None
+        
+        # DISABLED: Auto-save on brain switch (too aggressive, causes hangs)
+        # State will be saved on window close, Ctrl+S, or periodically
+        # # If we found the root, get the app and trigger scheduled save
+        # if root:
+        #     # The app stores itself in root._app
+        #     app = getattr(root, '_app', None)
+        #     if app and hasattr(app, 'schedule_state_save'):
+        #         app.schedule_state_save()
+    except Exception:
+        # Silently ignore if we can't trigger state save
+        pass
 
 
 def build_brain_selector(panel: RichChatPanel, frame: Any) -> None:
@@ -37,7 +67,7 @@ def build_brain_selector(panel: RichChatPanel, frame: Any) -> None:
     brain_lbl = ttk.Label(brain_bar, text="Active Brain:")
     brain_lbl.pack(side="left")
     
-    panel.brain_var = tk.StringVar(value="<default>")
+    panel.brain_var = safe_variables.StringVar(value="<default>")
     panel.brain_combo = ttk.Combobox(
         brain_bar,
         textvariable=panel.brain_var,
@@ -45,6 +75,12 @@ def build_brain_selector(panel: RichChatPanel, frame: Any) -> None:
         width=30
     )
     panel.brain_combo.pack(side="left", padx=(4, 4))
+    
+    # Trigger state save on brain selection change
+    panel.brain_var.trace_add(
+        "write",
+        lambda *args: _trigger_state_save(panel)
+    )
     
     load_brain_btn = ttk.Button(brain_bar, text="Load Brain", command=panel._load_brain)
     load_brain_btn.pack(side="left")
@@ -98,7 +134,7 @@ def build_context_controls(panel: RichChatPanel, frame: Any) -> None:
     context_lbl.pack(side="left")
     
     # Input box with default 0 (auto-max), allow any positive number
-    panel._context_length_var = tk.StringVar(value="0")
+    panel._context_length_var = safe_variables.StringVar(value="0")
     panel._context_entry = ttk.Entry(
         context_bar,
         textvariable=panel._context_length_var,
@@ -118,6 +154,12 @@ def build_context_controls(panel: RichChatPanel, frame: Any) -> None:
     panel._context_entry.bind(
         "<Return>", 
         lambda e: event_handlers.validate_context_length(panel, e)
+    )
+    
+    # Trigger state save on change
+    panel._context_length_var.trace_add(
+        "write",
+        lambda *args: _trigger_state_save(panel)
     )
     
     # Tooltips
@@ -150,7 +192,7 @@ def build_sampling_controls(panel: RichChatPanel, frame: Any) -> None:
     temp_lbl = ttk.Label(sampling_bar, text="Temperature:")
     temp_lbl.pack(side="left")
     
-    panel._temperature_var = tk.StringVar(value="0.7")
+    panel._temperature_var = safe_variables.StringVar(value="0.7")
     temp_entry = ttk.Entry(
         sampling_bar,
         textvariable=panel._temperature_var,
@@ -158,11 +200,17 @@ def build_sampling_controls(panel: RichChatPanel, frame: Any) -> None:
     )
     temp_entry.pack(side="left", padx=(4, 12))
     
+    # Trigger state save on change
+    panel._temperature_var.trace_add(
+        "write",
+        lambda *args: _trigger_state_save(panel)
+    )
+    
     # Top-p
     topp_lbl = ttk.Label(sampling_bar, text="Top-p:")
     topp_lbl.pack(side="left")
     
-    panel._top_p_var = tk.StringVar(value="0.9")
+    panel._top_p_var = safe_variables.StringVar(value="0.9")
     topp_entry = ttk.Entry(
         sampling_bar,
         textvariable=panel._top_p_var,
@@ -170,17 +218,29 @@ def build_sampling_controls(panel: RichChatPanel, frame: Any) -> None:
     )
     topp_entry.pack(side="left", padx=(4, 12))
     
+    # Trigger state save on change
+    panel._top_p_var.trace_add(
+        "write",
+        lambda *args: _trigger_state_save(panel)
+    )
+    
     # Top-k
     topk_lbl = ttk.Label(sampling_bar, text="Top-k:")
     topk_lbl.pack(side="left")
     
-    panel._top_k_var = tk.StringVar(value="50")
+    panel._top_k_var = safe_variables.StringVar(value="50")
     topk_entry = ttk.Entry(
         sampling_bar,
         textvariable=panel._top_k_var,
         width=6
     )
     topk_entry.pack(side="left", padx=(4, 0))
+    
+    # Trigger state save on change
+    panel._top_k_var.trace_add(
+        "write",
+        lambda *args: _trigger_state_save(panel)
+    )
     
     # Tooltips
     try:
@@ -263,7 +323,7 @@ def build_input_area(panel: RichChatPanel, frame: Any) -> None:
     you_lbl = ttk.Label(input_frame, text="You:")
     you_lbl.pack(side="left")
     
-    panel.text_var = tk.StringVar(value="")
+    panel.text_var = safe_variables.StringVar(value="")
     panel.entry = ttk.Entry(input_frame, textvariable=panel.text_var)
     panel.entry.pack(side="left", fill="x", expand=True, padx=(4, 8))
     

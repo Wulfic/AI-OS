@@ -7,11 +7,16 @@ during optimization workloads to ensure proper multi-GPU utilization and detect 
 
 from __future__ import annotations
 
+import logging
 import time
 import json
 import threading
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
+
+from ...utils.resource_management import submit_background
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -35,6 +40,7 @@ class GPUMonitor:
         self.log_file = log_file
         self.monitoring = False
         self.monitor_thread: Optional[threading.Thread] = None
+        self._monitor_future = None
         self.metrics_history: List[GPUMetrics] = []
         self._lock = threading.Lock()
         self._worker_pool = worker_pool  # Store worker pool for async operations
@@ -42,28 +48,81 @@ class GPUMonitor:
     def start_monitoring(self, interval: float = 2.0) -> None:
         """Start monitoring GPU metrics in background thread."""
         if self.monitoring:
+            logger.debug("GPU monitoring already active")
             return
-            
+        
+        logger.info(f"Starting GPU monitoring for GPUs {self.gpu_ids} (interval={interval}s)")
+        logger.debug(f"GPU monitoring configuration: log_file={self.log_file}, worker_pool={'yes' if self._worker_pool else 'no'}")
         self.monitoring = True
         if self._worker_pool:
-            # Use worker pool for better resource management
-            future = self._worker_pool.submit(self._monitor_loop, interval)
-            # Store reference to prevent early termination
-            self.monitor_thread = future
+            logger.debug("Using worker pool for GPU monitoring")
+            logger.info(f"GPU monitoring using worker pool for GPUs: {', '.join(map(str, self.gpu_ids))}")
+            try:
+                self._monitor_future = submit_background(
+                    "hrm-gpu-monitor",
+                    self._monitor_loop,
+                    interval,
+                    pool=self._worker_pool,
+                )
+                self.monitor_thread = None
+            except RuntimeError as exc:
+                logger.error("Failed to queue GPU monitoring task: %s", exc)
+                self.monitor_thread = threading.Thread(
+                    target=self._monitor_loop,
+                    args=(interval,),
+                    daemon=True,
+                )
+                self.monitor_thread.start()
         else:
             # Fallback to threading
+            logger.debug("Using dedicated thread for GPU monitoring")
+            logger.info(f"GPU monitoring using dedicated thread for GPUs: {', '.join(map(str, self.gpu_ids))}")
             self.monitor_thread = threading.Thread(
                 target=self._monitor_loop,
                 args=(interval,),
                 daemon=True
             )
             self.monitor_thread.start()
+        logger.debug("GPU monitoring started successfully")
         
     def stop_monitoring(self) -> None:
         """Stop monitoring and return final metrics summary."""
+        if not self.monitoring:
+            logger.debug("GPU monitoring stop called but not currently monitoring")
+            return
+        
+        logger.info("Stopping GPU monitoring")
         self.monitoring = False
-        if self.monitor_thread:
+        handle = getattr(self, "_monitor_future", None)
+        if handle is not None and hasattr(handle, "done"):
+            logger.debug("Waiting for monitor task to terminate")
+            try:
+                handle.result(timeout=5.0)
+            except Exception:
+                pass
+            self._monitor_future = None
+        elif self.monitor_thread:
+            logger.debug("Waiting for monitor thread to terminate")
             self.monitor_thread.join(timeout=5.0)
+        
+        # Log summary with detailed metrics
+        if self.metrics_history:
+            summary = self.get_summary()
+            total_samples = len(self.metrics_history)
+            logger.info(f"GPU monitoring stopped - collected {total_samples} metric samples across {len(self.gpu_ids)} GPUs")
+            
+            # Log per-GPU summary
+            for gpu_id in self.gpu_ids:
+                gpu_key = f"gpu_{gpu_id}"
+                if gpu_key in summary:
+                    gpu_stats = summary[gpu_key]
+                    logger.debug(f"GPU {gpu_id} summary: "
+                               f"mem_avg={gpu_stats.get('memory_avg', 0):.1f}%, "
+                               f"mem_max={gpu_stats.get('memory_max', 0):.1f}%, "
+                               f"util_avg={gpu_stats.get('utilization_avg', 0):.1f}%, "
+                               f"samples={gpu_stats.get('samples', 0)}")
+        else:
+            logger.debug("GPU monitoring stopped - no metrics collected")
             
     def get_current_metrics(self) -> List[GPUMetrics]:
         """Get current GPU metrics for all monitored GPUs."""
@@ -73,6 +132,7 @@ class GPUMonitor:
             import subprocess
             
             # Use nvidia-smi to get GPU metrics
+            nv_start = time.perf_counter()
             cmd = [
                 "nvidia-smi",
                 "--query-gpu=index,memory.used,memory.total,utilization.gpu,temperature.gpu,power.draw",
@@ -80,6 +140,9 @@ class GPUMonitor:
             ]
             
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            nv_duration = time.perf_counter() - nv_start
+            if nv_duration > 1.0:
+                logger.debug(f"nvidia-smi monitor query latency: {nv_duration:.3f}s")
             
             if result.returncode == 0:
                 for line in result.stdout.strip().split('\n'):

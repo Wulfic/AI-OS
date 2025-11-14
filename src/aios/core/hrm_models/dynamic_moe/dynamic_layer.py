@@ -119,9 +119,13 @@ class DynamicMoELayer(nn.Module):
             logger.warning(f"[DynamicMoE] Expert {expert_id} already exists, skipping")
             return
         
+        # Log expert creation parameters
+        logger.info(f"[DynamicMoE] Creating expert {expert_id} with parameters: hidden_size={self.hidden_size}, intermediate_size={self.intermediate_size}")
+        
         # Create or load expert
         if expert_module is not None:
             expert = expert_module
+            logger.debug(f"[DynamicMoE] Using pre-initialized module for expert {expert_id}")
         elif checkpoint_path and Path(checkpoint_path).exists():
             expert = FeedForward(self.hidden_size, self.intermediate_size)
             try:
@@ -180,22 +184,28 @@ class DynamicMoELayer(nn.Module):
             logger.warning(f"[DynamicMoE] Expert {expert_id} not found")
             return False
         
+        # Log deletion
+        logger.info(f"[DynamicMoE] Deleting expert {expert_id} (remove_from_registry={remove_from_registry})")
+        
         # Remove from ModuleDict
         if expert_id in self.experts:
             del self.experts[expert_id]
+            logger.debug(f"[DynamicMoE] Removed expert {expert_id} from ModuleDict")
         
         # Remove from registry
         if remove_from_registry:
             self.registry.remove_expert(expert_id)
+            logger.debug(f"[DynamicMoE] Removed expert {expert_id} from registry")
         
         # Remove from frozen set
         if expert_id in self.frozen_experts:
             self.frozen_experts.remove(expert_id)
+            logger.debug(f"[DynamicMoE] Removed expert {expert_id} from frozen set")
         
         # Update router size
         self._update_router_size()
         
-        logger.info(f"[DynamicMoE] Removed expert {expert_id} (remaining: {len(self.get_active_expert_ids())})")
+        logger.info(f"[DynamicMoE] Expert {expert_id} deletion confirmed (remaining: {len(self.get_active_expert_ids())})")
         return True
     
     def freeze_expert(self, expert_id: str) -> None:
@@ -203,6 +213,8 @@ class DynamicMoELayer(nn.Module):
         if expert_id not in self.get_active_expert_ids():
             logger.warning(f"[DynamicMoE] Expert {expert_id} not found, cannot freeze")
             return
+        
+        logger.info(f"[DynamicMoE] Expert {expert_id} state: active → frozen")
         
         if expert_id in self.experts:
             for param in self.experts[expert_id].parameters():
@@ -216,6 +228,8 @@ class DynamicMoELayer(nn.Module):
         if expert_id not in self.get_active_expert_ids():
             logger.warning(f"[DynamicMoE] Expert {expert_id} not found, cannot unfreeze")
             return
+        
+        logger.info(f"[DynamicMoE] Expert {expert_id} state: frozen → active")
         
         if expert_id in self.experts:
             for param in self.experts[expert_id].parameters():
@@ -462,7 +476,7 @@ class DynamicMoELayer(nn.Module):
         registry_path = load_path / "expert_registry.json"
         if registry_path.exists():
             self.registry = ExpertRegistry.load(str(registry_path))
-            print(f"[DEBUG] Loaded registry with {len(self.registry.experts)} experts")
+            logger.debug(f"[DynamicMoE] Loaded registry with {len(self.registry.experts)} experts")
         elif strict:
             raise FileNotFoundError(f"Registry not found: {registry_path}")
         
@@ -477,18 +491,18 @@ class DynamicMoELayer(nn.Module):
         
         # Check if router size matches registry
         num_experts_to_load = len(self.get_active_expert_ids())
-        print(f"[DEBUG] Active expert IDs after loading registry: {self.get_active_expert_ids()}")
-        print(f"[DEBUG] Current router has {self.router.num_experts} experts, registry has {num_experts_to_load} experts")
+        logger.debug(f"[DynamicMoE] Active expert IDs after loading registry: {self.get_active_expert_ids()}")
+        logger.debug(f"[DynamicMoE] Current router has {self.router.num_experts} experts, registry has {num_experts_to_load} experts")
         
         # Check router checkpoint size vs registry
         checkpoint_num_experts = None
         if router_state_dict and 'gate.weight' in router_state_dict:
             checkpoint_num_experts = router_state_dict['gate.weight'].shape[0]  # Output dimension = num_experts
-            print(f"[DEBUG] Checkpoint router has {checkpoint_num_experts} experts")
+            logger.debug(f"[DynamicMoE] Checkpoint router has {checkpoint_num_experts} experts")
         
         # If sizes match, load the checkpoint router
         if router_state_dict and checkpoint_num_experts == num_experts_to_load:
-            print(f"[DEBUG] Loading router from checkpoint (sizes match: {checkpoint_num_experts} experts)")
+            logger.debug(f"[DynamicMoE] Loading router from checkpoint (sizes match: {checkpoint_num_experts} experts)")
             self.router.load_state_dict(router_state_dict)
         else:
             # Sizes don't match - reinitialize router to match registry
@@ -497,9 +511,9 @@ class DynamicMoELayer(nn.Module):
                     f"[DynamicMoE] Router size mismatch! Checkpoint has {checkpoint_num_experts} experts "
                     f"but registry has {num_experts_to_load} experts. Creating new router."
                 )
-            print(f"[DEBUG] Reinitializing router to {num_experts_to_load} experts")
+            logger.debug(f"[DynamicMoE] Reinitializing router to {num_experts_to_load} experts")
             self._update_router_size()
-            print(f"[DEBUG] After resize, router has {self.router.num_experts} experts")
+            logger.debug(f"[DynamicMoE] After resize, router has {self.router.num_experts} experts")
         
         # Load experts (if not lazy loading)
         if not self.lazy_loading:

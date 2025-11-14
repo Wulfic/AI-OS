@@ -7,10 +7,13 @@ Implements a queue system that pauses downloads when training starts, and resume
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from typing import Dict, Tuple, Optional, Callable, Any
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 
 class DatasetStreamManager:
@@ -44,6 +47,7 @@ class DatasetStreamManager:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = cls()
+                    logger.info("DatasetStreamManager singleton instance created")
         return cls._instance
     
     def set_log_callback(self, callback: Callable[[str], None]) -> None:
@@ -112,6 +116,7 @@ class DatasetStreamManager:
             # Check if training is active on this dataset
             if normalized_id in self._active_training:
                 training_info = self._active_training[normalized_id]
+                logger.warning(f"Download blocked for '{dataset_id}': training active since {training_info['started']}")
                 self._log(f"⚠️ Cannot download {dataset_id}: training active since {training_info['started']}")
                 return False
             
@@ -123,6 +128,7 @@ class DatasetStreamManager:
                 "dataset_id": dataset_id,  # Keep original for display
             }
             
+            logger.info(f"Download registered for dataset '{dataset_id}'")
             self._log(f"📥 Download registered: {dataset_id}")
             return True
     
@@ -138,7 +144,10 @@ class DatasetStreamManager:
         with self._registry_lock:
             if normalized_id in self._active_downloads:
                 del self._active_downloads[normalized_id]
+                logger.info(f"Download unregistered for dataset '{dataset_id}'")
                 self._log(f"✅ Download unregistered: {dataset_id}")
+            else:
+                logger.debug(f"Attempted to unregister download for '{dataset_id}' but it was not registered")
     
     def register_training(self, dataset_id: str) -> Tuple[bool, str]:
         """
@@ -164,6 +173,7 @@ class DatasetStreamManager:
                 pause_event.set()  # Signal pause
                 download_info["status"] = "paused_for_training"
                 
+                logger.info(f"Download paused for training on dataset '{dataset_id}'")
                 self._log(f"⏸️ Download paused for training: {dataset_id}")
             
             # Register training
@@ -172,6 +182,7 @@ class DatasetStreamManager:
                 "dataset_id": dataset_id,
             }
             
+            logger.info(f"Training session registered for dataset '{dataset_id}'")
             self._log(f"🎯 Training registered: {dataset_id}")
             return True, "Training registered"
     
@@ -189,7 +200,10 @@ class DatasetStreamManager:
         with self._registry_lock:
             if normalized_id in self._active_training:
                 del self._active_training[normalized_id]
+                logger.info(f"Training session unregistered for dataset '{dataset_id}'")
                 self._log(f"✅ Training unregistered: {dataset_id}")
+            else:
+                logger.debug(f"Attempted to unregister training for '{dataset_id}' but it was not registered")
             
             # Resume any paused downloads
             if normalized_id in self._active_downloads:
@@ -198,6 +212,7 @@ class DatasetStreamManager:
                     pause_event = download_info["pause_event"]
                     pause_event.clear()  # Signal resume
                     download_info["status"] = "active"
+                    logger.info(f"Download resumed for dataset '{dataset_id}'")
                     self._log(f"▶️ Download resumed: {dataset_id}")
     
     def can_download(self, dataset_id: str) -> Tuple[bool, str]:
@@ -214,7 +229,9 @@ class DatasetStreamManager:
         
         with self._registry_lock:
             if normalized_id in self._active_training:
+                logger.debug(f"Download check for '{dataset_id}': blocked by active training")
                 return False, f"Training active on {dataset_id}"
+            logger.debug(f"Download check for '{dataset_id}': allowed")
             return True, "OK"
     
     def can_train(self, dataset_id: str) -> Tuple[bool, str]:

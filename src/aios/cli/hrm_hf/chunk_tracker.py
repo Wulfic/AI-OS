@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import json
 import threading
+import logging
 from pathlib import Path
 from typing import Dict, Set, Tuple, Optional, List
 from dataclasses import dataclass, asdict
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -53,6 +56,7 @@ class ChunkTracker:
             state_file: Path to save/load training state
         """
         self.state_file = state_file or Path("training_state/chunk_tracker_state.json")
+        logger.info(f"Initializing ChunkTracker with state file: {self.state_file}")
         self.lock = threading.Lock()
         
         # Track completed chunks: {(block_id, chunk_id): ChunkProgress}
@@ -83,11 +87,14 @@ class ChunkTracker:
         self.session_start_true_steps = 0  # True steps at session start
         
         # Load existing state if available
+        logger.debug("Loading existing chunk tracker state if available")
         self._load_state()
         
         # After loading, mark session start point
         self.session_start_chunk_count = len(self.completed_chunks)
         self.session_start_true_steps = self.total_true_steps
+        logger.info(f"ChunkTracker initialized: {len(self.completed_chunks)} chunks completed, "
+                   f"{self.total_true_steps} true steps, epoch {self.current_epoch}")
     
     def claim_chunk(
         self,
@@ -105,15 +112,18 @@ class ChunkTracker:
         Returns:
             True if chunk was successfully claimed, False if already trained
         """
+        logger.debug(f"GPU {gpu_id} attempting to claim chunk (block={block_id}, chunk={chunk_id})")
         with self.lock:
             chunk_key = (block_id, chunk_id)
             
             # Check if already completed
             if chunk_key in self.completed_chunks:
+                logger.debug(f"Chunk {chunk_key} already completed, cannot claim")
                 return False
             
             # Mark block as started
             self.started_blocks.add(block_id)
+            logger.info(f"GPU {gpu_id} successfully claimed chunk (block={block_id}, chunk={chunk_id})")
             
             return True
     
@@ -136,6 +146,7 @@ class ChunkTracker:
             samples_trained: Number of samples trained in this chunk
             true_steps: True training steps (micro-batches) for this chunk
         """
+        logger.debug(f"Marking chunk complete: block={block_id}, chunk={chunk_id}, gpu={gpu_id}, step={step}, samples={samples_trained}, true_steps={true_steps}")
         with self.lock:
             chunk_key = (block_id, chunk_id)
             
@@ -162,6 +173,7 @@ class ChunkTracker:
             self.blocks_this_epoch.add(block_id)
             
             print(f"[ChunkTracker] GPU {gpu_id} completed Block {block_id} Chunk {chunk_id} (Step {step})")
+            logger.info(f"Chunk completed: block={block_id}, chunk={chunk_id}, gpu={gpu_id}, total_samples={self.total_samples_trained}, total_true_steps={self.total_true_steps}")
             
             # Auto-save state after every chunk for better resume granularity
             # This matches checkpoint save frequency in single-GPU and parallel modes
@@ -247,13 +259,19 @@ class ChunkTracker:
         """
         with self.lock:
             self.total_blocks_in_dataset = total_blocks
-            return len(self.blocks_this_epoch) >= total_blocks
+            is_complete = len(self.blocks_this_epoch) >= total_blocks
+            if is_complete:
+                logger.info(f"Epoch {self.current_epoch} complete: {len(self.blocks_this_epoch)}/{total_blocks} blocks visited")
+            else:
+                logger.debug(f"Epoch {self.current_epoch} progress: {len(self.blocks_this_epoch)}/{total_blocks} blocks visited")
+            return is_complete
     
     def start_new_epoch(self) -> None:
         """Start a new epoch (reset block tracking)."""
         with self.lock:
             self.current_epoch += 1
             self.blocks_this_epoch.clear()
+            logger.info(f"Started new epoch: {self.current_epoch}")
             # Don't clear completed_chunks - we still want to track all training
             self._save_state()
     
@@ -348,13 +366,17 @@ class ChunkTracker:
             
             with open(self.state_file, 'w') as f:
                 json.dump(state, f, indent=2)
+            
+            logger.debug(f"Saved chunk tracker state: {len(self.completed_chunks)} chunks, {self.total_true_steps} true steps")
                 
         except Exception as e:
+            logger.error(f"Failed to save chunk tracker state: {e}", exc_info=True)
             print(f"[ChunkTracker] Warning: Failed to save state: {e}")
     
     def _load_state(self) -> None:
         """Load tracker state from disk."""
         if not self.state_file.exists():
+            logger.debug("No existing chunk tracker state file found, starting fresh")
             return
         
         try:
@@ -385,10 +407,13 @@ class ChunkTracker:
             self.total_samples_trained = state.get("total_samples_trained", 0)
             self.total_true_steps = state.get("total_true_steps", 0)  # Restore aggregated true steps
             
+            logger.info(f"Loaded chunk tracker state from {self.state_file}: {len(self.completed_chunks)} chunks trained, "
+                       f"{self.total_true_steps} true steps, epoch {self.current_epoch}")
             print(f"[ChunkTracker] Loaded state: {len(self.completed_chunks)} chunks trained, "
                   f"{self.total_true_steps} true steps, epoch {self.current_epoch}")
             
         except Exception as e:
+            logger.error(f"Failed to load chunk tracker state: {e}", exc_info=True)
             print(f"[ChunkTracker] Warning: Failed to load state: {e}")
             print(f"[ChunkTracker] Starting with fresh state")
     

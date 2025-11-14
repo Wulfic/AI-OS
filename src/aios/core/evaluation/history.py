@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+import logging
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Optional
 
 from aios.core.evaluation import EvaluationResult
+
+logger = logging.getLogger(__name__)
 
 
 class EvaluationHistory:
@@ -21,16 +24,21 @@ class EvaluationHistory:
         Args:
             db_path: Path to SQLite database file
         """
+        logger.info(f"Initializing evaluation history database: {db_path}")
         self.db_path = db_path
         
         # Ensure directory exists
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        db_dir = Path(db_path).parent
+        if not db_dir.exists():
+            logger.info(f"Creating database directory: {db_dir}")
+            db_dir.mkdir(parents=True, exist_ok=True)
         
         # Initialize database
         self._init_db()
     
     def _init_db(self) -> None:
         """Initialize database schema."""
+        logger.info("Initializing database schema")
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
@@ -60,6 +68,7 @@ class EvaluationHistory:
             # Add samples_path column if it doesn't exist (for existing databases)
             try:
                 cursor.execute("ALTER TABLE evaluations ADD COLUMN samples_path TEXT")
+                logger.debug("Added missing column: samples_path")
             except sqlite3.OperationalError:
                 # Column already exists
                 pass
@@ -101,6 +110,7 @@ class EvaluationHistory:
             """)
             
             conn.commit()
+            logger.info("Database schema initialized successfully")
     
     def save_evaluation(
         self,
@@ -128,74 +138,86 @@ class EvaluationHistory:
         Returns:
             ID of saved evaluation
         """
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            # Serialize data
-            tasks_str = ",".join(tasks) if tasks else ""
-            config_str = json.dumps(config) if config else ""
-            raw_results_str = json.dumps(result.raw_results) if result.raw_results else ""
-            
-            # Insert evaluation
-            cursor.execute("""
-                INSERT INTO evaluations (
-                    model_name, model_source, model_args,
-                    overall_score, status, error_message,
-                    start_time, end_time, duration,
-                    output_path, tasks, config, raw_results,
-                    created_at, notes, samples_path
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                model_name,
-                model_source,
-                model_args,
-                result.overall_score,
-                result.status,
-                result.error_message,
-                result.start_time,
-                result.end_time,
-                result.duration,
-                result.output_path,
-                tasks_str,
-                config_str,
-                raw_results_str,
-                time.time(),
-                notes,
-                samples_path,
-            ))
-            
-            evaluation_id = cursor.lastrowid
-            
-            if evaluation_id is None:
-                raise RuntimeError("Failed to insert evaluation")
-            
-            # Insert benchmark scores
-            for benchmark_name, benchmark_data in result.benchmark_scores.items():
-                scores_dict = benchmark_data.get("scores", {})
-                raw_data = benchmark_data.get("raw", {})
+        logger.info(f"Saving evaluation for model: {model_name}")
+        
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
                 
-                for metric_name, score_value in scores_dict.items():
-                    # Try to get stderr
-                    stderr = None
-                    if f"{metric_name}_stderr" in raw_data:
-                        stderr = raw_data[f"{metric_name}_stderr"]
+                # Serialize data
+                logger.debug(f"Serializing tasks and config for model: {model_name}")
+                tasks_str = ",".join(tasks) if tasks else ""
+                config_str = json.dumps(config) if config else ""
+                raw_results_str = json.dumps(result.raw_results) if result.raw_results else ""
+                
+                # Insert evaluation
+                cursor.execute("""
+                    INSERT INTO evaluations (
+                        model_name, model_source, model_args,
+                        overall_score, status, error_message,
+                        start_time, end_time, duration,
+                        output_path, tasks, config, raw_results,
+                        created_at, notes, samples_path
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    model_name,
+                    model_source,
+                    model_args,
+                    result.overall_score,
+                    result.status,
+                    result.error_message,
+                    result.start_time,
+                    result.end_time,
+                    result.duration,
+                    result.output_path,
+                    tasks_str,
+                    config_str,
+                    raw_results_str,
+                    time.time(),
+                    notes,
+                    samples_path,
+                ))
+                
+                evaluation_id = cursor.lastrowid
+                
+                if evaluation_id is None:
+                    raise RuntimeError("Failed to insert evaluation")
+                
+                logger.info(f"Evaluation saved with ID: {evaluation_id}")
+                
+                # Insert benchmark scores
+                score_count = 0
+                for benchmark_name, benchmark_data in result.benchmark_scores.items():
+                    scores_dict = benchmark_data.get("scores", {})
+                    raw_data = benchmark_data.get("raw", {})
                     
-                    cursor.execute("""
-                        INSERT INTO evaluation_scores (
-                            evaluation_id, benchmark_name, metric_name,
-                            score, stderr, raw_data
-                        ) VALUES (?, ?, ?, ?, ?, ?)
-                    """, (
-                        evaluation_id,
-                        benchmark_name,
-                        metric_name,
-                        float(score_value),
-                        stderr,
-                        json.dumps(raw_data),
-                    ))
-            
-            conn.commit()
-            return evaluation_id
+                    for metric_name, score_value in scores_dict.items():
+                        # Try to get stderr
+                        stderr = None
+                        if f"{metric_name}_stderr" in raw_data:
+                            stderr = raw_data[f"{metric_name}_stderr"]
+                        
+                        cursor.execute("""
+                            INSERT INTO evaluation_scores (
+                                evaluation_id, benchmark_name, metric_name,
+                                score, stderr, raw_data
+                            ) VALUES (?, ?, ?, ?, ?, ?)
+                        """, (
+                            evaluation_id,
+                            benchmark_name,
+                            metric_name,
+                            float(score_value),
+                            stderr,
+                            json.dumps(raw_data),
+                        ))
+                        score_count += 1
+                
+                logger.debug(f"Inserted {score_count} benchmark scores")
+                conn.commit()
+                return evaluation_id
+        except Exception as e:
+            logger.error(f"Failed to save evaluation for {model_name}: {e}")
+            raise
     
     def get_evaluation(self, evaluation_id: int) -> Optional[dict[str, Any]]:
         """Get a single evaluation by ID.
@@ -206,6 +228,8 @@ class EvaluationHistory:
         Returns:
             Evaluation dict or None if not found
         """
+        logger.debug(f"Fetching evaluation ID: {evaluation_id}")
+        
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -216,6 +240,7 @@ class EvaluationHistory:
             
             row = cursor.fetchone()
             if not row:
+                logger.warning(f"Evaluation not found: ID {evaluation_id}")
                 return None
             
             eval_dict = dict(row)
@@ -241,6 +266,7 @@ class EvaluationHistory:
                 scores.append(dict(score_row))
             
             eval_dict["scores"] = scores
+            logger.debug(f"Retrieved {len(scores)} scores for evaluation {evaluation_id}")
             
             return eval_dict
     
@@ -260,6 +286,8 @@ class EvaluationHistory:
         Returns:
             List of evaluation dicts
         """
+        logger.debug(f"Query recent evaluations: limit={limit}, model={model_name}, status={status}")
+        
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -290,6 +318,7 @@ class EvaluationHistory:
                 
                 results.append(eval_dict)
             
+            logger.info(f"Retrieved {len(results)} evaluations")
             return results
     
     def get_model_history(
@@ -413,6 +442,8 @@ class EvaluationHistory:
         Returns:
             True if deleted, False if not found
         """
+        logger.info(f"Deleting evaluation ID: {evaluation_id}")
+        
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
@@ -421,7 +452,13 @@ class EvaluationHistory:
             """, (evaluation_id,))
             
             conn.commit()
-            return cursor.rowcount > 0
+            
+            if cursor.rowcount > 0:
+                logger.info(f"Evaluation {evaluation_id} deleted successfully")
+                return True
+            else:
+                logger.warning(f"Evaluation not found for deletion: ID {evaluation_id}")
+                return False
     
     def get_statistics(self) -> dict[str, Any]:
         """Get overall statistics.
@@ -429,6 +466,8 @@ class EvaluationHistory:
         Returns:
             Statistics dict
         """
+        logger.debug("Computing evaluation statistics")
+        
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
@@ -466,6 +505,8 @@ class EvaluationHistory:
                 WHERE created_at > ?
             """, (week_ago,))
             recent_count = cursor.fetchone()[0]
+            
+            logger.info(f"Statistics: {total_evaluations} evaluations, {unique_models} models")
             
             return {
                 "total_evaluations": total_evaluations,

@@ -1,5 +1,6 @@
 from typing import Tuple, List, Dict, cast, Optional
 from dataclasses import dataclass
+import logging
 import math
 
 import torch
@@ -10,6 +11,8 @@ from pydantic import BaseModel
 from .common import trunc_normal_init_
 from .layers import rms_norm, SwiGLU, Attention, RotaryEmbedding, CosSin, CastedEmbedding, CastedLinear
 from .sparse_embedding import CastedSparseEmbedding
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -180,8 +183,8 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         # Log MoE configuration if enabled
         if self.config.use_moe:
             total_moe_layers = self.config.H_layers + self.config.L_layers
-            print(f"[ACTV1] Sparse MoE enabled: {total_moe_layers} MoE layers, {self.config.num_experts} experts each, {self.config.num_experts_per_tok} active per token")
-            print(f"[ACTV1] Expected compute reduction: ~{(1 - self.config.num_experts_per_tok / self.config.num_experts) * 100:.1f}%")
+            logger.info(f"[ACTV1] Sparse MoE enabled: {total_moe_layers} MoE layers, {self.config.num_experts} experts each, {self.config.num_experts_per_tok} active per token")
+            logger.info(f"[ACTV1] Expected compute reduction: ~{(1 - self.config.num_experts_per_tok / self.config.num_experts) * 100:.1f}%")
         
         # vendor used nn.Buffer; use register_buffer instead
         self.register_buffer("H_init", trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
@@ -269,7 +272,7 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         
         # Safety check: catch NaN in embeddings early
         if torch.isnan(input_embeddings).any() or torch.isinf(input_embeddings).any():
-            print(f"[ACTV1 WARNING] NaN/Inf detected in input embeddings! Setting to zero.")
+            logger.warning(f"[ACTV1] NaN/Inf detected in input embeddings! Setting to zero.")
             input_embeddings = torch.nan_to_num(input_embeddings, nan=0.0, posinf=10.0, neginf=-10.0)
 
         # Start from carry tensors (they come from previous step without grad)
@@ -297,8 +300,8 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         
         # Debug: Check for NaN/Inf in raw logits
         if torch.isnan(raw_output).any() or torch.isinf(raw_output).any():
-            print(f"[ACTV1 CRITICAL] NaN/Inf in lm_head output! Stats: min={raw_output.min():.2f}, max={raw_output.max():.2f}, mean={raw_output.mean():.2f}")
-            print(f"[ACTV1 CRITICAL] z_H stats: min={z_H.min():.2f}, max={z_H.max():.2f}, mean={z_H.mean():.2f}")
+            logger.error(f"[ACTV1 CRITICAL] NaN/Inf in lm_head output! Stats: min={raw_output.min():.2f}, max={raw_output.max():.2f}, mean={raw_output.mean():.2f}")
+            logger.error(f"[ACTV1 CRITICAL] z_H stats: min={z_H.min():.2f}, max={z_H.max():.2f}, mean={z_H.mean():.2f}")
             # Replace NaN/Inf with safe values
             raw_output = torch.nan_to_num(raw_output, nan=0.0, posinf=20.0, neginf=-20.0)
         

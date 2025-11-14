@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional, cast
 
 try:  # pragma: no cover - environment dependent
     from tkinter import messagebox  # type: ignore
 except Exception:  # pragma: no cover - environment dependent
     messagebox = cast(Any, None)
+
+logger = logging.getLogger(__name__)
 
 
 def handle_add_server(parent: Any, dialog_class: Any, servers_loader: Any, servers_saver: Any, refresh_callback: Any, log_callback: Any) -> None:
@@ -25,11 +28,18 @@ def handle_add_server(parent: Any, dialog_class: Any, servers_loader: Any, serve
     parent.wait_window(dialog)
     
     if dialog.result:
+        server_name = dialog.result.get('name', 'unknown')
+        server_type = dialog.result.get('type', 'unknown')
+        logger.info(f"Adding MCP server: name={server_name}, type={server_type}")
+        logger.debug(f"Server config: {dialog.result}")
+        
         servers = servers_loader()
         servers.append(dialog.result)
         servers_saver(servers)
         refresh_callback()
-        log_callback(f"[MCP] Added server: {dialog.result['name']}")
+        
+        logger.info("Server added successfully")
+        log_callback(f"[MCP] Added server: {server_name}")
 
 
 def handle_edit_server(parent: Any, servers_tree: Any, dialog_class: Any, servers_loader: Any, servers_saver: Any, refresh_callback: Any, log_callback: Any) -> None:
@@ -59,15 +69,22 @@ def handle_edit_server(parent: Any, servers_tree: Any, dialog_class: Any, server
     server = next((s for s in servers if s["name"] == name), None)
     
     if server:
+        logger.info(f"Editing MCP server: {name}")
+        
         dialog = dialog_class(parent, title="Edit MCP Server", initial_data=server)
         parent.wait_window(dialog)
         
         if dialog.result:
+            # Log config changes
+            logger.debug(f"Config changes: {server} → {dialog.result}")
+            
             # Update server
             idx = servers.index(server)
             servers[idx] = dialog.result
             servers_saver(servers)
             refresh_callback()
+            
+            logger.info("Server updated successfully")
             log_callback(f"[MCP] Updated server: {dialog.result['name']}")
 
 
@@ -91,11 +108,17 @@ def handle_delete_server(servers_tree: Any, servers_loader: Any, servers_saver: 
     values = servers_tree.item(item, "values")
     name = values[0]
     
+    logger.info(f"Deleting MCP server: {name}")
+    
     if messagebox and messagebox.askyesno("Confirm Delete", f"Delete server '{name}'?"):
+        logger.warning("User confirmed deletion")
+        
         servers = servers_loader()
         servers = [s for s in servers if s["name"] != name]
         servers_saver(servers)
         refresh_callback()
+        
+        logger.info("Server deleted successfully")
         log_callback(f"[MCP] Deleted server: {name}")
 
 
@@ -116,6 +139,8 @@ def handle_test_server(servers_tree: Any, log_callback: Any) -> None:
     values = servers_tree.item(item, "values")
     name = values[0]
     
+    logger.info(f"Testing MCP server: {name}")
+    
     # Connection testing placeholder - full implementation pending
     if messagebox:
         messagebox.showinfo(
@@ -123,6 +148,10 @@ def handle_test_server(servers_tree: Any, log_callback: Any) -> None:
             f"Testing connection to '{name}'...\n\n"
             "Connection testing will verify authentication, API availability, and tool discovery."
         )
+    
+    # TODO: Implement actual connection test and log results
+    # For now, log as initiated
+    logger.info(f"Test connection initiated (placeholder)")
     log_callback(f"[MCP] Connection test initiated for: {name}")
 
 def handle_enable_server(servers_tree: Any, servers_loader: Any, servers_saver: Any, refresh_callback: Any, log_callback: Any) -> None:
@@ -172,6 +201,9 @@ def _set_server_status(enabled: bool, servers_tree: Any, servers_loader: Any, se
     values = servers_tree.item(item, "values")
     name = values[0]
     
+    status_action = "Enabling" if enabled else "Disabling"
+    logger.info(f"{status_action} MCP server: {name}")
+    
     servers = servers_loader()
     server = next((s for s in servers if s["name"] == name), None)
     
@@ -181,5 +213,7 @@ def _set_server_status(enabled: bool, servers_tree: Any, servers_loader: Any, se
         servers[idx] = server
         servers_saver(servers)
         refresh_callback()
+        
         status = "enabled" if enabled else "disabled"
+        logger.info(f"Server {status} and {'started' if enabled else 'stopped'}")
         log_callback(f"[MCP] Server {status}: {name}")

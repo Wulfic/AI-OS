@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def replace_ffn_with_moe(
@@ -147,8 +150,8 @@ def replace_ffn_with_moe(
                 replaced_count += 1
     
     if replaced_count > 0:
-        print(f"[HFAdapter] Replaced {replaced_count} FFN layers with sparse MoE ({num_experts} experts, top-{num_experts_per_tok} routing)")
+        logger.info(f"[HFAdapter] Replaced {replaced_count} FFN layers with sparse MoE ({num_experts} experts, top-{num_experts_per_tok} routing)")
     else:
-        print(f"[HFAdapter] Warning: MoE enabled but no FFN layers found to replace in {type(base_model).__name__}")
+        logger.warning(f"[HFAdapter] MoE enabled but no FFN layers found to replace in {type(base_model).__name__}")
     
     return replaced_count

@@ -39,7 +39,9 @@ class TimerManager:
             delay_ms: Delay in milliseconds
             callback: Function to call after delay
         """
+        logger.debug(f"Acquiring timer lock for operation: set_timer('{name}')")
         with self._lock:
+            logger.debug("Timer lock acquired")
             # Cancel existing timer with this name
             self.cancel_timer(name)
             
@@ -50,6 +52,7 @@ class TimerManager:
                 logger.debug(f"Set timer '{name}' (delay={delay_ms}ms)")
             except Exception as e:
                 logger.error(f"Failed to set timer '{name}': {e}")
+            logger.debug("Timer lock released")
     
     def cancel_timer(self, name: str):
         """Cancel a named timer.
@@ -68,8 +71,11 @@ class TimerManager:
     
     def cancel_all(self):
         """Cancel all timers (call on shutdown)."""
+        logger.debug("Acquiring timer lock for operation: cancel_all")
         with self._lock:
+            logger.debug("Timer lock acquired")
             logger.info(f"Cancelling {len(self._timers)} timers...")
             for name in list(self._timers.keys()):
                 self.cancel_timer(name)
             logger.info("All timers cancelled")
+            logger.debug("Timer lock released")

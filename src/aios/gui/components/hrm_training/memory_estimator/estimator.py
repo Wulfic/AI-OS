@@ -8,12 +8,15 @@ This module provides the high-level MemoryEstimator class that:
 """
 
 from __future__ import annotations
+import logging
 from typing import Optional, Dict, Any
 
 from .constants import GB
 from .vram_estimation import estimate_vram
 from .ram_estimation import estimate_ram
 from .vram_lookup import estimate_vram_hybrid, OptimizationConfig
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryEstimator:
@@ -203,7 +206,7 @@ class MemoryEstimator:
                 estimation_method = "hybrid_lookup_table"
             except Exception as e:
                 # Fallback to analytical estimator if hybrid fails
-                print(f"Hybrid estimator unavailable ({e}), using analytical estimator")
+                logger.debug(f"Hybrid estimator unavailable ({e}), using analytical estimator")
                 vram_hybrid_gb = None
                 estimation_method = "analytical_formula"
         else:

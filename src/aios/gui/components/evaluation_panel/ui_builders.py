@@ -478,8 +478,18 @@ def _refresh_recent_results(panel: "EvaluationPanel") -> None:
         for item in panel.recent_tree.get_children():
             panel.recent_tree.delete(item)
         
+        history = getattr(panel, "_history", None)
+        if history is None:
+            if not getattr(panel, "_history_notice_shown", False):
+                panel._log("[eval] Evaluation history is still loading; recent results will appear once ready.")
+                panel._history_notice_shown = True
+            return
+
+        if hasattr(panel, "_history_notice_shown"):
+            delattr(panel, "_history_notice_shown")
+
         # Get recent evaluations (limit to 10)
-        recent = panel._history.get_recent_evaluations(limit=10)
+        recent = history.get_recent_evaluations(limit=10)
         
         # Populate tree
         for eval_data in recent:
@@ -532,6 +542,12 @@ def _on_recent_result_double_click(panel: "EvaluationPanel") -> None:
         from aios.core.evaluation import EvaluationResult
         from aios.gui.dialogs import EvaluationResultsDialog
         
+        history = getattr(panel, "_history", None)
+        if history is None:
+            panel._log("[eval] Evaluation history is still loading; please try again in a moment.")
+            messagebox.showinfo("History Loading", "Evaluation history is still loading. Please try again shortly.")
+            return
+
         selection = panel.recent_tree.selection()
         if not selection:
             return
@@ -545,7 +561,7 @@ def _on_recent_result_double_click(panel: "EvaluationPanel") -> None:
         eval_id = int(tags[0])
         
         # Get evaluation data
-        eval_data = panel._history.get_evaluation(eval_id)
+        eval_data = history.get_evaluation(eval_id)
         if not eval_data:
             messagebox.showerror("Error", "Evaluation not found.")
             return

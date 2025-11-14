@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+# Import safe variable wrappers
+from ..utils import safe_variables
+
+import logging
 from typing import Any, Callable, cast
+
+logger = logging.getLogger(__name__)
 
 try:  # pragma: no cover - environment dependent
     import tkinter as tk  # type: ignore
@@ -37,7 +43,7 @@ class CrawlPanel(ttk.LabelFrame):  # type: ignore[misc]
         self._update_out = update_out
 
         # URL + action bar
-        self.url_var = tk.StringVar(value="https://example.com")
+        self.url_var = safe_variables.StringVar(value="https://example.com")
         r1 = ttk.Frame(self)
         r1.pack(fill="x")
         ttk.Label(r1, text="URL:").pack(side="left")
@@ -45,18 +51,18 @@ class CrawlPanel(ttk.LabelFrame):  # type: ignore[misc]
         ttk.Button(r1, text="Crawl & Store", command=self.run_crawl).pack(side="left")
 
         # Options
-        self.crawl_no_robots_var = tk.BooleanVar(value=False)
-        self.crawl_ttl_var = tk.StringVar(value="0")
-        self.crawl_render_var = tk.BooleanVar(value=False)
-        self.crawl_traf_var = tk.BooleanVar(value=False)
-        self.crawl_recursive_var = tk.BooleanVar(value=False)
-        self.crawl_pages_var = tk.StringVar(value="50")
-        self.crawl_depth_var = tk.StringVar(value="2")
-        self.crawl_same_domain_var = tk.BooleanVar(value=True)
-        self.crawl_store_var = tk.StringVar(value="web_crawl")
-        self.crawl_overwrite_var = tk.BooleanVar(value=False)
+        self.crawl_no_robots_var = safe_variables.BooleanVar(value=False)
+        self.crawl_ttl_var = safe_variables.StringVar(value="0")
+        self.crawl_render_var = safe_variables.BooleanVar(value=False)
+        self.crawl_traf_var = safe_variables.BooleanVar(value=False)
+        self.crawl_recursive_var = safe_variables.BooleanVar(value=False)
+        self.crawl_pages_var = safe_variables.StringVar(value="50")
+        self.crawl_depth_var = safe_variables.StringVar(value="2")
+        self.crawl_same_domain_var = safe_variables.BooleanVar(value=True)
+        self.crawl_store_var = safe_variables.StringVar(value="web_crawl")
+        self.crawl_overwrite_var = safe_variables.BooleanVar(value=False)
         # New: free-form extra flags for crawl CLI
-        self.crawl_extra_flags_var = tk.StringVar(value="--rps 1 --progress")
+        self.crawl_extra_flags_var = safe_variables.StringVar(value="--rps 1 --progress")
 
         r2 = ttk.Frame(self)
         r2.pack(fill="x", pady=(4, 0))
@@ -98,8 +104,11 @@ class CrawlPanel(ttk.LabelFrame):  # type: ignore[misc]
         import threading, json, subprocess as _sp, sys, shlex
         url = (self.url_var.get() or "").strip()
         if not url:
+            logger.warning("User attempted to start crawl with empty URL")
             self._append_out("[ui] URL is empty")
             return ""
+        
+        # Build crawl command
         args = ["crawl", url, "--progress"]
         if self.crawl_no_robots_var.get():
             args.append("--no-robots")
@@ -129,6 +138,19 @@ class CrawlPanel(ttk.LabelFrame):  # type: ignore[misc]
             except Exception:
                 # best effort: append raw as one arg
                 args.append(extra)
+        
+        # Log crawl start
+        crawl_options = {
+            'url': url,
+            'recursive': self.crawl_recursive_var.get(),
+            'max_pages': pages if self.crawl_recursive_var.get() else 'N/A',
+            'max_depth': depth if self.crawl_recursive_var.get() else 'N/A',
+            'dataset': ds,
+            'render': self.crawl_render_var.get(),
+        }
+        logger.info(f"User action: Starting web crawl - {url}")
+        logger.debug(f"Crawl options: {crawl_options}")
+        
         self._update_out(f"Crawling: {url}\n")
         # reset progress UI
         try:
@@ -199,6 +221,14 @@ class CrawlPanel(ttk.LabelFrame):  # type: ignore[misc]
                     rc = proc.wait(timeout=1.0)
                 except Exception:
                     pass
+                
+                # Log completion
+                pages_crawled = self._crawl_curr if hasattr(self, '_crawl_curr') else 0
+                if rc == 0:
+                    logger.info(f"Web crawl completed successfully: {pages_crawled} pages crawled")
+                else:
+                    logger.warning(f"Web crawl ended with return code {rc}: {pages_crawled} pages crawled")
+                
                 # disable stop button and finalize progress
                 def _finish():
                     try:
@@ -218,13 +248,15 @@ class CrawlPanel(ttk.LabelFrame):  # type: ignore[misc]
 
     def _stop_crawl(self) -> None:
         """Stop a running crawl if any."""
+        logger.info("User action: Stopping web crawl")
         try:
             proc = getattr(self, "_crawl_proc", None)
             if proc is not None:
                 try:
                     proc.terminate()
-                except Exception:
-                    pass
+                    logger.debug(f"Terminated crawl process (PID: {proc.pid})")
+                except Exception as e:
+                    logger.error(f"Error terminating crawl process: {e}")
         finally:
             try:
                 self._crawl_stop_btn.config(state="disabled")

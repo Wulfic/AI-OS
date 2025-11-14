@@ -7,8 +7,12 @@ import tkinter as tk
 from tkinter import ttk
 from typing import TYPE_CHECKING
 
+# Import safe variable wrappers
+from ...utils import safe_variables
+
 from ..tooltips import add_tooltip
 from .theme_constants import THEME_NAMES
+from .theme_manager import THEME_COMBOBOX_STYLE
 
 if TYPE_CHECKING:
     from .panel_main import SettingsPanel
@@ -43,7 +47,7 @@ def create_appearance_section(panel: "SettingsPanel", container: ttk.Frame) -> N
     theme_label = ttk.Label(theme_row, text="Theme:", width=15, anchor="e")
     theme_label.pack(side="left", padx=(0, 10))
 
-    panel.theme_var = tk.StringVar(value="Dark Mode")
+    panel.theme_var = safe_variables.StringVar(value="Dark Mode")
     theme_combo = ttk.Combobox(
         theme_row,
         textvariable=panel.theme_var,
@@ -51,7 +55,9 @@ def create_appearance_section(panel: "SettingsPanel", container: ttk.Frame) -> N
         state="readonly",
         width=20
     )
+    theme_combo.configure(style=THEME_COMBOBOX_STYLE)
     theme_combo.pack(side="left")
+    panel.theme_combo = theme_combo
 
     add_tooltip(
         theme_combo,
@@ -92,8 +98,8 @@ def create_appearance_section(panel: "SettingsPanel", container: ttk.Frame) -> N
         "Note: Some elements may require restarting the application for full effect."
     )
 
-    # Theme info label
-    panel.theme_info = ttk.Label(appearance_frame, text="", foreground="blue", font=("TkDefaultFont", 8, "italic"))
+    # Theme info label (using gray for better readability across all themes)
+    panel.theme_info = ttk.Label(appearance_frame, text="", foreground="gray", font=("TkDefaultFont", 8, "italic"))
     panel.theme_info.pack(anchor="w", pady=(5, 0))
 
 
@@ -108,7 +114,7 @@ def create_general_settings_section(panel: "SettingsPanel", container: ttk.Frame
     general_frame.pack(fill="x", pady=(0, 8))
 
     # Start at boot checkbox (Windows only)
-    panel.startup_var = tk.BooleanVar(value=False)
+    panel.startup_var = safe_variables.BooleanVar(value=False)
     startup_check = ttk.Checkbutton(
         general_frame,
         text="Start AI-OS at Windows boot",
@@ -131,7 +137,7 @@ def create_general_settings_section(panel: "SettingsPanel", container: ttk.Frame
     panel.startup_info.pack(anchor="w", pady=(0, 5))
 
     # Start minimized checkbox
-    panel.start_minimized_var = tk.BooleanVar(value=False)
+    panel.start_minimized_var = safe_variables.BooleanVar(value=False)
     start_minimized_check = ttk.Checkbutton(
         general_frame,
         text="Start minimized to system tray",
@@ -150,7 +156,7 @@ def create_general_settings_section(panel: "SettingsPanel", container: ttk.Frame
     )
 
     # Minimize to tray on close checkbox
-    panel.minimize_to_tray_var = tk.BooleanVar(value=False)
+    panel.minimize_to_tray_var = safe_variables.BooleanVar(value=False)
     minimize_to_tray_check = ttk.Checkbutton(
         general_frame,
         text="Minimize to tray instead of closing",
@@ -181,8 +187,7 @@ def create_logging_section(panel: "SettingsPanel", container: ttk.Frame) -> None
     # Logging level description
     log_desc_label = ttk.Label(
         logging_frame,
-        text="Configure how much detail to show in the Debug panel.\nChanges apply immediately to the current session.",
-        foreground="gray"
+        text="Configure how much detail to show in the Debug panel.\nChanges apply immediately to the current session."
     )
     log_desc_label.pack(anchor="w", pady=(0, 10))
 
@@ -193,7 +198,7 @@ def create_logging_section(panel: "SettingsPanel", container: ttk.Frame) -> None
     log_level_label = ttk.Label(log_level_row, text="Logging Level:", width=15, anchor="e")
     log_level_label.pack(side="left", padx=(0, 10))
 
-    panel.log_level_var = tk.StringVar(value="Normal")
+    panel.log_level_var = safe_variables.StringVar(value="Normal")
     log_levels = ["DEBUG", "Advanced", "Normal"]
     log_level_combo = ttk.Combobox(
         log_level_row,
@@ -202,7 +207,9 @@ def create_logging_section(panel: "SettingsPanel", container: ttk.Frame) -> None
         state="readonly",
         width=15
     )
+    log_level_combo.configure(style=THEME_COMBOBOX_STYLE)
     log_level_combo.pack(side="left")
+    panel.log_level_combo = log_level_combo
 
     add_tooltip(
         log_level_combo,
@@ -236,20 +243,20 @@ def create_logging_section(panel: "SettingsPanel", container: ttk.Frame) -> None
 
     panel.log_level_var.trace_add("write", _on_log_level_change)
 
-    # Info label explaining each level
+    # Info label explaining each level (using gray for better readability across all themes)
     level_info_text = (
         "Normal: Essentials only  |  Advanced: +INFO & WARNING  |  DEBUG: Everything"
     )
     level_info_label = ttk.Label(
         logging_frame,
         text=level_info_text,
-        foreground="blue",
+        foreground="gray",
         font=("TkDefaultFont", 8, "italic")
     )
     level_info_label.pack(anchor="w", pady=(5, 0))
 
 
-def create_general_settings_section(panel: "SettingsPanel", container: ttk.Frame) -> None:
+def create_help_section(panel: "SettingsPanel", container: ttk.Frame) -> None:
     """Create the help documentation management section.
     
     Args:
@@ -332,6 +339,7 @@ def create_cache_section(panel: "SettingsPanel", container: ttk.Frame) -> None:
         panel: The settings panel instance
         container: The main container frame
     """
+    logger.debug("Creating cache management section")
     cache_frame = ttk.LabelFrame(container, text="Dataset Cache Management", padding=8)
     cache_frame.pack(fill="both", expand=True, pady=(0, 8))
 
@@ -348,7 +356,7 @@ def create_cache_section(panel: "SettingsPanel", container: ttk.Frame) -> None:
     cache_size_label = ttk.Label(cache_size_row, text="Max Cache Size (MB):", width=20, anchor="e")
     cache_size_label.pack(side="left", padx=(0, 10))
 
-    panel.cache_size_var = tk.StringVar(value="100")
+    panel.cache_size_var = safe_variables.StringVar(value="1000")
     cache_size_entry = ttk.Entry(
         cache_size_row, 
         textvariable=panel.cache_size_var, 
@@ -368,7 +376,7 @@ def create_cache_section(panel: "SettingsPanel", container: ttk.Frame) -> None:
     add_tooltip(
         cache_size_entry,
         "Maximum total size for cached dataset blocks.\n\n"
-        "Default: 100 MB\n"
+        "Default: 1000 MB\n"
         "When this limit is reached, oldest blocks are automatically removed.\n\n"
         "Set higher for faster training iterations (more cached data)\n"
         "or lower to save disk space."
@@ -435,6 +443,8 @@ def create_cache_section(panel: "SettingsPanel", container: ttk.Frame) -> None:
         "will need to re-download data from HuggingFace.\n\n"
         "Cache will be automatically rebuilt as needed."
     )
+    
+    logger.debug("Cache management section created successfully")
 
 
 def create_support_section(panel: "SettingsPanel", container: ttk.Frame) -> None:

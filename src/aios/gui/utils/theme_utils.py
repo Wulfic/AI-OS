@@ -6,8 +6,11 @@ GUI components including dialogs, popups, and panels.
 """
 
 from __future__ import annotations
+import logging
 import tkinter as tk
 from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 # Theme color configurations - centralized from theme_constants
 THEME_COLORS: Dict[str, Dict[str, Any]] = {
@@ -93,18 +96,24 @@ def detect_current_theme() -> str:
             # Check for specific themes based on color characteristics
             if brightness < 50:  # Very dark themes
                 if g > r and g > b:  # Greenish = Matrix
-                    return "Matrix Mode"
+                    detected_theme = "Matrix Mode"
                 elif r > 50 and r > g * 2:  # Orange-ish = Halloween
-                    return "Halloween Mode"
+                    detected_theme = "Halloween Mode"
                 else:
-                    return "Dark Mode"
+                    detected_theme = "Dark Mode"
             elif brightness < 128:  # Dark mode
-                return "Dark Mode"
+                detected_theme = "Dark Mode"
             elif r > 200 and g > 150 and b > 150 and r > b:  # Pinkish = Barbie
-                return "Barbie Mode"
-    except Exception:
-        pass
+                detected_theme = "Barbie Mode"
+            else:
+                detected_theme = "Light Mode"
+            
+            logger.debug(f"Theme detected: {detected_theme} (bg={bg}, brightness={brightness:.1f})")
+            return detected_theme
+    except Exception as e:
+        logger.error(f"Theme detection failed: {e}", exc_info=True)
     
+    logger.debug("Using default theme: Light Mode")
     return "Light Mode"  # Default
 
 
@@ -132,6 +141,10 @@ def get_theme_colors(theme: Optional[str] = None) -> Dict[str, str]:
     
     # Get base theme colors
     colors = THEME_COLORS.get(theme, THEME_COLORS["Light Mode"])
+    
+    if theme not in THEME_COLORS:
+        logger.error(f"Theme loading failed: {theme} - Theme not found")
+        logger.warning("Using default theme")
     
     # Create standardized output dictionary
     if theme == "Dark Mode":
@@ -196,16 +209,24 @@ def apply_theme_to_toplevel(window: tk.Toplevel, theme: Optional[str] = None) ->
     if theme is None:
         theme = detect_current_theme()
     
+    logger.debug(f"Applying theme to Toplevel window: {theme}")
     colors = get_theme_colors(theme)
     
     # Configure the toplevel window background
     try:
         window.configure(bg=colors["bg"])
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"Theme application failed: {theme} - {e}")
+        logger.warning("Using default theme")
+        return
     
     # Apply colors to all child widgets recursively
-    _apply_colors_recursive(window, colors)
+    try:
+        _apply_colors_recursive(window, colors)
+        logger.debug(f"Theme '{theme}' applied successfully to Toplevel window")
+    except Exception as e:
+        logger.error(f"Theme application failed: {e}", exc_info=True)
+        logger.warning("Some widgets failed to apply theme")
 
 
 def _apply_colors_recursive(widget: Any, colors: Dict[str, str]) -> None:
@@ -255,8 +276,8 @@ def _apply_colors_recursive(widget: Any, colors: Dict[str, str]) -> None:
         # Recursively update children
         for child in widget.winfo_children():
             _apply_colors_recursive(child, colors)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to apply theme to widget {type(widget).__name__}: {e}")
 
 
 def configure_global_dialogs(root: tk.Tk, theme: Optional[str] = None) -> None:
@@ -269,6 +290,7 @@ def configure_global_dialogs(root: tk.Tk, theme: Optional[str] = None) -> None:
     if theme is None:
         theme = detect_current_theme()
     
+    logger.debug(f"Configuring global dialogs for theme: {theme}")
     colors = get_theme_colors(theme)
     
     try:
@@ -286,10 +308,11 @@ def configure_global_dialogs(root: tk.Tk, theme: Optional[str] = None) -> None:
         root.option_add("*MessageBox*Background", colors["bg"])
         root.option_add("*MessageBox*Foreground", colors["fg"])
         
-        # Force update
-        root.update_idletasks()
-    except Exception:
-        pass
+        # Schedule update asynchronously to avoid blocking
+        root.after_idle(lambda: root.update_idletasks())
+        logger.debug("Global dialog configuration complete")
+    except Exception as e:
+        logger.error(f"Failed to configure global dialogs: {e}", exc_info=True)
 
 
 def is_dark_theme(theme: Optional[str] = None) -> bool:

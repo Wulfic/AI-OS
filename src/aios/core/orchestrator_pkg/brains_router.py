@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import os
+import asyncio
 from typing import Any, Dict, Tuple
 
 from aios.core.brains import BrainRegistry, Router
 
+_WARMUP_PAYLOAD = {"modalities": ["text"], "payload": "__warmup__"}
 
-def build_registry_and_router(brains_cfg: Dict[str, Any]) -> Tuple[BrainRegistry | None, Router | None]:
+
+def build_registry_and_router(
+    brains_cfg: Dict[str, Any], *, perform_warmup: bool = True
+) -> Tuple[BrainRegistry | None, Router | None]:
     brains_enabled = bool(brains_cfg.get("enabled", True))
     if not brains_enabled:
         return None, None
@@ -43,9 +48,17 @@ def build_registry_and_router(brains_cfg: Dict[str, Any]) -> Tuple[BrainRegistry
         strategy=str(brains_cfg.get("strategy", "hash")),
         modality_overrides=dict(brains_cfg.get("modality_overrides", {})),
     )
-    # Preload master text brain at startup (best-effort)
+    if perform_warmup:
+        _warmup_router(router)
+    return registry, router
+
+
+def _warmup_router(router: Router) -> None:
     try:
-        _ = router.handle({"modalities": ["text"], "payload": "__warmup__"})
+        _ = router.handle(_WARMUP_PAYLOAD)
     except Exception:
         pass
-    return registry, router
+
+
+async def warmup_router(router: Router) -> None:
+    await asyncio.to_thread(_warmup_router, router)

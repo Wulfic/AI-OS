@@ -5,6 +5,7 @@ Combines all field groups and provides validation/serialization methods.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, asdict
 from typing import Optional
 
@@ -14,6 +15,8 @@ from .optimization_fields import OptimizationFields
 from .distributed_fields import DistributedFields
 from .io_fields import IOFields
 from .advanced_fields import AdvancedFields
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -53,41 +56,64 @@ class TrainingConfig(
         Raises:
             ValueError: If any parameter is invalid.
         """
+        logger.debug("Validating training configuration")
+        validation_count = 0
+        
         if self.dataset_file is None:
+            logger.warning("Validation failed: dataset_file is None")
             raise ValueError("dataset_file is required")
+        validation_count += 1
         
         if self.max_seq_len < 1:
+            logger.warning(f"Validation failed: max_seq_len={self.max_seq_len} (must be positive)")
             raise ValueError("max_seq_len must be positive")
+        validation_count += 1
         
         if self.batch_size < 1:
+            logger.warning(f"Validation failed: batch_size={self.batch_size} (must be positive)")
             raise ValueError("batch_size must be positive")
+        validation_count += 1
         
         if self.steps < 1:
+            logger.warning(f"Validation failed: steps={self.steps} (must be positive)")
             raise ValueError("steps must be positive")
+        validation_count += 1
         
         if self.zero_stage not in {"none", "zero1", "zero2", "zero3"}:
+            logger.warning(f"Validation failed: zero_stage={self.zero_stage} (invalid)")
             raise ValueError(
                 f"Invalid zero_stage: {self.zero_stage}. "
                 f"Must be one of: none, zero1, zero2, zero3"
             )
+        validation_count += 1
         
         if self.pos_encodings not in {"rope", "alibi", "none"}:
+            logger.warning(f"Validation failed: pos_encodings={self.pos_encodings} (invalid)")
             raise ValueError(
                 f"Invalid pos_encodings: {self.pos_encodings}. "
                 f"Must be one of: rope, alibi, none"
             )
+        validation_count += 1
         
         if self.hidden_size % self.num_heads != 0:
+            logger.warning(f"Validation failed: hidden_size={self.hidden_size} not divisible by num_heads={self.num_heads}")
             raise ValueError(
                 f"hidden_size ({self.hidden_size}) must be divisible by "
                 f"num_heads ({self.num_heads})"
             )
+        validation_count += 1
         
         if self.lr <= 0:
+            logger.warning(f"Validation failed: lr={self.lr} (must be positive)")
             raise ValueError("lr (learning rate) must be positive")
+        validation_count += 1
         
         if self.eval_batches < 0:
+            logger.warning(f"Validation failed: eval_batches={self.eval_batches} (must be non-negative)")
             raise ValueError("eval_batches must be non-negative (0 to disable)")
+        validation_count += 1
+        
+        logger.debug(f"Validation passed: {validation_count} fields validated")
     
     def to_dict(self) -> dict:
         """Convert to dictionary for serialization.

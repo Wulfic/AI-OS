@@ -10,6 +10,64 @@ from typing import Dict, Any, Callable
 
 from .favorites_manager import load_favorites, remove_favorite
 from .dataset_details import show_dataset_details_dialog
+from aios.gui.utils.theme_utils import apply_theme_to_toplevel, get_theme_colors
+
+
+def _configure_favorites_styles(dialog: tk.Toplevel) -> Dict[str, str]:
+    """Create dedicated ttk styles so the popup matches the active theme."""
+    colors = get_theme_colors()
+    style = ttk.Style(dialog)
+    prefix = "FavoritesPopup"
+    frame_style = f"{prefix}.TFrame"
+    label_style = f"{prefix}.TLabel"
+    button_style = f"{prefix}.TButton"
+    tree_style = f"{prefix}.Treeview"
+    scrollbar_style = f"{prefix}.Vertical.TScrollbar"
+    style.configure(frame_style, background=colors["bg"])
+    style.configure(label_style, background=colors["bg"], foreground=colors["fg"])
+    style.configure(
+        button_style,
+        background=colors["button_bg"],
+        foreground=colors["fg"],
+        padding=(10, 4)
+    )
+    style.map(
+        button_style,
+        background=[("active", colors["select_bg"]), ("pressed", colors["select_bg"])],
+        foreground=[("active", colors["select_fg"]), ("pressed", colors["select_fg"])],
+    )
+    style.configure(
+        tree_style,
+        background=colors["entry_bg"],
+        foreground=colors["fg"],
+        fieldbackground=colors["entry_bg"],
+        rowheight=22,
+        borderwidth=0
+    )
+    style.map(
+        tree_style,
+        background=[("selected", colors["select_bg"])],
+        foreground=[("selected", colors["select_fg"])],
+    )
+    style.configure(
+        f"{tree_style}.Heading",
+        background=colors["button_bg"],
+        foreground=colors["fg"],
+        relief="flat"
+    )
+    style.configure(
+        scrollbar_style,
+        troughcolor=colors["bg"],
+        background=colors["button_bg"],
+        arrowcolor=colors["fg"]
+    )
+    return {
+        "frame": frame_style,
+        "label": label_style,
+        "button": button_style,
+        "tree": tree_style,
+        "scrollbar": scrollbar_style,
+    }
 
 
 def show_favorites_popup(parent: tk.Widget, log_func: Callable[[str], None], download_callback: Callable[[Dict[str, Any]], None]):
@@ -36,27 +94,31 @@ def show_favorites_popup(parent: tk.Widget, log_func: Callable[[str], None], dow
     dialog.title("⭐ Favorite Datasets")
     dialog.geometry("900x500")
     dialog.transient(parent)
+    apply_theme_to_toplevel(dialog)
+    styles = _configure_favorites_styles(dialog)
     
     # Info label
     info_label = ttk.Label(
         dialog,
         text=f"You have {len(favorites)} favorite dataset(s). Double-click to download.",
-        font=("", 9)
+        font=("", 9),
+        style=styles["label"],
     )
     info_label.pack(pady=10, padx=10)
     
     # Create treeview for favorites
-    tree_frame = ttk.Frame(dialog)
+    tree_frame = ttk.Frame(dialog, style=styles["frame"])
     tree_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
     
-    tree_scroll = ttk.Scrollbar(tree_frame)
+    tree_scroll = ttk.Scrollbar(tree_frame, style=styles["scrollbar"])
     tree_scroll.pack(side="right", fill="y")
     
     fav_tree = ttk.Treeview(
         tree_frame,
         columns=("downloads", "likes", "description"),
         yscrollcommand=tree_scroll.set,
-        selectmode="browse"
+        selectmode="browse",
+        style=styles["tree"],
     )
     fav_tree.pack(side="left", fill="both", expand=True)
     tree_scroll.config(command=fav_tree.yview)
@@ -99,7 +161,7 @@ def show_favorites_popup(parent: tk.Widget, log_func: Callable[[str], None], dow
         fav_dict[item_id] = ds
     
     # Button frame
-    btn_frame = ttk.Frame(dialog)
+    btn_frame = ttk.Frame(dialog, style=styles["frame"])
     btn_frame.pack(fill="x", padx=10, pady=(0, 10))
     
     def download_selected():
@@ -154,26 +216,30 @@ def show_favorites_popup(parent: tk.Widget, log_func: Callable[[str], None], dow
         btn_frame,
         text="📥 Download",
         command=download_selected,
-        width=15
+        width=15,
+        style=styles["button"],
     ).pack(side="left", padx=(0, 5))
     
     ttk.Button(
         btn_frame,
         text="💔 Remove",
         command=remove_selected,
-        width=15
+        width=15,
+        style=styles["button"],
     ).pack(side="left", padx=(0, 5))
     
     ttk.Button(
         btn_frame,
         text="ℹ️ Details",
         command=view_details,
-        width=15
+        width=15,
+        style=styles["button"],
     ).pack(side="left", padx=(0, 5))
     
     ttk.Button(
         btn_frame,
         text="Close",
         command=dialog.destroy,
-        width=10
+        width=10,
+        style=styles["button"],
     ).pack(side="right")

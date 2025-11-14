@@ -1,11 +1,14 @@
 """History management for evaluation results."""
 
 from __future__ import annotations
+import logging
 from tkinter import messagebox
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .panel_main import EvaluationPanel
+
+logger = logging.getLogger(__name__)
 
 
 def view_history(panel: "EvaluationPanel") -> None:
@@ -17,14 +20,26 @@ def view_history(panel: "EvaluationPanel") -> None:
     from aios.core.evaluation import EvaluationResult
     from aios.gui.dialogs import EvaluationHistoryDialog, EvaluationResultsDialog
     
+    logger.debug("Opening evaluation history dialog")
+    
     try:
+        history = getattr(panel, "_history", None)
+        if history is None:
+            panel._log("[eval] Evaluation history is still loading; please try again shortly.")
+            messagebox.showinfo("History Loading", "Evaluation history is still loading. Please try again shortly.")
+            return
+
         def on_view_details(eval_id: int) -> None:
             """Handle viewing details from history."""
+            logger.info(f"Viewing evaluation history details for ID {eval_id}")
             try:
-                eval_data = panel._history.get_evaluation(eval_id)
+                eval_data = history.get_evaluation(eval_id)
                 if not eval_data:
+                    logger.warning(f"Evaluation ID {eval_id} not found in history")
                     messagebox.showerror("Error", "Evaluation not found.")
                     return
+                
+                logger.debug(f"Retrieved evaluation {eval_id}: {len(eval_data.get('scores', []))} scores")
                 
                 # Reconstruct EvaluationResult
                 result = EvaluationResult(
@@ -54,19 +69,23 @@ def view_history(panel: "EvaluationPanel") -> None:
                 # Open results dialog
                 model_name = eval_data.get("model_name", "Unknown")
                 EvaluationResultsDialog(panel, result, model_name)
+                logger.info(f"Opened results dialog for evaluation {eval_id}")
             
             except Exception as e:
+                logger.error(f"Failed to view historical result {eval_id}: {e}", exc_info=True)
                 panel._log(f"[eval] Error viewing historical result: {e}")
                 messagebox.showerror("Error", f"Failed to view details:\n{e}")
         
         # Open history dialog
         dialog = EvaluationHistoryDialog(
             panel,
-            panel._history,
+            history,
             on_view_details=on_view_details
         )
         panel._log("[eval] Opened evaluation history")
+        logger.info("Evaluation history dialog opened successfully")
     
     except Exception as e:
+        logger.error(f"Failed to open evaluation history: {e}", exc_info=True)
         panel._log(f"[eval] Error opening history: {e}")
         messagebox.showerror("Error", f"Failed to open history:\n{e}")

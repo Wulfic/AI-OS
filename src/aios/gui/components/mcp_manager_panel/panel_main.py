@@ -5,8 +5,15 @@ Provides a visual interface for managing MCP servers and tool permissions.
 
 from __future__ import annotations
 
+# Import safe variable wrappers
+from ...utils import safe_variables
+
+import logging
 import os
+import threading
 from typing import Any, Callable, Optional, cast
+
+logger = logging.getLogger(__name__)
 
 try:  # pragma: no cover - environment dependent
     import tkinter as tk  # type: ignore
@@ -63,6 +70,7 @@ class MCPManagerPanel(ttk.LabelFrame):  # type: ignore[misc]
         run_cli: Optional[Callable[[list[str]], str]] = None,
         append_out: Optional[Callable[[str], None]] = None,
         save_state_fn: Optional[Callable[[], None]] = None,
+        post_to_ui: Optional[Callable[[Callable[..., None]], None]] = None,
     ) -> None:
         """Initialize the MCP manager panel.
         
@@ -81,6 +89,7 @@ class MCPManagerPanel(ttk.LabelFrame):  # type: ignore[misc]
         self._run_cli = run_cli or (lambda args: "")
         self._append_out = append_out or (lambda s: None)
         self._save_state_fn = save_state_fn or (lambda: None)
+        self._post_to_ui = post_to_ui
         
         # Detect project root
         self._project_root = self._detect_project_root()
@@ -92,10 +101,22 @@ class MCPManagerPanel(ttk.LabelFrame):  # type: ignore[misc]
         os.makedirs(self._config_dir, exist_ok=True)
         
         # Create state variables
-        self.servers_count_var = tk.StringVar(value="0")
-        self.servers_active_var = tk.StringVar(value="0")
-        self.tools_enabled_var = tk.StringVar(value="0")
-        self.tool_category_var = tk.StringVar(value="All")
+        self.servers_count_var = safe_variables.StringVar(value="0")
+        self.servers_active_var = safe_variables.StringVar(value="0")
+        self.tools_enabled_var = safe_variables.StringVar(value="0")
+        self.tool_category_var = safe_variables.StringVar(value="All")
+        
+        # Worker pool for async operations (to prevent blocking GUI)
+        try:
+            from ...utils.resource_management import get_worker_pool
+            self._worker_pool = get_worker_pool()
+        except Exception:
+            self._worker_pool = None
+            logger.warning("Worker pool not available, operations will be synchronous")
+        
+        # Refresh throttling
+        self._last_refresh_time = 0.0
+        self._refresh_in_progress = False
         
         # Create UI sections
         create_header(
@@ -137,6 +158,35 @@ class MCPManagerPanel(ttk.LabelFrame):  # type: ignore[misc]
         
         # Initial load
         self.refresh()
+
+    def _dispatch_to_ui(self, callback: Callable[[], None]) -> bool:
+        """Schedule ``callback`` to execute on the Tk UI thread."""
+        if self._post_to_ui is not None:
+            try:
+                self._post_to_ui(callback)
+                return True
+            except Exception:
+                logger.debug("Failed to dispatch via post_to_ui", exc_info=True)
+
+        if threading.current_thread() is threading.main_thread():
+            try:
+                self.after(0, callback)
+                return True
+            except Exception:
+                logger.debug("Failed to schedule callback with after", exc_info=True)
+
+        return False
+
+    def _current_tool_category(self) -> str:
+        """Return the currently selected tool category from the UI thread."""
+        if threading.current_thread() is threading.main_thread():
+            try:
+                return self.tool_category_var.get()
+            except Exception:
+                logger.debug("Failed to read tool category from Tk variable", exc_info=True)
+        else:
+            logger.debug("Tool category read requested off main thread; defaulting to 'All'")
+        return "All"
     
     @staticmethod
     def _detect_project_root() -> str:
@@ -302,20 +352,88 @@ class MCPManagerPanel(ttk.LabelFrame):  # type: ignore[misc]
     # ========== UI Population ==========
     
     def refresh(self):
-        """Refresh all data from disk."""
-        self._populate_servers_tree()
-        self._populate_tools_tree()
-        self._update_summary()
+        """Refresh all data from disk (async to prevent blocking GUI).
+
+        This method runs in a background thread to avoid blocking the GUI
+        when switching tabs or manually refreshing.
+        """
+        category_filter = self._current_tool_category()
+        # Throttle refreshes - only refresh if >2 seconds since last refresh
+        import time
+        current_time = time.time()
+        if current_time - self._last_refresh_time < 2.0:
+            # Too soon - skip refresh
+            logger.debug("MCP refresh throttled (< 2s since last refresh)")
+            return
+        
+        if self._refresh_in_progress:
+            # Already refreshing, skip
+            logger.debug("MCP refresh already in progress, skipping")
+            return
+        
+        self._last_refresh_time = current_time
+        self._refresh_in_progress = True
+        
+        logger.info("Refreshing MCP servers and tools from configuration")
+        
+        def _do_refresh(selected_category: str):
+            """Background refresh operation."""
+            try:
+                # Load data in background thread (file I/O can be slow)
+                servers = self._load_servers_config()
+                tools = self._load_tools_config()
+                
+                # Schedule UI update on main thread
+                def _update_ui():
+                    try:
+                        logger.debug(f"Updating MCP UI with {len(servers)} servers and {len(tools)} tools")
+                        populate_servers_tree(self.servers_tree, servers)
+                        populate_tools_tree(self.tools_tree, tools, selected_category)
+                        update_summary(
+                            servers,
+                            tools,
+                            self.servers_count_var,
+                            self.servers_active_var,
+                            self.tools_enabled_var,
+                        )
+                        logger.debug("MCP manager refresh complete")
+                    except Exception as e:
+                        logger.error(f"Error updating MCP UI: {e}", exc_info=True)
+                    finally:
+                        self._refresh_in_progress = False
+                
+                if not self._dispatch_to_ui(_update_ui):
+                    self._refresh_in_progress = False
+            except Exception as exc:
+                logger.error(f"Error refreshing MCP data: {exc}", exc_info=True)
+                error_message = str(exc)
+
+                def _handle_error():
+                    self._append_out(f"[MCP] Refresh failed: {error_message}")
+                    self._refresh_in_progress = False
+                
+                if not self._dispatch_to_ui(_handle_error):
+                    self._refresh_in_progress = False
+        
+        # Submit to worker pool if available
+        if self._worker_pool:
+            self._worker_pool.submit(_do_refresh, category_filter)
+        else:
+            # Fallback to direct execution (will block, but better than crashing)
+            logger.warning("Worker pool not available, MCP refresh will block GUI")
+            _do_refresh(category_filter)
 
     def _populate_servers_tree(self):
         """Populate MCP servers tree view."""
         servers = self._load_servers_config()
+        logger.debug(f"Populating servers tree with {len(servers)} configured servers")
         populate_servers_tree(self.servers_tree, servers)
 
     def _populate_tools_tree(self):
         """Populate tools tree view with category grouping."""
         tools = self._load_tools_config()
         category_filter = self.tool_category_var.get()
+        logger.debug(f"Populating tools tree with {len(tools)} tools (filter: {category_filter})")
         populate_tools_tree(self.tools_tree, tools, category_filter)
 
     def _update_summary(self):

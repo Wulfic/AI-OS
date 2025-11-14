@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import threading
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -10,6 +9,7 @@ if TYPE_CHECKING:
 
 from . import message_display
 from .event_handlers import scroll_to_bottom
+from ...utils.resource_management import submit_background
 
 
 def send_message(panel: RichChatPanel) -> None:
@@ -77,6 +77,7 @@ def send_message(panel: RichChatPanel) -> None:
                     panel.stop_btn.config(state="disabled")
                 except Exception:
                     pass
+                panel._current_thread = None
             
             try:
                 panel.canvas.after(0, _render)
@@ -102,6 +103,7 @@ def send_message(panel: RichChatPanel) -> None:
                     panel.stop_btn.config(state="disabled")
                 except Exception:
                     pass
+                panel._current_thread = None
             
             try:
                 panel.canvas.after(0, _render)
@@ -118,9 +120,15 @@ def send_message(panel: RichChatPanel) -> None:
                 panel._on_send(msg, _on_token, _on_done, _on_error, None, max_chars, sampling_params)
             except Exception as e:
                 _on_error(str(e))
-        
-        panel._current_thread = threading.Thread(target=_work, daemon=True)
-        panel._current_thread.start()
+
+        try:
+            panel._current_thread = submit_background(
+                "chat-send",
+                _work,
+                pool=getattr(panel, "_worker_pool", None),
+            )
+        except RuntimeError as exc:
+            _on_error(f"queue full: {exc}")
     except Exception as e:
         message_display.add_system_message(panel, f"Error: {e}")
 
@@ -138,6 +146,11 @@ def stop_generation(panel: RichChatPanel) -> None:
         # Disable stop button immediately
         try:
             panel.stop_btn.config(state="disabled")
+        except Exception:
+            pass
+        try:
+            if panel._current_thread is not None:
+                panel._current_thread.cancel()
         except Exception:
             pass
     except Exception as e:

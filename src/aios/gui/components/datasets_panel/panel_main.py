@@ -8,8 +8,13 @@ Provides a Tkinter panel for managing datasets with:
 
 from __future__ import annotations
 
+# Import safe variable wrappers
+from ...utils import safe_variables
+
+import logging
 import os
 import threading
+from concurrent.futures import Future
 from typing import Any, Callable, cast
 
 try:  # pragma: no cover - environment dependent
@@ -32,6 +37,8 @@ from .event_handlers import (
     handle_use_known_dataset,
 )
 from .logging_utils import log_to_text_widget
+
+logger = logging.getLogger(__name__)
 
 
 class DatasetsPanel(ttk.LabelFrame):  # type: ignore[misc]
@@ -58,6 +65,8 @@ class DatasetsPanel(ttk.LabelFrame):  # type: ignore[misc]
             dataset_path_var: Tkinter StringVar for dataset file path
             append_out: Optional callback for debug output
         """
+        logger.info("Initializing Datasets Panel")
+        
         super().__init__(parent, text="Datasets")
         self.pack(fill="x", padx=8, pady=(0, 8))
         self.dataset_path_var = dataset_path_var
@@ -76,7 +85,7 @@ class DatasetsPanel(ttk.LabelFrame):  # type: ignore[misc]
         r2 = ttk.Frame(self)
         r2.pack(fill="x", padx=4, pady=(2, 2))
         ttk.Label(r2, text="Known datasets:").pack(side="left")
-        self.known_ds_var = tk.StringVar(value="")
+        self.known_ds_var = safe_variables.StringVar(value="")
         try:
             self.known_ds_combo = ttk.Combobox(r2, textvariable=self.known_ds_var, width=40)
         except Exception:
@@ -98,7 +107,7 @@ class DatasetsPanel(ttk.LabelFrame):  # type: ignore[misc]
         r3.pack(fill="x", padx=4, pady=(0, 2))
         self.progress = ttk.Progressbar(r3, orient="horizontal", mode="determinate")
         self.progress.pack(side="left", fill="x", expand=True, padx=(0, 8))
-        self.progress_status = tk.StringVar(value="Idle")
+        self.progress_status = safe_variables.StringVar(value="Idle")
         ttk.Label(r3, textvariable=self.progress_status, width=18).pack(side="left")
 
         # Dataset-specific output area (compact)
@@ -117,8 +126,10 @@ class DatasetsPanel(ttk.LabelFrame):  # type: ignore[misc]
         # internal state
         self._known_ds_items: list[dict] | None = []
         self._known_ds_cache: list[dict] | None = None
-        self._download_thread: threading.Thread | None = None
+        self._download_future: Future | None = None
         self._download_cancel: threading.Event | None = None
+        
+        logger.info("Datasets Panel initialized successfully")
     
     def _log_dataset(self, message: str) -> None:
         """Log a dataset-specific message to the local output area.
@@ -136,19 +147,28 @@ class DatasetsPanel(ttk.LabelFrame):  # type: ignore[misc]
 
     def load_known_datasets(self) -> None:
         """Load and display list of known public datasets."""
+        logger.info("User action: Loading known public datasets from online sources")
         def fetch_all():
             items_all: list[dict] = []
             try:
                 items_all += fetch_from_github(max_items=120, max_size_gb=15)
-            except Exception:
+                logger.debug(f"Fetched {len(items_all)} datasets from GitHub")
+            except Exception as e:
+                logger.warning(f"Failed to fetch datasets from GitHub: {e}")
                 pass
             try:
-                items_all += fetch_from_awesomedata_nlp(max_items=120, max_size_gb=15)
-            except Exception:
+                awesomedata_items = fetch_from_awesomedata_nlp(max_items=120, max_size_gb=15)
+                items_all += awesomedata_items
+                logger.debug(f"Fetched {len(awesomedata_items)} datasets from AwesomeData NLP")
+            except Exception as e:
+                logger.warning(f"Failed to fetch datasets from AwesomeData NLP: {e}")
                 pass
             try:
-                items_all += fetch_from_aws_open_data_registry(max_items=60, max_size_gb=15)
-            except Exception:
+                aws_items = fetch_from_aws_open_data_registry(max_items=60, max_size_gb=15)
+                items_all += aws_items
+                logger.debug(f"Fetched {len(aws_items)} datasets from AWS Open Data Registry")
+            except Exception as e:
+                logger.warning(f"Failed to fetch datasets from AWS Open Data Registry: {e}")
                 pass
             
             # De-duplicate by URL
@@ -163,6 +183,7 @@ class DatasetsPanel(ttk.LabelFrame):  # type: ignore[misc]
                     continue
                 seen.add(key)
                 items.append(it)
+            logger.info(f"Loaded {len(items)} unique datasets from {len(items_all)} total (after deduplication)")
             return items
         
         self._known_ds_items, self._known_ds_cache = handle_load_known_datasets(
@@ -186,9 +207,11 @@ class DatasetsPanel(ttk.LabelFrame):  # type: ignore[misc]
         """Download the currently selected known dataset."""
         name = self.known_ds_var.get().strip()
         if not name:
+            logger.warning("Cannot download dataset - no dataset selected")
             self._log_dataset("Please select a dataset from the dropdown first")
             return
         
+        logger.info(f"User action: Starting download of dataset '{name}' from catalog")
         url = ""
         try:
             for it in self._known_ds_items or []:
@@ -201,20 +224,25 @@ class DatasetsPanel(ttk.LabelFrame):  # type: ignore[misc]
             url = ""
         
         if not url:
+            logger.warning(f"No URL found for dataset '{name}'")
             self._log_dataset(f"No URL found for '{name}'")
             return
         
+        logger.debug(f"Dataset '{name}' URL: {url}")
         base = os.path.expanduser("~/.local/share/aios/datasets")
         try:
             os.makedirs(os.path.join(base, name), exist_ok=True)
-        except Exception:
-            pass
+            logger.debug(f"Created dataset directory: {os.path.join(base, name)}")
+        except Exception as e:
+            logger.error(f"Failed to create dataset directory for '{name}': {e}")
         
         fname = os.path.basename(url) or "data"
         dest = os.path.join(base, name, fname)
         
+        logger.info(f"User action: Initiating download for known dataset '{name}'")
+        
         self._download_cancel = threading.Event()
-        self._download_thread = start_dataset_download(
+        self._download_future = start_dataset_download(
             name=name,
             url=url,
             dest=dest,
@@ -230,8 +258,25 @@ class DatasetsPanel(ttk.LabelFrame):  # type: ignore[misc]
 
     def cancel_download(self) -> None:
         """Cancel the currently active download."""
+        logger.info("User action: Cancelling dataset download")
         handle_cancel_download(
             download_cancel=self._download_cancel,
             btn_cancel=self.btn_cancel,
             log_callback=self._log_dataset,
         )
+
+    def cleanup(self) -> None:
+        """Clean up datasets panel resources on shutdown."""
+        logger.info("Cleaning up Datasets Panel")
+        
+        # Cancel any active downloads
+        if self._download_future and not self._download_future.done():
+            logger.info("Cancelling active dataset download during cleanup")
+            try:
+                if self._download_cancel:
+                    self._download_cancel.set()
+                self._download_future.result(timeout=2.0)
+            except Exception as e:
+                logger.error(f"Error cancelling download during cleanup: {e}")
+        
+        logger.info("Datasets Panel cleanup complete")

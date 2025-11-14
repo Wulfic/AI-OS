@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 from typing import Any, TYPE_CHECKING
 import warnings
@@ -11,6 +12,15 @@ from .constants import MATPLOTLIB_AVAILABLE, Figure, FigureCanvasTkAgg, mdates, 
 if TYPE_CHECKING:
     from .panel_main import ResourcesPanel
 
+logger = logging.getLogger(__name__)
+
+WIDE_FIGSIZE = (8, 3.4)
+NARROW_FIGSIZE = (3, 1.9)
+DEFAULT_FIGSIZE = (5, 4)
+NARROW_ROW_MIN = 90
+WIDE_COLUMN_MIN = 400
+NARROW_COLUMN_MIN = 200
+
 
 def create_charts(panel: "ResourcesPanel") -> None:
     """Create matplotlib charts for system monitoring.
@@ -18,20 +28,31 @@ def create_charts(panel: "ResourcesPanel") -> None:
     Args:
         panel: ResourcesPanel instance
     """
+    logger.debug("Creating system monitoring charts (4 charts: processor, memory, network, disk)")
+    
     # Clear existing charts
     for widget in panel._charts_container.winfo_children():
         widget.destroy()
     panel._charts.clear()
 
-    # Create 1x4 grid - all charts in a single row
-    # Col 0: Processor Utilization (CPU + all GPUs)
-    # Col 1: Memory Usage (RAM + all GPU memory)  
-    # Col 2: Network (Upload/Download)
-    # Col 3: Disk I/O (Read/Write)
-    _create_chart_widget(panel, "processor", "Processor (%)", row=0, col=0, ylabel="%", ylim=(0, 100), multi_line=True, max_lines=10)
-    _create_chart_widget(panel, "memory", "Memory (GB)", row=0, col=1, ylabel="GB", multi_line=True, max_lines=10)
-    _create_chart_widget(panel, "network", "Network (MB/s)", row=0, col=2, ylabel="MB/s", multi_line=True)
-    _create_chart_widget(panel, "disk", "Disk I/O (MB/s)", row=0, col=3, ylabel="MB/s", multi_line=True)
+    # Configure grid to keep wide charts side by side while narrow charts stack on the right
+    for row_idx in range(2):
+        panel._charts_container.grid_rowconfigure(row_idx, weight=1, minsize=NARROW_ROW_MIN, uniform="monitor_rows")
+    panel._charts_container.grid_columnconfigure(0, weight=2, minsize=WIDE_COLUMN_MIN, uniform="wide")
+    panel._charts_container.grid_columnconfigure(1, weight=2, minsize=WIDE_COLUMN_MIN, uniform="wide")
+    panel._charts_container.grid_columnconfigure(2, weight=1, minsize=NARROW_COLUMN_MIN, uniform="narrow")
+
+    # Layout:
+    # Row 0-1, Col 0: Processor (tall, spans both narrow rows)
+    # Row 0-1, Col 1: Memory (tall, spans both narrow rows)
+    # Row 0,    Col 2: Network (reduced height)
+    # Row 1,    Col 2: Disk I/O (reduced height)
+    _create_chart_widget(panel, "processor", "Processor (%)", row=0, col=0, ylabel="%", ylim=(0, 100), multi_line=True, max_lines=10, colspan=1, rowspan=2, is_wide=True)
+    _create_chart_widget(panel, "memory", "Memory (GB)", row=0, col=1, ylabel="GB", multi_line=True, max_lines=10, colspan=1, rowspan=2, is_wide=True)
+    _create_chart_widget(panel, "network", "Network (MB/s)", row=0, col=2, ylabel="MB/s", multi_line=True, is_narrow=True)
+    _create_chart_widget(panel, "disk", "Disk I/O (MB/s)", row=1, col=2, ylabel="MB/s", multi_line=True, is_narrow=True)
+    
+    logger.debug(f"Created {len(panel._charts)} charts successfully")
 
 
 def _create_chart_widget(
@@ -43,7 +64,11 @@ def _create_chart_widget(
     ylabel: str = "",
     ylim: tuple | None = None,
     multi_line: bool = False,
-    max_lines: int = 2
+    max_lines: int = 2,
+    colspan: int = 1,
+    rowspan: int = 1,
+    is_wide: bool = False,
+    is_narrow: bool = False
 ) -> None:
     """Create a single chart widget.
     
@@ -57,23 +82,39 @@ def _create_chart_widget(
         ylim: Y-axis limits tuple (min, max)
         multi_line: Whether to support multiple lines
         max_lines: Maximum number of lines to create
+        colspan: Number of columns to span
+        is_wide: Whether this is a wide chart (Processor/Memory)
+        is_narrow: Whether this is a narrow chart (Network/Disk)
     """
+    logger.debug(f"Creating chart: {name} (title: {title}, lines: {max_lines if multi_line else 1})")
+    
     # Create frame for this chart with padding
     frame = ttk.Frame(panel._charts_container, relief="solid", borderwidth=1)
-    frame.grid(row=row, column=col, padx=4, pady=4, sticky="nsew")
-    
-    # Configure grid weights for 4-column layout
-    panel._charts_container.grid_rowconfigure(row, weight=1, minsize=300)
-    panel._charts_container.grid_columnconfigure(col, weight=1, minsize=300)
+    frame.grid(row=row, column=col, rowspan=rowspan, columnspan=colspan, padx=4, pady=4, sticky="nsew")
 
-    # Create matplotlib figure (compact for 4-column layout)
-    fig = Figure(figsize=(5, 4), dpi=95, facecolor='white')  # type: ignore[misc]
+    # Create matplotlib figure with appropriate size
+    if is_wide:
+        fig = Figure(figsize=WIDE_FIGSIZE, dpi=95, facecolor='white')  # type: ignore[misc]
+    elif is_narrow:
+        fig = Figure(figsize=NARROW_FIGSIZE, dpi=95, facecolor='white')  # type: ignore[misc]
+    else:
+        fig = Figure(figsize=DEFAULT_FIGSIZE, dpi=95, facecolor='white')  # type: ignore[misc]
+        
     ax = fig.add_subplot(111)
     ax.set_facecolor('#fafafa')  # Light gray background for contrast
-    ax.set_title(title, fontsize=12, pad=8, weight='bold')
-    ax.set_ylabel(ylabel, fontsize=10, weight='bold')
-    ax.tick_params(labelsize=9, width=1.2)
+    ax.set_title(title, fontsize=10 if is_narrow else 12, pad=8, weight='bold')
+    ax.set_ylabel(ylabel, fontsize=9 if is_narrow else 10, weight='bold')
+    ax.tick_params(labelsize=8 if is_narrow else 9, width=1.2)
     ax.grid(True, alpha=0.35, linestyle='--', linewidth=0.7, color='gray')
+    if is_narrow:
+        try:
+            locator = mdates.AutoDateLocator(minticks=2, maxticks=4)
+            formatter = mdates.ConciseDateFormatter(locator)
+            ax.xaxis.set_major_locator(locator)
+            ax.xaxis.set_major_formatter(formatter)
+            ax.tick_params(axis="x", labelrotation=0)
+        except Exception:
+            pass
     
     if ylim:
         ax.set_ylim(ylim[0], ylim[1])
@@ -89,7 +130,7 @@ def _create_chart_widget(
         line, = ax.plot([], [], 'b-', linewidth=2)
         lines = [line]
 
-    fig.tight_layout(pad=1.2)
+    fig.tight_layout(pad=1.0)
 
     # Embed in tkinter
     canvas = FigureCanvasTkAgg(fig, master=frame)  # type: ignore[misc]
@@ -130,6 +171,8 @@ def update_charts(panel: "ResourcesPanel") -> None:
 
         if visible_indices:
             times = [panel._history["timestamps"][i] for i in visible_indices]
+            num_points = len(times)
+            logger.debug(f"Updating charts with {num_points} data points (timeline: {timeline_seconds}s)")
             
             # Update unified Processor chart (CPU + all GPUs)
             if "processor" in panel._charts:

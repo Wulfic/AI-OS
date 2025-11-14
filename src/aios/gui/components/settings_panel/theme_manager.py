@@ -1,14 +1,129 @@
 """Theme management and application logic."""
 
 from __future__ import annotations
+import logging
+import time
 import tkinter as tk
-from typing import TYPE_CHECKING, Any
+from collections import deque
+from typing import TYPE_CHECKING, Any, Sequence
 
 from .theme_constants import THEME_COLORS
 from aios.gui.utils.theme_utils import configure_global_dialogs
 
 if TYPE_CHECKING:
     from .panel_main import SettingsPanel
+
+
+logger = logging.getLogger(__name__)
+
+_THEME_STYLE_PREFIX = "AIThemeSelector"
+THEME_COMBOBOX_STYLE = f"{_THEME_STYLE_PREFIX}.TCombobox"
+
+
+def _theme_specific_combobox_style(theme: str) -> str:
+    token = theme.lower().replace(" ", "-")
+    return f"{_THEME_STYLE_PREFIX}-{token}.TCombobox"
+
+
+def _apply_combobox_styles_to_widgets(panel: "SettingsPanel", theme_style: str) -> None:
+    """Reassign combobox widgets so they immediately pick up updated styles."""
+    try:
+        if hasattr(panel, "theme_combo"):
+            panel.theme_combo.configure(style=theme_style)
+    except Exception as exc:
+        logger.debug("Theme combo style assignment failed for %s: %s", theme_style, exc)
+        try:
+            panel.theme_combo.configure(style=THEME_COMBOBOX_STYLE)
+        except Exception:
+            pass
+
+    try:
+        if hasattr(panel, "log_level_combo"):
+            panel.log_level_combo.configure(style=THEME_COMBOBOX_STYLE)
+    except Exception:
+        pass
+
+
+def _configure_combobox_style(
+    style: "tkinter.ttk.Style",
+    *,
+    field_bg: str,
+    fg: str,
+    button_bg: str,
+    select_bg: str,
+    select_fg: str,
+    arrowcolor: str,
+    bordercolor: str | None = None,
+    lightcolor: str | None = None,
+    darkcolor: str | None = None,
+    insertcolor: str | None = None,
+    style_names: Sequence[str] | None = None,
+) -> None:
+    """Standardize combobox styling so previous themes cannot leak settings."""
+
+    bordercolor = bordercolor or button_bg
+    lightcolor = lightcolor or bordercolor
+    darkcolor = darkcolor or bordercolor
+    insertcolor = insertcolor or select_fg
+
+    targets = style_names or ("TCombobox",)
+
+    for style_name in targets:
+        style.configure(
+            style_name,
+            fieldbackground=field_bg,
+            foreground=fg,
+            background=button_bg,
+            selectbackground=select_bg,
+            selectforeground=select_fg,
+            arrowcolor=arrowcolor,
+            bordercolor=bordercolor,
+            lightcolor=lightcolor,
+            darkcolor=darkcolor,
+            insertcolor=insertcolor,
+        )
+
+
+def _map_combobox_states(
+    style: "tkinter.ttk.Style",
+    *,
+    style_names: Sequence[str] | None = None,
+    **state_map: Any,
+) -> None:
+    """Apply identical ttk map settings to multiple combobox styles."""
+
+    targets = style_names or ("TCombobox",)
+    for style_name in targets:
+        style.map(style_name, **state_map)
+
+
+def _configure_button_style(
+    style: "tkinter.ttk.Style",
+    *,
+    background: str,
+    foreground: str,
+    bordercolor: str | None = None,
+    focuscolor: str | None = None,
+    highlightcolor: str | None = None,
+    relief: str = "groove",
+) -> None:
+    """Ensure TButton picks up the active theme's border/focus colors."""
+
+    bordercolor = bordercolor or background
+    focuscolor = focuscolor or bordercolor
+    highlightcolor = highlightcolor or focuscolor
+
+    style.configure(
+        "TButton",
+        background=background,
+        foreground=foreground,
+        bordercolor=bordercolor,
+        lightcolor=bordercolor,
+        darkcolor=bordercolor,
+        focuscolor=focuscolor,
+        highlightcolor=highlightcolor,
+        relief=relief,
+    )
 
 
 def apply_theme(panel: "SettingsPanel", theme: str) -> None:
@@ -18,16 +133,17 @@ def apply_theme(panel: "SettingsPanel", theme: str) -> None:
         panel: The settings panel instance
         theme: The theme name to apply
     """
-    import logging
-    logger = logging.getLogger(__name__)
     logger.info(f"[THEME] Applying theme: {theme}")
-    
+    start_time = time.perf_counter()
+
     try:
         import tkinter.ttk as ttk_style
         import platform
         
         style = ttk_style.Style()
         colors = THEME_COLORS.get(theme, THEME_COLORS["Light Mode"])
+        combobox_style_name = _theme_specific_combobox_style(theme)
+        combobox_styles = ("TCombobox", THEME_COMBOBOX_STYLE, combobox_style_name)
         
         logger.info(f"[THEME] Using color scheme: bg={colors.get('bg_dark', 'N/A')}, fg={colors.get('fg_light', 'N/A')}")
 
@@ -44,29 +160,44 @@ def apply_theme(panel: "SettingsPanel", theme: str) -> None:
             style.configure(".", background=bg_dark, foreground=fg_light, fieldbackground=entry_bg)
             style.configure("TFrame", background=bg_dark)
             style.configure("TLabel", background=bg_dark, foreground=fg_light)
-            style.configure("TButton", background=button_bg, foreground=fg_light)
+            _configure_button_style(
+                style,
+                background=button_bg,
+                foreground=fg_light,
+                bordercolor=button_bg,
+                focuscolor=select_bg,
+            )
             style.map("TButton", background=[("active", select_bg), ("pressed", "#505050")])
             style.configure("TEntry", fieldbackground=entry_bg, foreground=fg_light)
-            style.configure("TCombobox", 
-                fieldbackground=entry_bg, 
-                foreground=fg_light, 
-                background=button_bg,
-                selectbackground=select_bg,
-                selectforeground=fg_light,
-                arrowcolor=fg_light)
-            style.map("TCombobox",
+            _configure_combobox_style(
+                style,
+                field_bg=entry_bg,
+                fg=fg_light,
+                button_bg=button_bg,
+                select_bg=select_bg,
+                select_fg=fg_light,
+                arrowcolor=fg_light,
+                insertcolor=fg_light,
+                style_names=combobox_styles,
+            )
+            _map_combobox_states(
+                style,
+                style_names=combobox_styles,
                 fieldbackground=[("readonly", entry_bg), ("disabled", bg_dark)],
                 foreground=[("readonly", fg_light), ("disabled", "#888888")],
                 background=[("readonly", button_bg), ("disabled", bg_dark)],
                 selectbackground=[("readonly", select_bg)],
-                selectforeground=[("readonly", fg_light)])
+                selectforeground=[("readonly", fg_light)],
+            )
             style.configure("TCheckbutton", background=bg_dark, foreground=fg_light)
             style.configure("TRadiobutton", background=bg_dark, foreground=fg_light)
             style.configure("TLabelframe", background=bg_dark, foreground=fg_light)
             style.configure("TLabelframe.Label", background=bg_dark, foreground=fg_light)
             style.configure("TNotebook", background=bg_dark)
             style.configure("TNotebook.Tab", background=button_bg, foreground=fg_light)
-            style.map("TNotebook.Tab", background=[("selected", select_bg)])
+            style.map("TNotebook.Tab", 
+                     background=[("selected", select_bg)],
+                     foreground=[("selected", fg_light), ("!selected", fg_light)])
             style.configure("TScrollbar", background=button_bg, troughcolor=bg_dark)
             style.configure("Treeview", background=entry_bg, foreground=fg_light, fieldbackground=entry_bg)
             style.configure("Treeview.Heading", background=button_bg, foreground=fg_light)
@@ -77,17 +208,13 @@ def apply_theme(panel: "SettingsPanel", theme: str) -> None:
                 panel.parent.master.option_add("*TCombobox*Listbox*Foreground", fg_light)
                 panel.parent.master.option_add("*TCombobox*Listbox*selectBackground", select_bg)
                 panel.parent.master.option_add("*TCombobox*Listbox*selectForeground", fg_light)
-                # Also update any existing comboboxes
-                panel.parent.master.update_idletasks()
+                # Schedule update asynchronously to avoid blocking
+                panel.parent.master.after_idle(lambda: panel.parent.master.update_idletasks())
             except Exception:
                 pass
             
             # Update Text widgets
-            try:
-                for widget in panel.parent.master.winfo_children():
-                    update_widget_colors(widget, bg=bg_dark, fg=fg_light, insertbackground=fg_light)
-            except Exception:
-                pass
+            _schedule_widget_recolor(panel, bg=bg_dark, fg=fg_light, insertbackground=fg_light)
                 
         elif theme == "Matrix Mode":
             style.theme_use(colors["theme_base"])
@@ -103,22 +230,36 @@ def apply_theme(panel: "SettingsPanel", theme: str) -> None:
             style.configure(".", background=bg_black, foreground=fg_green, fieldbackground=entry_bg)
             style.configure("TFrame", background=bg_black)
             style.configure("TLabel", background=bg_black, foreground=fg_green)
-            style.configure("TButton", background=button_bg, foreground=fg_green)
+            _configure_button_style(
+                style,
+                background=button_bg,
+                foreground=fg_green,
+                bordercolor=button_bg,
+                focuscolor=accent_green,
+                highlightcolor=accent_green,
+            )
             style.map("TButton", background=[("active", select_bg), ("pressed", "#004400")], foreground=[("active", accent_green)])
             style.configure("TEntry", fieldbackground=entry_bg, foreground=fg_green, insertbackground=accent_green)
-            style.configure("TCombobox", 
-                fieldbackground=entry_bg, 
-                foreground=fg_green, 
-                background=button_bg,
-                selectbackground=select_bg,
-                selectforeground=accent_green,
-                arrowcolor=fg_green)
-            style.map("TCombobox",
+            _configure_combobox_style(
+                style,
+                field_bg=entry_bg,
+                fg=fg_green,
+                button_bg=button_bg,
+                select_bg=select_bg,
+                select_fg=accent_green,
+                arrowcolor=fg_green,
+                insertcolor=accent_green,
+                style_names=combobox_styles,
+            )
+            _map_combobox_states(
+                style,
+                style_names=combobox_styles,
                 fieldbackground=[("readonly", entry_bg), ("disabled", bg_black)],
                 foreground=[("readonly", fg_green), ("disabled", fg_dim_green)],
                 background=[("readonly", button_bg), ("disabled", bg_black)],
                 selectbackground=[("readonly", select_bg)],
-                selectforeground=[("readonly", accent_green)])
+                selectforeground=[("readonly", accent_green)],
+            )
             style.configure("TCheckbutton", background=bg_black, foreground=fg_green)
             style.configure("TRadiobutton", background=bg_black, foreground=fg_green)
             style.configure("TLabelframe", background=bg_black, foreground=fg_green)
@@ -143,16 +284,12 @@ def apply_theme(panel: "SettingsPanel", theme: str) -> None:
                 panel.parent.master.option_add("*TCombobox*Listbox*Foreground", fg_green)
                 panel.parent.master.option_add("*TCombobox*Listbox*selectBackground", select_bg)
                 panel.parent.master.option_add("*TCombobox*Listbox*selectForeground", accent_green)
-                # Also update any existing comboboxes
-                panel.parent.master.update_idletasks()
+                # Schedule update asynchronously to avoid blocking
+                panel.parent.master.after_idle(lambda: panel.parent.master.update_idletasks())
             except Exception:
                 pass
             
-            try:
-                for widget in panel.parent.master.winfo_children():
-                    update_widget_colors(widget, bg=bg_black, fg=fg_green, insertbackground=accent_green)
-            except Exception:
-                pass
+            _schedule_widget_recolor(panel, bg=bg_black, fg=fg_green, insertbackground=accent_green)
                 
         elif theme == "Halloween Mode":
             style.theme_use(colors["theme_base"])
@@ -169,28 +306,41 @@ def apply_theme(panel: "SettingsPanel", theme: str) -> None:
             style.configure(".", background=bg_black, foreground=fg_orange, fieldbackground=entry_bg)
             style.configure("TFrame", background=bg_black)
             style.configure("TLabel", background=bg_black, foreground=fg_light)
-            style.configure("TButton", background=button_bg, foreground=fg_orange)
+            _configure_button_style(
+                style,
+                background=button_bg,
+                foreground=fg_orange,
+                bordercolor=accent_orange,
+                focuscolor=accent_orange,
+                highlightcolor=accent_orange,
+            )
             style.map("TButton", 
                 background=[("active", select_bg), ("pressed", "#3d2000")],
                 foreground=[("active", "#ffffff")])
             style.configure("TEntry", fieldbackground=entry_bg, foreground=fg_orange, insertbackground=fg_orange)
-            style.configure("TCombobox", 
-                fieldbackground=entry_bg,
-                background=button_bg,
-                foreground=fg_orange,
+            _configure_combobox_style(
+                style,
+                field_bg=entry_bg,
+                fg=fg_orange,
+                button_bg=button_bg,
+                select_bg=select_bg,
+                select_fg=bg_black,
                 arrowcolor=accent_orange,
                 bordercolor=accent_orange,
                 lightcolor=accent_orange,
                 darkcolor=accent_orange,
                 insertcolor=fg_orange,
-                selectbackground=select_bg,
-                selectforeground=bg_black)
-            style.map("TCombobox",
+                style_names=combobox_styles,
+            )
+            _map_combobox_states(
+                style,
+                style_names=combobox_styles,
                 fieldbackground=[("readonly", entry_bg), ("disabled", bg_black)],
                 foreground=[("readonly", fg_orange), ("disabled", "#8B4513")],
                 background=[("readonly", button_bg), ("disabled", bg_black)],
                 selectbackground=[("readonly", select_bg)],
-                selectforeground=[("readonly", bg_black)])
+                selectforeground=[("readonly", bg_black)],
+            )
             style.configure("TCheckbutton", background=bg_black, foreground=fg_light)
             style.configure("TRadiobutton", background=bg_black, foreground=fg_light)
             style.configure("TLabelframe", background=bg_black, foreground=accent_orange)
@@ -215,17 +365,13 @@ def apply_theme(panel: "SettingsPanel", theme: str) -> None:
                 panel.parent.master.option_add("*TCombobox*Listbox*Foreground", fg_orange)
                 panel.parent.master.option_add("*TCombobox*Listbox*selectBackground", select_bg)
                 panel.parent.master.option_add("*TCombobox*Listbox*selectForeground", "#ffffff")
-                # Also update any existing comboboxes
-                panel.parent.master.update_idletasks()
+                # Schedule update asynchronously to avoid blocking
+                panel.parent.master.after_idle(lambda: panel.parent.master.update_idletasks())
             except Exception:
                 pass
             
             # Update Text widgets
-            try:
-                for widget in panel.parent.master.winfo_children():
-                    update_widget_colors(widget, bg=bg_black, fg=fg_orange, insertbackground=fg_orange)
-            except Exception:
-                pass
+            _schedule_widget_recolor(panel, bg=bg_black, fg=fg_orange, insertbackground=fg_orange)
             
             # Update root and frames recursively
             try:
@@ -261,22 +407,36 @@ def apply_theme(panel: "SettingsPanel", theme: str) -> None:
             style.configure(".", background=bg_pink, foreground=fg_dark, fieldbackground=entry_bg)
             style.configure("TFrame", background=bg_pink)
             style.configure("TLabel", background=bg_pink, foreground=fg_dark)
-            style.configure("TButton", background=button_bg, foreground=fg_white)
+            _configure_button_style(
+                style,
+                background=button_bg,
+                foreground=fg_white,
+                bordercolor=button_bg,
+                focuscolor=select_bg,
+                highlightcolor=select_bg,
+            )
             style.map("TButton", background=[("active", select_bg)])
             style.configure("TEntry", fieldbackground=entry_bg, foreground=fg_dark, insertbackground=fg_dark)
-            style.configure("TCombobox", 
-                fieldbackground=entry_bg, 
-                foreground=fg_dark, 
-                background=button_bg,
-                selectbackground=select_bg,
-                selectforeground=fg_white,
-                arrowcolor=fg_dark)
-            style.map("TCombobox",
+            _configure_combobox_style(
+                style,
+                field_bg=entry_bg,
+                fg=fg_dark,
+                button_bg=button_bg,
+                select_bg=select_bg,
+                select_fg=fg_white,
+                arrowcolor=fg_dark,
+                insertcolor=fg_dark,
+                style_names=combobox_styles,
+            )
+            _map_combobox_states(
+                style,
+                style_names=combobox_styles,
                 fieldbackground=[("readonly", entry_bg), ("disabled", bg_pink)],
                 foreground=[("readonly", fg_dark), ("disabled", "#C71585")],
                 background=[("readonly", button_bg), ("disabled", bg_pink)],
                 selectbackground=[("readonly", select_bg)],
-                selectforeground=[("readonly", fg_white)])
+                selectforeground=[("readonly", fg_white)],
+            )
             style.configure("TCheckbutton", background=bg_pink, foreground=fg_dark)
             style.configure("TRadiobutton", background=bg_pink, foreground=fg_dark)
             style.configure("TLabelframe", background=bg_pink, foreground=fg_dark)
@@ -295,16 +455,12 @@ def apply_theme(panel: "SettingsPanel", theme: str) -> None:
                 panel.parent.master.option_add("*TCombobox*Listbox*Foreground", fg_dark)
                 panel.parent.master.option_add("*TCombobox*Listbox*selectBackground", select_bg)
                 panel.parent.master.option_add("*TCombobox*Listbox*selectForeground", fg_white)
-                # Also update any existing comboboxes
-                panel.parent.master.update_idletasks()
+                # Schedule update asynchronously to avoid blocking
+                panel.parent.master.after_idle(lambda: panel.parent.master.update_idletasks())
             except Exception:
                 pass
             
-            try:
-                for widget in panel.parent.master.winfo_children():
-                    update_widget_colors(widget, bg=bg_pink, fg=fg_dark, insertbackground=fg_dark)
-            except Exception:
-                pass
+            _schedule_widget_recolor(panel, bg=bg_pink, fg=fg_dark, insertbackground=fg_dark)
                 
         else:  # Light Mode
             # Reset to default platform theme
@@ -318,6 +474,38 @@ def apply_theme(panel: "SettingsPanel", theme: str) -> None:
             except Exception:
                 style.theme_use("default")
             
+            _configure_combobox_style(
+                style,
+                field_bg="white",
+                fg="black",
+                button_bg="#f0f0f0",
+                select_bg="#0078d7",
+                select_fg="white",
+                arrowcolor="black",
+                bordercolor="#c8c8c8",
+                lightcolor="#fdfdfd",
+                darkcolor="#c0c0c0",
+                insertcolor="black",
+                style_names=combobox_styles,
+            )
+            _configure_button_style(
+                style,
+                background="#f0f0f0",
+                foreground="black",
+                bordercolor="#c8c8c8",
+                focuscolor="#0078d7",
+                highlightcolor="#0078d7",
+                relief="raised",
+            )
+            _map_combobox_states(
+                style,
+                style_names=combobox_styles,
+                fieldbackground=[("readonly", "white"), ("disabled", "#e0e0e0")],
+                foreground=[("readonly", "black"), ("disabled", "#888888")],
+                background=[("readonly", "#f0f0f0"), ("disabled", "#e0e0e0")],
+                selectbackground=[("readonly", "#0078d7")],
+                selectforeground=[("readonly", "white")],
+            )
             style.map("TButton", background=[("active", "#e1e1e1"), ("pressed", "#d0d0d0")])
             
             try:
@@ -325,36 +513,54 @@ def apply_theme(panel: "SettingsPanel", theme: str) -> None:
                 panel.parent.master.option_add("*TCombobox*Listbox*Foreground", "black")
                 panel.parent.master.option_add("*TCombobox*Listbox*selectBackground", "#0078d7")
                 panel.parent.master.option_add("*TCombobox*Listbox*selectForeground", "white")
-                # Also update any existing comboboxes
-                panel.parent.master.update_idletasks()
+                # Schedule update asynchronously to avoid blocking
+                panel.parent.master.after_idle(lambda: panel.parent.master.update_idletasks())
             except Exception:
                 pass
             
-            try:
-                for widget in panel.parent.master.winfo_children():
-                    update_widget_colors(widget, bg="white", fg="black", insertbackground="black")
-            except Exception:
-                pass
+            _schedule_widget_recolor(panel, bg="white", fg="black", insertbackground="black")
         
         # Force update of notebook tabs immediately
         try:
             root = panel.parent
             while root.master:
                 root = root.master
-            root.update_idletasks()
-            
-            # Configure global dialogs for this theme
-            configure_global_dialogs(root, theme)
+
+            def _configure_dialogs_async() -> None:
+                dialog_start = time.perf_counter()
+                configure_global_dialogs(root, theme)
+                dialog_elapsed = time.perf_counter() - dialog_start
+                if dialog_elapsed >= 0.1:
+                    logger.debug(f"[THEME] Global dialog configuration took {dialog_elapsed:.3f}s")
+
+            try:
+                root.after_idle(root.update_idletasks)
+            except Exception:
+                try:
+                    root.update_idletasks()
+                except Exception:
+                    pass
+
+            try:
+                root.after_idle(_configure_dialogs_async)
+            except Exception:
+                _configure_dialogs_async()
         except Exception:
             pass
         
+        _apply_combobox_styles_to_widgets(panel, combobox_style_name)
+
         # Update theme info label
         panel.theme_info.config(text=colors["info_message"], foreground=colors["info_color"])
         
         # Notify chat panel of theme change
         if panel._chat_panel and hasattr(panel._chat_panel, 'update_theme'):
             try:
+                notify_start = time.perf_counter()
                 panel._chat_panel.update_theme(theme)
+                notify_elapsed = time.perf_counter() - notify_start
+                if notify_elapsed >= 0.1:
+                    logger.debug(f"[THEME] Chat panel update_theme took {notify_elapsed:.3f}s")
             except Exception:
                 pass
         
@@ -362,7 +568,11 @@ def apply_theme(panel: "SettingsPanel", theme: str) -> None:
         help_panel = getattr(panel, '_help_panel', None)
         if help_panel and hasattr(help_panel, 'update_theme'):
             try:
+                notify_start = time.perf_counter()
                 help_panel.update_theme(theme)
+                notify_elapsed = time.perf_counter() - notify_start
+                if notify_elapsed >= 0.1:
+                    logger.debug(f"[THEME] Help panel update_theme took {notify_elapsed:.3f}s")
             except Exception:
                 pass
         
@@ -370,36 +580,94 @@ def apply_theme(panel: "SettingsPanel", theme: str) -> None:
         hrm_panel = getattr(panel, '_hrm_training_panel', None)
         if hrm_panel and hasattr(hrm_panel, 'update_theme'):
             try:
+                notify_start = time.perf_counter()
                 hrm_panel.update_theme()
+                notify_elapsed = time.perf_counter() - notify_start
+                if notify_elapsed >= 0.1:
+                    logger.debug(f"[THEME] HRM panel update_theme took {notify_elapsed:.3f}s")
             except Exception:
                 pass
 
+        try:
+            panel._last_theme_applied = theme
+            panel._last_theme_applied_at = time.perf_counter()
+        except Exception:
+            pass
+
     except Exception as e:
         panel.theme_info.config(text=f"⚠ Error applying theme: {e}", foreground="red")
+    finally:
+        elapsed_total = time.perf_counter() - start_time
+        logger.info(f"[THEME] Theme '{theme}' applied in {elapsed_total:.3f}s")
+
+
+def _apply_widget_colors(widget: Any, bg: str, fg: str, insertbackground: str) -> None:
+    """Apply palette colors to a single widget if supported."""
+    try:
+        if isinstance(widget, tk.Text):
+            widget.config(bg=bg, fg=fg, insertbackground=insertbackground)
+        elif isinstance(widget, tk.Listbox):
+            widget.config(bg=bg, fg=fg)
+        elif isinstance(widget, tk.Canvas):
+            widget.config(bg=bg)
+        elif isinstance(widget, tk.Frame):
+            widget.config(bg=bg)
+        elif isinstance(widget, tk.Label):
+            widget.config(bg=bg, fg=fg)
+    except Exception:
+        pass
 
 
 def update_widget_colors(widget: Any, bg: str, fg: str, insertbackground: str) -> None:
-    """Recursively update widget colors for Text, Listbox, etc.
-    
-    Args:
-        widget: The widget to update
-        bg: Background color
-        fg: Foreground color
-        insertbackground: Insert cursor color
-    """
+    """Recursively update widget colors for Text, Listbox, etc."""
     try:
-        # Update Text widgets
-        if isinstance(widget, tk.Text):
-            widget.config(bg=bg, fg=fg, insertbackground=insertbackground)
-        # Update Listbox widgets
-        elif isinstance(widget, tk.Listbox):
-            widget.config(bg=bg, fg=fg)
-        # Update Canvas widgets
-        elif isinstance(widget, tk.Canvas):
-            widget.config(bg=bg)
-        
-        # Recursively update children
+        _apply_widget_colors(widget, bg, fg, insertbackground)
         for child in widget.winfo_children():
             update_widget_colors(child, bg, fg, insertbackground)
     except Exception:
         pass
+
+
+def _schedule_widget_recolor(panel: "SettingsPanel", bg: str, fg: str, insertbackground: str) -> None:
+    """Iteratively recolor widgets in chunks to avoid UI stalls."""
+    try:
+        root = panel.parent.master
+    except Exception:
+        root = None
+    if root is None:
+        return
+
+    try:
+        queue = deque([root])
+    except Exception:
+        return
+
+    start = time.perf_counter()
+    batch_size = 40
+
+    def _process() -> None:
+        processed = 0
+        while queue and processed < batch_size:
+            widget = queue.popleft()
+            _apply_widget_colors(widget, bg, fg, insertbackground)
+            try:
+                for child in widget.winfo_children():
+                    queue.append(child)
+            except Exception:
+                pass
+            processed += 1
+
+        if queue:
+            try:
+                root.after(1, _process)
+            except Exception:
+                pass
+        else:
+            elapsed = time.perf_counter() - start
+            if elapsed >= 0.2:
+                logger.debug(f"[THEME] Widget recolor traversal completed in {elapsed:.3f}s")
+
+    try:
+        root.after_idle(_process)
+    except Exception:
+        _process()

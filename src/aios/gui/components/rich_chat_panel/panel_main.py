@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from typing import Any, Callable, cast
+from concurrent.futures import Future
 import threading
+import logging
 
 try:
     import tkinter as tk  # type: ignore
@@ -14,6 +16,9 @@ except Exception:  # pragma: no cover
 
 from .themes import detect_theme, get_colors
 from . import ui_builder, chat_operations, brain_management, export_utils
+
+
+logger = logging.getLogger(__name__)
 
 
 class RichChatPanel:
@@ -64,7 +69,7 @@ class RichChatPanel:
         self._parent = parent
         self._current_theme = detect_theme()
         self._stop_event = threading.Event()
-        self._current_thread: threading.Thread | None = None
+        self._current_thread: Future | None = None
         
         # UI variables (will be set by ui_builder)
         self._context_length_var: Any = None
@@ -157,6 +162,7 @@ class RichChatPanel:
     # Brain management (delegate to brain_management module)
     def _refresh_brains(self) -> None:
         """Refresh the list of available brains."""
+        logger.info("Chat panel brain refresh requested")
         brain_management.refresh_brains(self)
     
     def _load_brain(self) -> None:
@@ -183,3 +189,94 @@ class RichChatPanel:
     def _export_chat(self) -> None:
         """Export chat history to file."""
         export_utils.export_chat(self)
+    
+    # State management
+    def get_state(self) -> dict[str, Any]:
+        """Get the current state of the chat panel for persistence.
+        
+        Returns:
+            dict: State containing all user-configurable settings
+        """
+        state = {}
+        
+        # Context length
+        try:
+            if hasattr(self, '_context_length_var') and self._context_length_var:
+                state['context_length'] = self._context_length_var.get()
+        except Exception:
+            pass
+        
+        # Sampling parameters
+        try:
+            if hasattr(self, '_temperature_var') and self._temperature_var:
+                state['temperature'] = self._temperature_var.get()
+        except Exception:
+            pass
+        
+        try:
+            if hasattr(self, '_top_p_var') and self._top_p_var:
+                state['top_p'] = self._top_p_var.get()
+        except Exception:
+            pass
+        
+        try:
+            if hasattr(self, '_top_k_var') and self._top_k_var:
+                state['top_k'] = self._top_k_var.get()
+        except Exception:
+            pass
+        
+        # Selected brain
+        try:
+            if hasattr(self, 'brain_var') and self.brain_var:
+                state['selected_brain'] = self.brain_var.get()
+        except Exception:
+            pass
+        
+        return state
+    
+    def set_state(self, state: dict[str, Any]) -> None:
+        """Restore the chat panel state from saved data.
+        
+        Args:
+            state: State dictionary with user-configurable settings
+        """
+        # Context length
+        if 'context_length' in state:
+            try:
+                if hasattr(self, '_context_length_var') and self._context_length_var:
+                    self._context_length_var.set(str(state['context_length']))
+            except Exception:
+                pass
+        
+        # Sampling parameters
+        if 'temperature' in state:
+            try:
+                if hasattr(self, '_temperature_var') and self._temperature_var:
+                    self._temperature_var.set(str(state['temperature']))
+            except Exception:
+                pass
+        
+        if 'top_p' in state:
+            try:
+                if hasattr(self, '_top_p_var') and self._top_p_var:
+                    self._top_p_var.set(str(state['top_p']))
+            except Exception:
+                pass
+        
+        if 'top_k' in state:
+            try:
+                if hasattr(self, '_top_k_var') and self._top_k_var:
+                    self._top_k_var.set(str(state['top_k']))
+            except Exception:
+                pass
+        
+        # Selected brain (restore selection but don't auto-load)
+        if 'selected_brain' in state:
+            try:
+                if hasattr(self, 'brain_var') and self.brain_var:
+                    brain_name = state['selected_brain']
+                    # Only set if not the placeholder value
+                    if brain_name and brain_name != "<default>":
+                        self.brain_var.set(brain_name)
+            except Exception:
+                pass

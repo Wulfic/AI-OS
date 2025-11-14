@@ -73,13 +73,30 @@ class StreamingChunkCache:
         return cls._instance
     
     def _load_config(self) -> Dict[str, Any]:
-        """Load streaming cache configuration from default.yaml."""
+        """Load streaming cache configuration from user config file."""
         try:
-            config_path = Path.cwd() / "config" / "default.yaml"
-            if config_path.exists():
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    config = yaml.safe_load(f)
-                    return config.get('streaming_cache', {})
+            # Import centralized config loader
+            try:
+                from ..gui.config_loader import load_config
+                config = load_config()
+                return config.get('streaming_cache', {})
+            except ImportError:
+                # Fallback for CLI-only usage
+                import os
+                env_path = os.environ.get("AIOS_CONFIG")
+                if env_path:
+                    config_path = Path(env_path)
+                else:
+                    user_config = Path.home() / ".config" / "aios" / "config.yaml"
+                    if user_config.exists():
+                        config_path = user_config
+                    else:
+                        config_path = Path.cwd() / "config" / "default.yaml"
+                
+                if config_path.exists():
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        config = yaml.safe_load(f)
+                        return config.get('streaming_cache', {})
         except Exception:
             pass
         return {}

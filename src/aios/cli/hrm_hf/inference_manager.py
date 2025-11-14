@@ -7,10 +7,13 @@ the inference model from training checkpoints.
 
 from __future__ import annotations
 
+import logging
 from typing import Optional, Any, Dict, Callable
 from pathlib import Path
 import torch
 import gc
+
+logger = logging.getLogger(__name__)
 
 
 class InferenceModelManager:
@@ -46,6 +49,9 @@ class InferenceModelManager:
             checkpoint_dir: Directory containing checkpoints to reload from
             training_device: Device string for training (for validation, e.g., "cuda:0")
         """
+        logger.info(f"Initializing InferenceModelManager: inference_device={inference_device}, training_device={training_device}")
+        logger.debug(f"Checkpoint directory: {checkpoint_dir}")
+        
         self.inference_device = inference_device
         self.model_factory = model_factory
         self.checkpoint_dir = checkpoint_dir
@@ -56,10 +62,13 @@ class InferenceModelManager:
         # Validate devices
         if torch.cuda.is_available():
             self._validate_devices()
+        else:
+            logger.warning("CUDA not available, inference manager will use CPU")
     
     def _validate_devices(self) -> None:
         """Validate that the requested devices are available."""
         if not self.inference_device:
+            logger.debug("No inference device specified, skipping validation")
             return
             
         # Parse device index from "cuda:X"
@@ -70,7 +79,10 @@ class InferenceModelManager:
                 device_idx = 0
                 
             device_count = torch.cuda.device_count()
+            logger.debug(f"Device validation: requested device {device_idx}, available GPUs: {device_count}")
+            
             if device_idx >= device_count:
+                logger.error(f"Inference device {self.inference_device} not available - only {device_count} GPU(s) detected")
                 raise ValueError(
                     f"Inference device {self.inference_device} not available. "
                     f"Only {device_count} GPU(s) detected."
@@ -80,19 +92,24 @@ class InferenceModelManager:
             if self.training_device and ":" in self.training_device:
                 train_idx = int(self.training_device.split(":")[1])
                 if train_idx >= device_count:
+                    logger.error(f"Training device {self.training_device} not available - only {device_count} GPU(s) detected")
                     raise ValueError(
                         f"Training device {self.training_device} not available. "
                         f"Only {device_count} GPU(s) detected."
                     )
                 if train_idx == device_idx:
+                    logger.warning(f"Inference and training devices are the same ({self.inference_device}) - multi-GPU separation disabled")
                     print({
                         "warning": "inference_device and training_device are the same",
                         "note": "Multi-GPU separation disabled",
                         "device": self.inference_device
                     })
+            
+            logger.info(f"Device validation successful: inference={self.inference_device}, training={self.training_device}")
         except ValueError as e:
             raise e
         except Exception as e:
+            logger.error(f"Device validation error: {e}", exc_info=True)
             print({"device_validation_error": str(e)})
     
     def initialize(self) -> bool:
@@ -102,9 +119,11 @@ class InferenceModelManager:
             True if initialization succeeded, False otherwise
         """
         if self._initialized:
+            logger.debug("Inference model already initialized")
             return True
             
         try:
+            logger.info(f"Initializing inference model on device: {self.inference_device}")
             print({
                 "inference_model_init": "starting",
                 "device": self.inference_device
@@ -118,8 +137,10 @@ class InferenceModelManager:
                     device_obj = torch.device(self.inference_device)
                     self.model.to(device_obj)
                     self.model.eval()  # Set to eval mode
+                    logger.debug(f"Model moved to {self.inference_device} and set to eval mode")
                     
             self._initialized = True
+            logger.info(f"Inference model initialization successful on {self.inference_device}")
             print({
                 "inference_model_init": "success",
                 "device": self.inference_device
@@ -127,6 +148,7 @@ class InferenceModelManager:
             return True
             
         except Exception as e:
+            logger.error(f"Inference model initialization failed on {self.inference_device}: {e}", exc_info=True)
             print({
                 "inference_model_init": "failed",
                 "device": self.inference_device,
@@ -144,15 +166,18 @@ class InferenceModelManager:
             True if reload succeeded, False otherwise
         """
         if not self._initialized or self.model is None:
+            logger.warning("Inference reload skipped - model not initialized")
             print({"inference_reload": "skipped", "reason": "not initialized"})
             return False
             
         if not self.checkpoint_dir:
+            logger.warning("Inference reload skipped - no checkpoint directory configured")
             print({"inference_reload": "skipped", "reason": "no checkpoint_dir"})
             return False
             
         checkpoint_path = self.checkpoint_dir / checkpoint_name
         if not checkpoint_path.exists():
+            logger.warning(f"Inference reload skipped - checkpoint not found: {checkpoint_path}")
             print({
                 "inference_reload": "skipped",
                 "reason": "checkpoint not found",
@@ -161,6 +186,7 @@ class InferenceModelManager:
             return False
             
         try:
+            logger.info(f"Reloading inference model from checkpoint: {checkpoint_name}")
             print({
                 "inference_reload": "starting",
                 "checkpoint": str(checkpoint_path),
@@ -172,9 +198,11 @@ class InferenceModelManager:
                 try:
                     from safetensors.torch import load_file as load_safetensors
                     state_dict = load_safetensors(str(checkpoint_path), device=str(self.inference_device))
+                    logger.debug(f"Loaded checkpoint using safetensors: {checkpoint_name}")
                     print({"inference_reload": "loaded_safetensors", "checkpoint": checkpoint_name})
                 except Exception as st_error:
                     # Fallback to torch.load for backwards compatibility
+                    logger.debug(f"Safetensors load failed, falling back to torch.load: {st_error}")
                     print({"inference_reload": "safetensors_failed", "trying_torch": True, "error": str(st_error)})
                     state_dict = torch.load(
                         checkpoint_path,
@@ -183,8 +211,10 @@ class InferenceModelManager:
                 
                 # Handle wrapped models (DDP, DeepSpeed, etc.)
                 if hasattr(self.model, "module"):
+                    logger.debug("Loading state dict into wrapped model (module)")
                     self.model.module.load_state_dict(state_dict, strict=False)
                 else:
+                    logger.debug("Loading state dict into model")
                     self.model.load_state_dict(state_dict, strict=False)
                     
                 self.model.eval()
@@ -192,7 +222,9 @@ class InferenceModelManager:
             # Clear memory
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+                logger.debug("Cleared CUDA cache after checkpoint reload")
                 
+            logger.info(f"Inference model reloaded successfully from {checkpoint_name}")
             print({
                 "inference_reload": "success",
                 "checkpoint": checkpoint_name
@@ -200,6 +232,7 @@ class InferenceModelManager:
             return True
             
         except Exception as e:
+            logger.error(f"Inference reload failed for {checkpoint_name}: {e}", exc_info=True)
             print({
                 "inference_reload": "failed",
                 "checkpoint": checkpoint_name,
@@ -213,8 +246,10 @@ class InferenceModelManager:
         Forward all arguments to the model's generate method.
         """
         if not self._initialized or self.model is None:
+            logger.error("Attempted to generate with uninitialized inference model")
             raise RuntimeError("Inference model not initialized. Call initialize() first.")
-            
+        
+        logger.debug(f"Running inference generation on {self.inference_device}")
         with torch.no_grad():
             with torch.cuda.device(self.inference_device):
                 return self.model.generate(*args, **kwargs)
@@ -225,6 +260,7 @@ class InferenceModelManager:
         Forward all arguments to the model's forward method.
         """
         if not self._initialized or self.model is None:
+            logger.error("Attempted to forward with uninitialized inference model")
             raise RuntimeError("Inference model not initialized. Call initialize() first.")
             
         with torch.no_grad():
@@ -234,6 +270,7 @@ class InferenceModelManager:
     def cleanup(self) -> None:
         """Clean up the inference model and free GPU memory."""
         if self.model is not None:
+            logger.info(f"Cleaning up inference model on {self.inference_device}")
             try:
                 # Move model to CPU before deletion to free GPU memory
                 self.model.cpu()
@@ -244,12 +281,15 @@ class InferenceModelManager:
                 gc.collect()
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
+                    logger.debug(f"Model moved to CPU and CUDA cache cleared on {self.inference_device}")
                     
+                logger.info("Inference model cleanup complete")
                 print({
                     "inference_model_cleanup": "success",
                     "device": self.inference_device
                 })
             except Exception as e:
+                logger.error(f"Error during inference model cleanup: {e}", exc_info=True)
                 print({
                     "inference_model_cleanup": "failed",
                     "error": str(e)

@@ -12,6 +12,8 @@ This module orchestrates application initialization by:
 
 from __future__ import annotations
 from typing import TYPE_CHECKING
+import faulthandler
+import sys
 import logging
 import time
 from pathlib import Path
@@ -46,6 +48,7 @@ def run_app(app_instance: Any) -> None:
     """
     
     app = app_instance
+    logger.info("Starting application initialization")
     start_time = time.time()
     last_time = start_time
     
@@ -57,31 +60,33 @@ def run_app(app_instance: Any) -> None:
         total_duration = current - start_time
         msg = f"[TIMING] {step_name}: {step_duration:.3f}s (total: {total_duration:.3f}s)"
         logger.info(msg)
-        print(msg)  # Also print to console for visibility
         last_time = current
     
+    _faulthandler_timer_active = False
     try:
         # Use existing loading screen (created in __init__)
         def update_status(text):
-            """Update loading status message (safe against window state changes)."""
+            """Update startup status messaging without blocking the Tk loop."""
             try:
-                # Only update if loading is still active
-                if not hasattr(app, '_loading_active') or not app._loading_active:
-                    return
-                
-                if hasattr(app, '_loading_canvas') and app._loading_canvas:
-                    # Get the status text ID from canvas (set by update_loading_canvas)
+                logger.debug(f"Loading status: {text}")
+
+                loading_active = getattr(app, '_loading_active', False)
+
+                if loading_active and hasattr(app, '_loading_canvas') and app._loading_canvas:
                     if hasattr(app._loading_canvas, '_status_text_id'):
                         try:
                             app._loading_canvas.itemconfig(app._loading_canvas._status_text_id, text=text)
+                            # Queue a no-op idle callback to ensure Tk processes canvas updates asynchronously
+                            app.root.after_idle(lambda: None)
                         except Exception:
-                            # Canvas may be in bad state during window switching
                             pass
-                    
-                    # NO update_idletasks here - causes hangs during panel creation
-                    # The canvas updates itself via Configure events
+
+                if hasattr(app, 'status_bar') and getattr(app, 'status_bar', None):
+                    try:
+                        app.status_bar.set(text)
+                    except Exception:
+                        pass
             except Exception:
-                # Silently fail - loading screen updates are not critical
                 pass
         
         # 1. Initialize resources (threads, timers, async loop)
@@ -107,9 +112,12 @@ def run_app(app_instance: Any) -> None:
         update_status("Creating interface layout...")
         create_ui_structure(app, app.root)
         
-        # Ensure loading screen stays on top
+        # Keep loading screen on top after UI structure is created
         if hasattr(app, '_loading_frame') and app._loading_frame:
-            app._loading_frame.lift()
+            try:
+                app._loading_frame.lift()
+            except Exception:
+                pass
         
         log_timing("UI structure created")
         
@@ -124,6 +132,36 @@ def run_app(app_instance: Any) -> None:
         # 5b. Attach cleanup and save functions to app (BEFORE panels - they need these)
         app._cleanup = lambda: cleanup(app)
         app._save_state = lambda: save_state(app)
+        
+        # Add a scheduled state save mechanism to batch saves
+        app._state_save_timer = None
+
+        def schedule_state_save(delay_ms: int = 500) -> None:
+            """Schedule a state save after a delay to batch multiple changes."""
+            try:
+                if hasattr(app, '_state_save_timer') and app._state_save_timer:
+                    try:
+                        app.root.after_cancel(app._state_save_timer)
+                    except Exception:
+                        pass
+
+                def _run_save() -> None:
+                    app._state_save_timer = None
+                    try:
+                        app._save_state()
+                    except Exception:
+                        # Best-effort; errors are already logged inside save_state
+                        pass
+
+                app._state_save_timer = app.root.after(delay_ms, _run_save)
+            except Exception:
+                # Fallback to immediate save if scheduling fails
+                try:
+                    app._save_state()
+                except Exception:
+                    pass
+
+        app.schedule_state_save = schedule_state_save
         
         # 6. Set up event handlers
         logger.info("Setting up event handlers...")
@@ -143,6 +181,14 @@ def run_app(app_instance: Any) -> None:
         logger.info("Initializing panels...")
         update_status("Building interface panels...")
         initialize_panels(app)
+        
+        # Keep loading screen on top after panels are created
+        if hasattr(app, '_loading_frame') and app._loading_frame:
+            try:
+                app._loading_frame.lift()
+            except Exception:
+                pass
+        
         log_timing("Panels initialized")
         
         # 9. Load panel data synchronously while keeping loading screen visible
@@ -159,6 +205,10 @@ def run_app(app_instance: Any) -> None:
         state = load_state(app)
         if state:
             restore_state(app, state)
+        else:
+            # No state to restore, but enable saving for future
+            logger.info("No saved state found - starting with defaults")
+            app._state_restored = True
         log_timing("State restored")
         
         # 10b. Re-apply theme after all panels are fully initialized
@@ -170,10 +220,21 @@ def run_app(app_instance: Any) -> None:
                 
                 # Only re-apply if we have a valid theme (not just the default)
                 if current_theme and current_theme in ("Light Mode", "Dark Mode", "Matrix Mode", "Barbie Mode", "Halloween Mode"):
-                    logger.info(f"Re-applying theme after panel initialization: {current_theme}")
-                    update_status(f"Applying theme: {current_theme}...")
-                    app.settings_panel._apply_theme(current_theme)
-                    logger.info(f"Theme '{current_theme}' applied successfully")
+                    last_theme = getattr(app.settings_panel, "_last_theme_applied", None)
+                    last_applied_at = getattr(app.settings_panel, "_last_theme_applied_at", 0.0)
+                    elapsed_since_apply = time.perf_counter() - last_applied_at if last_applied_at else None
+
+                    if last_theme == current_theme and elapsed_since_apply is not None and elapsed_since_apply < 2.0:
+                        logger.info(
+                            "Skipping theme re-application; '%s' was applied %.3fs ago",
+                            current_theme,
+                            elapsed_since_apply,
+                        )
+                    else:
+                        logger.info(f"Re-applying theme after panel initialization: {current_theme}")
+                        update_status(f"Applying theme: {current_theme}...")
+                        app.settings_panel._apply_theme(current_theme)
+                        logger.info(f"Theme '{current_theme}' applied successfully")
                 else:
                     logger.warning(f"Invalid or missing theme during re-application: '{current_theme}' - applying Dark Mode as default")
                     # Apply default dark mode if no valid theme
@@ -185,54 +246,128 @@ def run_app(app_instance: Any) -> None:
         
         # 11. Configure log levels based on settings
         update_status("Finalizing configuration...")
-        debug_enabled = False
+        log_level_setting = "Normal"  # Default
         if hasattr(app, 'settings_panel') and app.settings_panel:
             try:
                 settings_state = app.settings_panel.get_state()
-                debug_enabled = settings_state.get('debug_enabled', False)
+                log_level_setting = settings_state.get('log_level', 'Normal')
             except Exception:
                 pass
-        configure_log_levels(app, debug_enabled)
+        configure_log_levels(app, log_level_setting)
         log_timing("Log levels configured")
         
         # 12. Setup periodic tasks
         update_status("Starting background tasks...")
         setup_periodic_tasks(app)
         
+        # NOTE: Help index building is now handled by HelpPanel itself during initialization
+        # No need to build it here - removed to prevent race condition with HelpPanel's own index build
+        
         logger.info("AI-OS GUI initialized successfully")
         
         total_startup = time.time() - start_time
         msg = f"[TIMING] Total startup time: {total_startup:.3f}s"
         logger.info(msg)
-        print(msg)
+
+        try:
+            faulthandler.enable()
+            logger.debug("Faulthandler enabled for post-start diagnostics")
+
+            if sys.platform.startswith("win"):
+                logger.info(
+                    "Skipping faulthandler.dump_traceback_later repeating timer on Windows (stability workaround)"
+                )
+            else:
+                faulthandler.dump_traceback_later(15.0, repeat=True)
+                _faulthandler_timer_active = True
+                logger.debug("Scheduled faulthandler traceback dumps every 15s")
+        except Exception:
+            logger.debug("Failed to enable faulthandler diagnostics", exc_info=True)
         
-        # Ensure all UI elements are fully rendered before removing loading screen
+        # Final status update
         update_status("Ready!")
+        
+        # Single final UI update
         app.root.update_idletasks()
-        app.root.update()
+
+        if not getattr(app, "_start_minimized", False) and hasattr(app, "_schedule_foreground_boost"):
+            try:
+                app.root.after(600, lambda: app._schedule_foreground_boost(initial_delay=0, attempts=3, interval=400))
+            except Exception:
+                logger.debug("Failed to schedule post-start foreground boost", exc_info=True)
         
         # Remove loading screen with smooth transition
         if hasattr(app, '_loading_frame') and app._loading_frame:
-            def _remove_loading():
+            logger.debug("Preparing loading overlay removal")
+
+            def _remove_loading(source: str = "unknown") -> None:
                 try:
-                    # Mark loading as no longer active
-                    if hasattr(app, '_loading_active'):
+                    if getattr(app, '_loading_removed', False):
+                        logger.debug("Loading overlay already removed (source=%s)", source)
+                        return
+
+                    logger.debug("Removing loading overlay (source=%s)", source)
+
+                    app._loading_removed = True
+
+                    if getattr(app, '_loading_active', False):
                         app._loading_active = False
-                    
-                    # Unbind visibility handler
+
                     try:
-                        app.root.unbind('<Visibility>')
-                    except Exception:
-                        pass
-                    
-                    app._loading_frame.destroy()
-                    # Force final update to ensure smooth transition
+                        app._loading_frame.destroy()
+                    finally:
+                        app._loading_frame = None
+
                     app.root.update_idletasks()
                 except Exception as e:
                     logger.warning(f"Error removing loading screen: {e}")
+
+            def _ensure_overlay_removed(attempt: int = 1) -> None:
+                try:
+                    if getattr(app, '_loading_removed', False):
+                        logger.debug("Loading overlay removal confirmed (attempt=%s)", attempt)
+                        return
+
+                    logger.warning("Loading overlay still present after %s attempt(s); forcing removal", attempt)
+                    _remove_loading(f"watchdog-{attempt}")
+
+                    if not getattr(app, '_loading_removed', False) and attempt < 5:
+                        app.root.after(500, lambda: _ensure_overlay_removed(attempt + 1))
+                except Exception:
+                    logger.debug("Loading overlay watchdog failed", exc_info=True)
             
-            # Schedule removal after a brief delay to ensure UI is ready
-            app.root.after(100, _remove_loading)
+            # Best-effort immediate removal now that startup is complete
+            try:
+                _remove_loading("pre-loop")
+            except Exception:
+                logger.debug("Immediate loading overlay removal failed; will rely on scheduled callbacks", exc_info=True)
+
+            # Schedule removal as soon as Tk is idle; fall back to a short delay if idle scheduling fails
+            try:
+                logger.debug("Scheduling loading overlay removal via after_idle")
+                app.root.after_idle(lambda: _remove_loading("after_idle"))
+            except Exception:
+                app.root.after(100, lambda: _remove_loading("after_idle-fallback"))
+
+            # Safety fallback in case Tk never reaches idle during busy startup
+            try:
+                logger.debug("Scheduling loading overlay removal fallback in 250ms")
+                app.root.after(250, lambda: _remove_loading("delay-250ms"))
+            except Exception:
+                pass
+
+            # Additional watchdog to ensure overlay cannot linger indefinitely
+            try:
+                logger.debug("Scheduling loading overlay watchdog in 750ms")
+                app.root.after(750, lambda: _ensure_overlay_removed(1))
+            except Exception:
+                pass
+        
+        # Start deferred HelpPanel initialization after main loop is running
+        # This prevents "main thread is not in main loop" errors
+        if hasattr(app, 'help_panel') and app.help_panel:
+            logger.info("Scheduling HelpPanel deferred initialization...")
+            app.root.after_idle(app.help_panel.start_deferred_initialization)
         
         # Start main event loop
         logger.info("Starting main loop...")
@@ -241,3 +376,9 @@ def run_app(app_instance: Any) -> None:
     except Exception as e:
         logger.critical(f"Fatal error during app initialization: {e}", exc_info=True)
         raise
+    finally:
+        if _faulthandler_timer_active:
+            try:
+                faulthandler.cancel_dump_traceback_later()
+            except Exception:
+                logger.debug("Failed to cancel faulthandler timer", exc_info=True)

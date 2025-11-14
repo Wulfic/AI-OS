@@ -4,15 +4,32 @@ Search Operations
 Helper functions for searching, filtering, displaying, and sorting dataset search results.
 """
 
-import threading
+import logging
+import time
 import tkinter as tk
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from tkinter import messagebox
 from typing import Dict, List, Any, Optional
 
 from .hf_search import search_huggingface_datasets, list_datasets
-from .favorites_manager import is_favorited
+from .favorites_manager import get_favorite_ids
 from .cache_manager import save_search_cache
 from .hf_size_detection import enrich_dataset_with_size, format_size_display
+from ...utils.resource_management import submit_background
+
+logger = logging.getLogger(__name__)
+
+MAX_ENRICH_DATASETS = 12
+ENRICH_CONCURRENCY = 4
+ENRICH_TIME_BUDGET = 20.0  # seconds
+
+
+@dataclass(frozen=True)
+class SearchDisplayPayload:
+    rows: List[tuple[str, str, str, str, str, str, str]]
+    preview_names: List[str]
+    count: int
 
 
 def apply_size_filter_threadsafe(results: List[Dict[str, Any]], max_size_text: str, size_unit: str, log_func) -> List[Dict[str, Any]]:
@@ -56,14 +73,63 @@ def apply_size_filter_threadsafe(results: List[Dict[str, Any]], max_size_text: s
         return results
 
 
+def build_display_payload(results: List[Dict[str, Any]]) -> SearchDisplayPayload:
+    """Prepare immutable payload for rendering dataset search results on the UI thread."""
+
+    favorites_lookup = get_favorite_ids()
+    preview_limit = 5
+    preview_names: List[str] = []
+    rows: List[tuple[str, str, str, str, str, str, str]] = []
+
+    for ds in results:
+        downloads = ds.get("downloads", 0)
+        if downloads >= 1_000_000:
+            downloads_str = f"{downloads / 1_000_000:.1f}M"
+        elif downloads >= 1_000:
+            downloads_str = f"{downloads / 1_000:.1f}K"
+        else:
+            downloads_str = str(downloads)
+
+        dataset_name = ds.get("full_name", ds.get("name", "Unknown"))
+        dataset_id = ds.get("id") or ds.get("path", "")
+        if dataset_id and str(dataset_id) in favorites_lookup:
+            dataset_name = f"⭐ {dataset_name}"
+
+        size_str, rows_str, blocks_str = format_size_display(ds)
+
+        description = ds.get("description", "No description")
+        if len(description) > 80:
+            description = description[:80] + "..."
+
+        rows.append(
+            (
+                dataset_name,
+                downloads_str,
+                size_str,
+                rows_str,
+                blocks_str,
+                description,
+                str(dataset_id or ""),
+            )
+        )
+
+        if len(preview_names) < preview_limit:
+            preview_names.append(dataset_name)
+
+    return SearchDisplayPayload(rows=rows, preview_names=preview_names, count=len(results))
+
+
 def display_search_results(
-    results: List[Dict[str, Any]], 
+    payload: SearchDisplayPayload,
     query: str, 
     total_before_filter: Optional[int],
     results_tree: tk.Widget,
     search_status_label: tk.Widget,
     status_label: tk.Widget,
-    log_func
+    log_func,
+    *,
+    log_previews: bool = True,
+    completion_message: Optional[str] = None,
 ):
     """
     Display search results in the treeview.
@@ -77,11 +143,27 @@ def display_search_results(
         status_label: Label widget for general status
         log_func: Function to call for logging
     """
-    # Clear existing items
-    for item in results_tree.get_children():
-        results_tree.delete(item)
+    start_time = time.perf_counter()
+    logger.debug(
+        "display_search_results start: %d rows (query='%s', total_before_filter=%s)",
+        payload.count,
+        query,
+        total_before_filter,
+    )
+
+    # Clear existing items (handle gracefully if tree is mid-update)
+    existing_items = list(results_tree.get_children())
+    if existing_items:
+        try:
+            results_tree.delete(*existing_items)
+        except Exception:
+            for item in existing_items:
+                try:
+                    results_tree.delete(item)
+                except Exception:
+                    logger.debug("Failed to delete tree item %s", item, exc_info=True)
     
-    if not results:
+    if payload.count == 0:
         if total_before_filter and total_before_filter > 0:
             search_status_label.config(
                 text=f"All {total_before_filter} results filtered out by size limit",
@@ -95,54 +177,66 @@ def display_search_results(
         status_label.config(text="Ready")
         return
     
-    # Add results to tree
-    for ds in results:
-        # Format numbers
-        downloads = ds.get("downloads", 0)
-        likes = ds.get("likes", 0)
-        
-        # Format downloads (e.g., 1.2M, 5.3K)
-        if downloads >= 1_000_000:
-            downloads_str = f"{downloads / 1_000_000:.1f}M"
-        elif downloads >= 1_000:
-            downloads_str = f"{downloads / 1_000:.1f}K"
-        else:
-            downloads_str = str(downloads)
-        
-        # Add favorite star if favorited
-        dataset_name = ds.get("full_name", ds.get("name", "Unknown"))
-        dataset_id = ds.get("id", "")
-        if is_favorited(dataset_id):
-            dataset_name = f"⭐ {dataset_name}"
-        
-        # Format size, rows, and blocks
-        size_str, rows_str, blocks_str = format_size_display(ds)
-        
-        # Truncate description
-        description = ds.get("description", "No description")[:80]
-        if len(ds.get("description", "")) > 80:
-            description += "..."
-        
-        # Insert into tree with dataset ID as tag
-        item_id = results_tree.insert(
-            "",
-            "end",
-            text=dataset_name,
-            values=(downloads_str, size_str, rows_str, blocks_str, description),
-            tags=(dataset_id,)
-        )
-        log_func(f"📦 Added dataset to tree: {dataset_name} (ID: {dataset_id}, item: {item_id})")
-    
     query_text = f"'{query}'" if query else "popular datasets"
     filter_text = ""
-    if total_before_filter and total_before_filter > len(results):
+    if total_before_filter and total_before_filter > payload.count:
         filter_text = f" (filtered from {total_before_filter})"
-    search_status_label.config(
-        text=f"✅ Found {len(results)} results for {query_text}{filter_text}",
-        foreground="green"
-    )
-    status_label.config(text="Ready")
-    log_func(f"✅ Search complete: {len(results)} datasets found and added to tree")
+
+    def _finalize_ui() -> None:
+        search_status_label.config(
+            text=f"✅ Found {payload.count} results for {query_text}{filter_text}",
+            foreground="green"
+        )
+        status_label.config(text="Ready")
+
+        if log_previews and payload.preview_names:
+            remaining = payload.count - len(payload.preview_names)
+            if remaining > 0:
+                log_func(
+                    "📦 Added datasets: "
+                    + ", ".join(payload.preview_names)
+                    + f" ... (+{remaining} more)"
+                )
+            else:
+                log_func("📦 Added datasets: " + ", ".join(payload.preview_names))
+        try:
+            message_template = completion_message or "✅ Search complete: {count} datasets loaded"
+            log_func(message_template.format(count=payload.count))
+        except Exception:
+            log_func("✅ Search results updated")
+
+        elapsed = time.perf_counter() - start_time
+        logger.debug(
+            "display_search_results end: inserted %d items in %.3fs",
+            payload.count,
+            elapsed,
+        )
+
+    batch_size = 12
+    after_delay_ms = 8
+
+    def _insert_batch(start: int = 0) -> None:
+        end = min(start + batch_size, len(payload.rows))
+        for dataset_name, downloads_str, size_str, rows_str, blocks_str, description, dataset_id in payload.rows[start:end]:
+            try:
+                results_tree.insert(
+                    "",
+                    "end",
+                    text=dataset_name,
+                    values=(downloads_str, size_str, rows_str, blocks_str, description),
+                    tags=(dataset_id,),
+                )
+            except Exception:
+                logger.debug("Tree insert failed for dataset %s", dataset_name, exc_info=True)
+        if end < len(payload.rows):
+            try:
+                results_tree.after(after_delay_ms, lambda: _insert_batch(end))
+            except Exception:
+                _insert_batch(end)
+        else:
+            _finalize_ui()
+
+    _insert_batch(0)
 
 
 def do_search(
@@ -156,6 +250,9 @@ def do_search(
         panel: DatasetDownloadPanel instance with all required attributes
         cache_results: If True, save results to cache after successful search
     """
+    if not getattr(panel, "_panel_active", True):
+        return
+
     query = panel.search_var.get().strip()
     
     if list_datasets is None:
@@ -166,9 +263,13 @@ def do_search(
         )
         return
     
-    panel.search_status_label.config(text="🔄 Searching...", foreground="blue")
+    # Use gray for "in progress" status to be theme-friendly
+    panel.search_status_label.config(text="🔄 Searching...", foreground="gray")
     panel.status_label.config(text="Searching HuggingFace Hub...")
-    panel.frame.update()
+    try:
+        panel.frame.update_idletasks()
+    except Exception:
+        pass
     
     # Capture filter values in main thread before spawning background thread
     try:
@@ -178,46 +279,182 @@ def do_search(
         max_size_text = ""
         size_unit = "GB"
     
+    def _submit_background_task(fn, name: str):
+        if not getattr(panel, "_panel_active", True):
+            return
+        try:
+            future = submit_background(name, fn, pool=getattr(panel, "_worker_pool", None))
+            register = getattr(panel, "_register_background_future", None)
+            if callable(register):
+                register(future)
+            logger.debug("Submitted background task '%s' to worker pool", name)
+        except RuntimeError as exc:
+            logger.error("Failed to queue background task '%s': %s", name, exc)
+            panel.log(f"❌ Background task queue is full: {name}")
+
     def search_thread():
+        if not getattr(panel, "_panel_active", True):
+            return
+        logger.debug(f"Starting dataset search thread for query: {query}")
         try:
             results = search_huggingface_datasets(query, limit=50)
+            logger.debug(f"Dataset search found {len(results)} results")
             
-            # Enrich datasets with size information in background
-            panel.log(f"🔍 Enriching {len(results)} datasets with size information...")
-            for ds in results:
-                try:
-                    enrich_dataset_with_size(ds)
-                except Exception as e:
-                    panel.log(f"⚠️ Could not get size for {ds.get('id', 'unknown')}: {e}")
-            
-            # Apply size filter if specified
+            # Apply size filter immediately (before enrichment)
             filtered_results = apply_size_filter_threadsafe(results, max_size_text, size_unit, panel.log)
+            logger.debug(f"Dataset search completed with {len(filtered_results)} filtered results")
             
+            if not getattr(panel, "_panel_active", True):
+                return
+
             panel.search_results = filtered_results
-            
-            # Update UI in main thread - check if widget still exists
+            payload = build_display_payload(filtered_results)
+
+            # Display results IMMEDIATELY - don't wait for enrichment
             try:
-                if panel.frame.winfo_exists():
-                    panel.frame.after(0, lambda: display_search_results(
-                        filtered_results, query, len(results),
-                        panel.results_tree, panel.search_status_label, 
-                        panel.status_label, panel.log
-                    ))
+                if getattr(panel, "_panel_active", True) and panel.frame.winfo_exists():
+                    panel.frame.after(
+                        0,
+                        lambda p=payload: display_search_results(
+                            p,
+                            query,
+                            len(results),
+                            panel.results_tree,
+                            panel.search_status_label,
+                            panel.status_label,
+                            panel.log,
+                        ),
+                    )
                     # Save to cache if requested
                     if cache_results:
                         panel.frame.after(100, lambda: save_search_cache(query, filtered_results))
             except Exception:
                 pass  # Widget destroyed, ignore
+            
+            # NOW enrich datasets in the background (non-blocking, fire-and-forget)
+            def background_enrich():
+                """Enrich datasets in background without blocking UI."""
+                if not getattr(panel, "_panel_active", True):
+                    return
+
+                datasets_to_enrich = filtered_results[:MAX_ENRICH_DATASETS]
+                total = len(datasets_to_enrich)
+                overflow = max(0, len(filtered_results) - total)
+
+                if total == 0:
+                    return
+
+                panel.log(
+                    f"🔍 Enriching {total} dataset{'s' if total != 1 else ''} with size information..."
+                )
+                if overflow:
+                    panel.log(
+                        f"ℹ️ Showing lightweight metadata for {overflow} additional result(s); refine your search to enrich everything."
+                    )
+
+                start_time = time.perf_counter()
+                deadline = start_time + ENRICH_TIME_BUDGET
+                enriched_count = 0
+                failed_count = 0
+                abort_reason: Optional[str] = None
+
+                def _should_abort() -> bool:
+                    if not getattr(panel, "_panel_active", True):
+                        return True
+                    return time.perf_counter() >= deadline
+
+                def _worker(payload: tuple[int, Dict[str, Any]]) -> tuple[int, bool]:
+                    idx, dataset = payload
+                    if not getattr(panel, "_panel_active", True):
+                        return idx, False
+                    try:
+                        enrich_dataset_with_size(dataset, timeout=2.0)
+                        return idx, True
+                    except Exception as exc:  # pragma: no cover - defensive logging
+                        logger.debug("Could not enrich %s: %s", dataset.get("id", "unknown"), exc)
+                        return idx, False
+
+                executor = ThreadPoolExecutor(
+                    max_workers=min(ENRICH_CONCURRENCY, total),
+                    thread_name_prefix="DatasetEnrich",
+                )
+                futures = {
+                    executor.submit(_worker, (idx, dataset)): idx
+                    for idx, dataset in enumerate(datasets_to_enrich, start=1)
+                }
+
+                try:
+                    for future in as_completed(futures):
+                        if _should_abort():
+                            abort_reason = "timeout" if time.perf_counter() >= deadline else "panel"
+                            break
+                        idx, ok = future.result()
+                        if ok:
+                            enriched_count += 1
+                            if idx % 5 == 0 and getattr(panel, "_panel_active", True):
+                                panel.log(f"ℹ️ Enriched {idx}/{total} datasets so far")
+                        else:
+                            failed_count += 1
+                finally:
+                    executor.shutdown(wait=abort_reason is None, cancel_futures=abort_reason is not None)
+
+                elapsed = time.perf_counter() - start_time
+                logger.debug(
+                    "Background enrichment complete: %d/%d in %.1fs (failures=%d, abort=%s)",
+                    enriched_count,
+                    total,
+                    elapsed,
+                    failed_count,
+                    abort_reason,
+                )
+
+                if abort_reason == "timeout" and getattr(panel, "_panel_active", True):
+                    panel.log("⚠️ Size enrichment timed out; leaving remaining datasets unprocessed")
+                elif abort_reason == "panel":
+                    panel.log("ℹ️ Size enrichment stopped during shutdown")
+
+                if getattr(panel, "_panel_active", True) and panel.frame.winfo_exists():
+                    final_payload = build_display_payload(filtered_results)
+                    try:
+                        panel.frame.after(
+                            0,
+                            lambda p=final_payload: display_search_results(
+                                p,
+                                query,
+                                len(results),
+                                panel.results_tree,
+                                panel.search_status_label,
+                                panel.status_label,
+                                panel.log,
+                                log_previews=False,
+                                completion_message="🔁 Search metadata refreshed ({count} datasets)",
+                            ),
+                        )
+                    except Exception:
+                        logger.debug("Failed to schedule final enrichment update", exc_info=True)
+
+                if getattr(panel, "_panel_active", True):
+                    panel.log(
+                        f"🔁 Dataset metadata refreshed ({enriched_count}/{total} detailed entries)"
+                    )
+            
+            # Start background enrichment using worker pool when available
+            _submit_background_task(background_enrich, "Dataset-Enrich")
+            
         except Exception as e:
             error_msg = str(e)
+            logger.error(f"Dataset search thread failed: {error_msg}")
             # Update UI in main thread - check if widget still exists
             try:
-                if panel.frame.winfo_exists():
+                if getattr(panel, "_panel_active", True) and panel.frame.winfo_exists():
                     panel.frame.after(0, lambda: search_error(error_msg, panel.search_status_label, panel.status_label, panel.log))
             except Exception:
                 pass  # Widget destroyed, ignore
+        finally:
+            logger.debug("Dataset search thread exiting")
     
-    threading.Thread(target=search_thread, daemon=True, name="Thread-HF-Search").start()
+    logger.debug(f"Starting dataset search background thread for: {query}")
+    _submit_background_task(search_thread, "HF-Search")
 
 
 def search_error(error_msg: str, search_status_label: tk.Widget, status_label: tk.Widget, log_func):

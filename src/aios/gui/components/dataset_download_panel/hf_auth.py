@@ -8,6 +8,9 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Callable, Optional, Tuple
 
+# Import safe variable wrappers
+from ...utils import safe_variables
+
 # Lazy imports from hf_search
 from .hf_search import login, whoami, HfFolder
 
@@ -112,7 +115,7 @@ def show_login_dialog(parent: tk.Widget, log_func: Callable[[str], None]) -> Opt
     token_entry.focus()
     
     # Show token checkbox
-    show_var = tk.BooleanVar(value=False)
+    show_var = safe_variables.BooleanVar(value=False)
     def toggle_show():
         token_entry.config(show="" if show_var.get() else "*")
     
@@ -138,7 +141,8 @@ def show_login_dialog(parent: tk.Widget, log_func: Callable[[str], None]) -> Opt
             status_label.config(text="❌ Please enter a token", foreground="red")
             return
         
-        status_label.config(text="⏳ Validating token...", foreground="blue")
+        # Use gray for "in progress" status to be theme-friendly
+        status_label.config(text="⏳ Validating token...", foreground="gray")
         dialog.update()
         
         try:

@@ -1,6 +1,7 @@
 """Training loop and iteration management."""
 from __future__ import annotations
 
+import logging
 import typer
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Tuple, Callable
@@ -9,6 +10,8 @@ if TYPE_CHECKING:
     from aios.core.hrm_training.training_config import TrainingConfig
 
 from .training_logic import train_epoch as _train_epoch_helper
+
+logger = logging.getLogger(__name__)
 
 
 def execute_training_epoch(
@@ -39,6 +42,9 @@ def execute_training_epoch(
     Returns:
         Tuple of (steps_done, stopped_early, batch_size, stop_reason)
     """
+    logger.info(f"Starting training epoch: batch_size={config.batch_size}, steps={config.steps}, device={device_obj}")
+    logger.debug(f"Training config: use_amp={config.use_amp}, distributed={is_distributed}, world_size={world_sz}")
+    
     # No periodic evaluation - only runs at end
     def _maybe_eval():
         pass
@@ -82,6 +88,8 @@ def execute_training_epoch(
         config=config,
     )
     
+    logger.info(f"Training epoch completed: steps_done={s_done}, stopped_early={early}, new_batch_size={new_bs}, stop_reason={stop_reason}")
+    
     return s_done, early, new_bs, stop_reason
 
 
@@ -111,6 +119,8 @@ def run_iterate_mode(
     Returns:
         Tuple of (steps_done, stopped_early, last_stop_reason, final_cycle)
     """
+    logger.info(f"Starting iterate mode training: resume_cycle={resume_cycle}")
+    
     cycle = resume_cycle
     steps_done = 0
     stopped_early = False
@@ -381,6 +391,7 @@ def run_iterate_mode(
             })
             
     except typer.Exit as e:
+        logger.warning(f"User exit requested during iterate mode: cycle={cycle}, exit_code={e.exit_code}")
         log_fn({
             "iterate_mode": "user_exit",
             "cycle": cycle,
@@ -391,6 +402,7 @@ def run_iterate_mode(
         # The stopped_early flag and stop_reason will handle this
         pass
     except Exception as e:
+        logger.error(f"Error in iterate mode training: cycle={cycle}, error={e}", exc_info=True)
         log_fn({
             "iterate_mode": "error",
             "cycle": cycle,
@@ -400,6 +412,8 @@ def run_iterate_mode(
         # Don't re-raise - let training continue to finalization
         # Even if there's an error, we should save progress
         pass
+    
+    logger.info(f"Iterate mode training completed: cycles={cycle}, steps={steps_done}, stopped_early={stopped_early}, reason={last_stop_reason}")
     
     return steps_done, stopped_early, last_stop_reason, cycle
 
@@ -415,7 +429,11 @@ def run_single_epoch_mode(
     Returns:
         Tuple of (steps_done, stopped_early, last_stop_reason)
     """
+    logger.info("Starting single epoch training mode")
+    
     steps_done, stopped_early, _, last_stop_reason = execute_epoch()
+    
+    logger.info(f"Single epoch training completed: steps={steps_done}, stopped_early={stopped_early}, reason={last_stop_reason}")
     
     log_fn({
         "training_mode": "single_epoch",

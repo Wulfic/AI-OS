@@ -123,6 +123,8 @@ import typer
 from rich import print
 import asyncio as _asyncio
 
+from aios.utils.diagnostics import enable_asyncio_diagnostics
+
 from aios.core.orchestrator import Orchestrator
 from aios.memory.store import init_db, get_db
 from aios.core.hrm import build_default_registry, Manager
@@ -146,6 +148,8 @@ from aios.cli import training_cli, core_cli, crawl_cli, datasets_cli
 from aios.cli.hrm_hf_cli import app as hrm_hf_app
 from aios.cli import budgets_cli, artifacts_cli, goals_cli, agent_cli, hrm_cli, modelcard_cli, dml_cli, cleanup_cli, optimization_cli, hf_cache_cli, cache_cli, eval_cli
 from aios.cli.brains import app as brains_cli_app
+
+enable_asyncio_diagnostics()
 
 # Constants for Typer defaults (avoid function calls in default parameters; ruff B008)
 DEFAULT_DREAMS_CONFIG = str((Path.home() / "artifacts" / "dreams" / "config.yaml").as_posix())

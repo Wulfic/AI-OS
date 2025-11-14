@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aios.core.brains.registry_core import BrainRegistry
     from aios.core.brains.numpy_brain import NumpyMLPBrain
+
+logger = logging.getLogger(__name__)
 
 
 def get_store_paths(registry: "BrainRegistry", name: str) -> Tuple[str, str]:
@@ -161,7 +164,7 @@ def try_load_actv1(registry: "BrainRegistry", name: str) -> Optional[any]:
         
     except Exception as e:
         # Silent fail - let caller handle missing brain
-        print(f"[registry_storage] Failed to load ACTv1 brain {name}: {e}")
+        logger.warning(f"[registry_storage] Failed to load ACTv1 brain {name}: {e}")
         return None
 
 

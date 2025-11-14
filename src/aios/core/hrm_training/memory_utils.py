@@ -5,9 +5,12 @@ Provides detailed visibility into memory usage, optimization overhead,
 and utilization metrics during training.
 """
 
+import logging
 import time
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -50,12 +53,21 @@ class MemoryTracker:
         self.snapshots: List[MemorySnapshot] = []
         self.enabled = self._check_cuda_available()
         
+        if self.enabled:
+            logger.info(f"Memory tracking enabled for device: {device}")
+        else:
+            logger.warning(f"Memory tracking disabled - CUDA not available on {device}")
+        
     def _check_cuda_available(self) -> bool:
         """Check if CUDA is available for memory tracking."""
         try:
             import torch
-            return torch.cuda.is_available() and 'cuda' in self.device
-        except Exception:
+            available = torch.cuda.is_available() and 'cuda' in self.device
+            if not available:
+                logger.debug("CUDA not available or device is not CUDA")
+            return available
+        except Exception as e:
+            logger.warning(f"Failed to check CUDA availability: {e}")
             return False
     
     def snapshot(self, name: str, metadata: Optional[Dict[str, Any]] = None) -> Optional[MemorySnapshot]:
@@ -89,10 +101,20 @@ class MemoryTracker:
             )
             
             self.snapshots.append(snapshot)
+            
+            # Log snapshot details
+            allocated_gb = snapshot.allocated_bytes / (1024**3)
+            reserved_gb = snapshot.reserved_bytes / (1024**3)
+            logger.debug(
+                f"Memory snapshot '{name}': "
+                f"allocated={allocated_gb:.2f}GB, reserved={reserved_gb:.2f}GB"
+            )
+            
             return snapshot
             
         except Exception as e:
-            print({"memory_snapshot_error": str(e), "checkpoint": name})
+            logger.error(f"Failed to capture memory snapshot '{name}': {e}")
+            logger.error({"memory_snapshot_error": str(e), "checkpoint": name})
             return None
     
     def get_delta(self, from_name: str, to_name: str) -> Optional[Dict[str, Any]]:
@@ -199,9 +221,18 @@ class MemoryTracker:
             if extra_info:
                 result.update(extra_info)
             
+            # Log the memory state
+            logger.info(
+                f"Memory [{label}]: {result['allocated_gb']:.2f}/{result['total_gb']:.2f} GB "
+                f"({result['utilization_pct']:.1f}% utilized), "
+                f"reserved={result['reserved_gb']:.2f} GB, "
+                f"fragmentation={result['fragmentation_mb']:.1f} MB"
+            )
+            
             return result
             
         except Exception as e:
+            logger.error(f"Failed to log current memory for '{label}': {e}")
             return {"error": str(e), "label": label}
 
 

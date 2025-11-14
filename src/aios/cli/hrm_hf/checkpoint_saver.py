@@ -1,10 +1,13 @@
 """Signal handling and checkpoint saving utilities."""
 from __future__ import annotations
 
+import logging
 import signal
 import sys
 from typing import TYPE_CHECKING, Optional, Any, Callable
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from aios.core.hrm_training.training_config import TrainingConfig
@@ -97,6 +100,10 @@ class CheckpointSaver:
             checkpoint_path = self.save_dir / "actv1_student.safetensors"
             tmp_path = self.save_dir / "actv1_student.safetensors.tmp"
             
+            logger.info(
+                f"Saving checkpoint: reason={reason}, step={step}, "
+                f"cycle={cycle}, path={checkpoint_path}"
+            )
             self.print_fn({
                 "checkpoint_save": "starting",
                 "reason": reason,
@@ -111,8 +118,18 @@ class CheckpointSaver:
             else:
                 state_dict = self.model.state_dict()
             
+            # Log state dict info
+            num_tensors = len(state_dict)
+            total_params = sum(p.numel() for p in state_dict.values())
+            logger.debug(f"State dict: {num_tensors} tensors, {total_params:,} parameters")
+            
             # Save to temporary file first
+            logger.debug(f"Writing to temporary file: {tmp_path}")
             save_safetensors(state_dict, str(tmp_path))
+            
+            # Log file size
+            tmp_size_mb = tmp_path.stat().st_size / (1024 * 1024)
+            logger.info(f"Checkpoint file size: {tmp_size_mb:.1f} MB")
             
             # Backup existing checkpoint if it exists
             if checkpoint_path.exists():
@@ -121,12 +138,15 @@ class CheckpointSaver:
                     if backup_path.exists():
                         backup_path.unlink()
                     checkpoint_path.rename(backup_path)
+                    logger.debug("Backed up previous checkpoint")
                     self.print_fn({"checkpoint_save": "old_checkpoint_backed_up"})
                 except Exception as e:
+                    logger.warning(f"Failed to backup old checkpoint: {e}")
                     self.print_fn({"checkpoint_save": "backup_warning", "error": str(e)})
             
             # Move temp file to final location
             tmp_path.rename(checkpoint_path)
+            logger.debug("Moved temporary file to final location")
             
             # Save checkpoint metadata
             metadata = {
@@ -186,19 +206,24 @@ class CheckpointSaver:
                     
                     self.print_fn({"brain_json": "updated", "checkpoint_path": str(checkpoint_path)})
             except Exception as e:
+                logger.warning(f"Failed to update brain.json: {e}")
                 self.print_fn({"brain_json_update": "warning", "error": str(e)})
+            
+            final_size_mb = round(checkpoint_path.stat().st_size / (1024**2), 1)
+            logger.info(f"Checkpoint saved successfully: {final_size_mb} MB")
             
             self.print_fn({
                 "checkpoint_save": "SUCCESS",
                 "reason": reason,
                 "step": step,
                 "cycle": cycle,
-                "size_mb": round(checkpoint_path.stat().st_size / (1024**2), 1),
+                "size_mb": final_size_mb,
             })
             
             return True
             
         except Exception as e:
+            logger.error(f"Checkpoint save failed: {e}")
             self.print_fn({
                 "checkpoint_save": "FAILED",
                 "reason": reason,
@@ -212,4 +237,5 @@ class CheckpointSaver:
             signal.signal(signal.SIGINT, self._original_sigint)
         if self._original_sigterm:
             signal.signal(signal.SIGTERM, self._original_sigterm)
+        logger.debug("Restored original signal handlers")
         self.print_fn({"checkpoint_saver": "signal_handlers_restored"})

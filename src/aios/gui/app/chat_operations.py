@@ -11,17 +11,25 @@ from __future__ import annotations
 from typing import Any, TYPE_CHECKING, Callable, Optional
 import logging
 import json
+import os
+import threading
+import time
+from pathlib import Path
 
 if TYPE_CHECKING:
     pass
 
 from ..services import LogCategory
+from ..utils.resource_management import submit_background
+from ..services.brain_registry_service import list_brains as list_available_brains
 
 logger = logging.getLogger(__name__)
 
 # Global persistent registry and router to keep models loaded across chat sessions
 _persistent_registry: Optional[Any] = None
 _persistent_router: Optional[Any] = None
+_router_init_lock = threading.Lock()
+_router_warmup_started = False
 
 # Global MCP tool executor for handling tool calls
 _tool_executor: Optional[Any] = None
@@ -36,6 +44,84 @@ def setup_chat_operations(app: Any) -> None:
     """
     global _persistent_registry, _persistent_router, _tool_executor
     
+    def _resolve_brain_store_dir() -> str:
+        """Determine the absolute path to the configured brain store directory."""
+        configured: str | None = None
+
+        try:
+            from aios.cli.utils import load_config
+
+            cfg = load_config()
+            if isinstance(cfg, dict):
+                brains_cfg = cfg.get("brains") or {}
+                value = brains_cfg.get("store_dir")
+                if isinstance(value, str) and value.strip():
+                    configured = value.strip()
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.debug(f"Falling back to default brain store dir (config load failed): {exc}")
+
+        if not configured:
+            configured = "artifacts/brains"
+
+        candidate_path = Path(configured)
+        if candidate_path.is_absolute():
+            logger.debug(f"Resolved brain store directory (absolute): {candidate_path}")
+            return str(candidate_path)
+
+        bases: list[Path] = []
+        seen: set[Path] = set()
+
+        def _add_base(path: Path) -> None:
+            try:
+                resolved = path.resolve()
+            except Exception:
+                resolved = path
+            if resolved not in seen:
+                seen.add(resolved)
+                bases.append(resolved)
+
+        try:
+            root_hint = Path(getattr(app, "_project_root", Path.cwd()))
+        except Exception:
+            root_hint = Path.cwd()
+
+        if root_hint.name.lower() == "src" and root_hint.parent != root_hint:
+            _add_base(root_hint.parent)
+        _add_base(root_hint)
+        _add_base(Path.cwd())
+
+        fallback: Path | None = None
+        for base in bases:
+            try:
+                resolved = (base / candidate_path).resolve()
+            except Exception:
+                resolved = base / candidate_path
+
+            has_metadata = any(
+                (resolved / marker).exists() for marker in ("pinned.json", "masters.json")
+            ) or (resolved / "actv1").is_dir()
+
+            if has_metadata:
+                logger.debug(f"Resolved brain store directory via metadata: {resolved}")
+                return str(resolved)
+
+            if fallback is None and resolved.exists():
+                fallback = resolved
+
+        if fallback is not None:
+            logger.debug(f"Using existing brain store directory: {fallback}")
+            return str(fallback)
+
+        default_path = (bases[0] if bases else Path.cwd()) / candidate_path
+        try:
+            default_path = default_path.resolve()
+        except Exception:
+            pass
+        logger.debug(f"Brain store directory not found; defaulting to {default_path}")
+        return str(default_path)
+
+    _brain_store_dir = _resolve_brain_store_dir()
+
     def _ensure_persistent_router() -> tuple[Any, Any]:
         """Ensure persistent registry and router are initialized.
         
@@ -43,73 +129,72 @@ def setup_chat_operations(app: Any) -> None:
             Tuple of (registry, router)
         """
         global _persistent_registry, _persistent_router, _tool_executor
-        
-        # Initialize MCP tool executor if not done yet
-        if _tool_executor is None:
-            try:
-                from aios.core.mcp import ToolExecutor
-                _tool_executor = ToolExecutor()
-                if _tool_executor.enabled:
-                    logger.info(f"MCP tool executor initialized with {len(_tool_executor.mcp_client.available_tools)} tools")
-                else:
-                    logger.info("MCP tool executor initialized but no tools available")
-            except Exception as e:
-                logger.warning(f"Failed to initialize MCP tool executor: {e}")
-                _tool_executor = None
-        
-        if _persistent_registry is None or _persistent_router is None:
-            # Load config and initialize persistent registry/router
-            from aios.cli.utils import load_config
-            from aios.core.brains import BrainRegistry, Router
-            
-            cfg = load_config()
-            brains_cfg = (cfg.get("brains") or {}) if isinstance(cfg, dict) else {}
-            
-            # Create persistent registry
-            storage_limit_mb = float(brains_cfg.get("storage_limit_mb", 0) or 0) or None
-            _persistent_registry = BrainRegistry(total_storage_limit_mb=storage_limit_mb)
-            _persistent_registry.store_dir = str(brains_cfg.get("store_dir", "artifacts/brains"))
-            
-            # Load persisted pins/masters
-            try:
-                _persistent_registry.load_pinned()
-                _persistent_registry.load_masters()
-            except Exception:
-                pass
-            
-            # Build router config
-            create_cfg = dict(brains_cfg.get("trainer_overrides", {}))
-            gen_cfg = dict(brains_cfg.get("generation", {}) or {})
-            if gen_cfg:
-                create_cfg = dict(create_cfg or {})
-                create_cfg["generation"] = gen_cfg
-            if "system_prompt" in brains_cfg:
-                create_cfg = dict(create_cfg or {})
-                create_cfg["system_prompt"] = brains_cfg.get("system_prompt")
-            if "history_max_turns" in brains_cfg:
-                create_cfg = dict(create_cfg or {})
-                create_cfg["history_max_turns"] = int(brains_cfg.get("history_max_turns") or 0)
-            
-            # Create persistent router
-            _persistent_router = Router(
-                registry=_persistent_registry,
-                default_modalities=list(brains_cfg.get("default_modalities", ["text"])),
-                brain_prefix=str(brains_cfg.get("prefix", "brain")),
-                create_cfg=create_cfg,
-                strategy=str(brains_cfg.get("strategy", "hash")),
-                modality_overrides=dict(brains_cfg.get("modality_overrides", {})),
-            )
-            
-            logger.info("Initialized persistent chat registry and router")
-        else:
-            # Reload masters/pins in case they changed (from "Load Brain" button)
-            try:
-                _persistent_registry.load_pinned()
-                _persistent_registry.load_masters()
-            except Exception:
-                pass
-        
-        return _persistent_registry, _persistent_router
+
+        # Prevent concurrent initialisation when multiple callers race on startup
+        with _router_init_lock:
+            # Initialize MCP tool executor if not done yet
+            if _tool_executor is None:
+                try:
+                    from aios.core.mcp import ToolExecutor
+                    _tool_executor = ToolExecutor()
+                    if _tool_executor.enabled:
+                        logger.info(
+                            "MCP tool executor initialized with %d tools",
+                            len(_tool_executor.mcp_client.available_tools),
+                        )
+                    else:
+                        logger.info("MCP tool executor initialized but no tools available")
+                except Exception as e:
+                    logger.warning("Failed to initialize MCP tool executor: %s", e)
+                    _tool_executor = None
+
+            if _persistent_registry is None or _persistent_router is None:
+                from aios.cli.utils import load_config
+                from aios.core.brains import BrainRegistry, Router
+
+                cfg = load_config()
+                brains_cfg = (cfg.get("brains") or {}) if isinstance(cfg, dict) else {}
+
+                storage_limit_mb = float(brains_cfg.get("storage_limit_mb", 0) or 0) or None
+                _persistent_registry = BrainRegistry(total_storage_limit_mb=storage_limit_mb)
+                _persistent_registry.store_dir = str(brains_cfg.get("store_dir", "artifacts/brains"))
+
+                try:
+                    _persistent_registry.load_pinned()
+                    _persistent_registry.load_masters()
+                except Exception:
+                    pass
+
+                create_cfg = dict(brains_cfg.get("trainer_overrides", {}))
+                gen_cfg = dict(brains_cfg.get("generation", {}) or {})
+                if gen_cfg:
+                    create_cfg = dict(create_cfg or {})
+                    create_cfg["generation"] = gen_cfg
+                if "system_prompt" in brains_cfg:
+                    create_cfg = dict(create_cfg or {})
+                    create_cfg["system_prompt"] = brains_cfg.get("system_prompt")
+                if "history_max_turns" in brains_cfg:
+                    create_cfg = dict(create_cfg or {})
+                    create_cfg["history_max_turns"] = int(brains_cfg.get("history_max_turns") or 0)
+
+                _persistent_router = Router(
+                    registry=_persistent_registry,
+                    default_modalities=list(brains_cfg.get("default_modalities", ["text"])),
+                    brain_prefix=str(brains_cfg.get("prefix", "brain")),
+                    create_cfg=create_cfg,
+                    strategy=str(brains_cfg.get("strategy", "hash")),
+                    modality_overrides=dict(brains_cfg.get("modality_overrides", {})),
+                )
+
+                logger.info("Initialized persistent chat registry and router")
+            else:
+                try:
+                    _persistent_registry.load_pinned()
+                    _persistent_registry.load_masters()
+                except Exception:
+                    pass
+
+            return _persistent_registry, _persistent_router
     
     def _on_chat_route_and_run(
         prompt: str,
@@ -244,10 +329,17 @@ def setup_chat_operations(app: Any) -> None:
                 logger.error(f"Chat routing failed: {e}")
                 on_error(str(e))
         
-        # Run in background thread to prevent UI freezing
-        import threading
-        thread = threading.Thread(target=_background_work, daemon=True)
-        thread.start()
+        # Run asynchronously via dispatcher to prevent UI freezing
+        try:
+            submit_background(
+                "chat-ops-dispatch",
+                _background_work,
+                pool=getattr(app, "_worker_pool", None),
+            )
+        except RuntimeError as exc:
+            logger.error("Failed to queue chat operation: %s", exc)
+            fallback_thread = threading.Thread(target=_background_work, name="chat-ops-fallback", daemon=True)
+            fallback_thread.start()
     
     def _on_load_brain(brain_name: str) -> str:
         """
@@ -262,34 +354,43 @@ def setup_chat_operations(app: Any) -> None:
         global _persistent_registry, _persistent_router
         
         try:
-            app._log_router.log(f"Loading brain: {brain_name}", LogCategory.CHAT)
+            logger.info(f"User action: Loading brain '{brain_name}' for chat")
+            app._log_router.log(f"Loading brain: {brain_name}", LogCategory.CHAT, "INFO")
             
             # Ensure persistent registry exists
             registry, router = _ensure_persistent_router()
             
             # Load the brain using registry.get() which auto-loads from disk
             try:
+                import time
+                start_time = time.time()
+                
+                logger.debug(f"Attempting to load brain '{brain_name}' from registry")
                 brain = registry.get(brain_name)
+                
                 if brain:
+                    load_time = time.time() - start_time
                     # Mark as master so router uses it for chat
                     registry.mark_master(brain_name)
                     
-                    app._log_router.log(f"Brain {brain_name} loaded and set as master for chat", LogCategory.CHAT)
+                    logger.info(f"Successfully loaded brain '{brain_name}' in {load_time:.2f}s and set as master")
+                    app._log_router.log(f"Brain {brain_name} loaded and set as master for chat ({load_time:.2f}s)", LogCategory.CHAT, "INFO")
                     return f"✓ Brain '{brain_name}' loaded successfully and set as active for chat."
                 else:
                     error_msg = f"Failed to load brain '{brain_name}' - brain not found or failed to load. Check that the brain exists in artifacts/brains/actv1/{brain_name}/"
-                    app._log_router.log(error_msg, LogCategory.CHAT)
+                    logger.warning(f"Brain '{brain_name}' not found in registry")
+                    app._log_router.log(error_msg, LogCategory.CHAT, "WARNING")
                     return error_msg
             except Exception as load_error:
                 import traceback
                 error_details = traceback.format_exc()
                 error_msg = f"Failed to load brain '{brain_name}': {load_error}\n{error_details}"
-                logger.error(error_msg)
-                app._log_router.log(error_msg, LogCategory.CHAT)
+                logger.error(f"Exception while loading brain '{brain_name}': {load_error}", exc_info=True)
+                app._log_router.log(error_msg, LogCategory.CHAT, "ERROR")
                 return f"Failed to load brain '{brain_name}': {load_error}"
                 
         except Exception as e:
-            logger.error(f"Failed to load brain: {e}")
+            logger.error(f"Failed to load brain '{brain_name}': {e}", exc_info=True)
             error_msg = f"Failed to load brain: {e}"
             app._set_error(error_msg)
             return error_msg
@@ -304,67 +405,65 @@ def setup_chat_operations(app: Any) -> None:
         global _persistent_registry, _persistent_router
         
         try:
-            app._log_router.log("Unloading model", LogCategory.CHAT)
+            logger.info("User action: Unloading current brain model")
+            app._log_router.log("Unloading model", LogCategory.CHAT, "INFO")
             
             # Clear the persistent registry to unload models
             if _persistent_registry is not None:
                 # Clear loaded brains
+                brain_count = len(_persistent_registry.brains)
                 _persistent_registry.brains.clear()
                 # Also clear history on all loaded brains
                 result = "✓ Model unloaded successfully. GPU memory freed."
-                app._log_router.log("Model unloaded successfully", LogCategory.CHAT)
+                logger.info(f"Successfully unloaded {brain_count} brain(s) from memory")
+                app._log_router.log(f"Model unloaded successfully ({brain_count} brain(s) freed)", LogCategory.CHAT, "INFO")
             else:
                 result = "No model loaded or registry not initialized."
-                app._log_router.log("No active model to unload", LogCategory.CHAT)
+                logger.debug("No active model to unload - registry not initialized")
+                app._log_router.log("No active model to unload", LogCategory.CHAT, "INFO")
             
             return result
         except Exception as e:
-            logger.error(f"Failed to unload model: {e}")
+            logger.error(f"Failed to unload model: {e}", exc_info=True)
             error_msg = f"Failed to unload model: {e}"
             app._set_error(error_msg)
             return error_msg
     
     def _on_list_brains() -> list[str]:
-        """
-        List available brains.
-        
-        Returns:
-            List of brain names (filtered to exclude temporary brains)
-        """
+        """Return available brains without invoking the CLI."""
         try:
-            import os
-            import re
-            
-            # Use absolute path to artifacts/brains directory
-            store_dir = os.path.join(os.getcwd(), "artifacts", "brains")
-            result = app._run_cli(["brains", "list-brains", "--store-dir", store_dir])
-            data = app._parse_cli_dict(result or "{}")
-            
-            # Handle {"brains": [list]} format
-            brain_names = []
-            if isinstance(data, dict) and "brains" in data:
-                brains_data = data["brains"]
-                if isinstance(brains_data, list):
-                    brain_names = [str(b) for b in brains_data]
-                elif isinstance(brains_data, dict):
-                    brain_names = list(brains_data.keys())
-            elif isinstance(data, list):
-                brain_names = [str(b) for b in data]
-            elif isinstance(data, dict):
-                brain_names = list(data.keys())
-            
-            # Filter out temporary/internal brains
-            def _is_temporary(name: str) -> bool:
-                if name.startswith('_'):
-                    return True
-                # Check for router-generated temporary brains: brain-text-de5aae40, brain-image-abc123, etc.
-                if re.match(r'^brain-[a-z]+-[0-9a-f]{8}$', name):
-                    return True
-                return False
-            
-            return [name for name in brain_names if not _is_temporary(name)]
-        except Exception as e:
-            logger.error(f"Failed to list brains: {e}")
+            brains = list_available_brains(_brain_store_dir)
+            if brains:
+                return brains
+
+            # Fallback candidates: process CWD default and project root parent
+            alt_candidates: list[str] = []
+            alt_candidates.append("artifacts/brains")
+
+            try:
+                alt_parent = Path(_brain_store_dir).resolve().parents[2]
+                alt_candidates.append(str((alt_parent / "artifacts" / "brains").resolve()))
+            except Exception:
+                pass
+
+            for alt in alt_candidates:
+                if not alt or str(alt) == _brain_store_dir:
+                    continue
+                try:
+                    alt_brains = list_available_brains(alt)
+                except Exception:
+                    continue
+                if alt_brains:
+                    logger.debug(
+                        "Primary brain store empty; using alternate path %s with %d brain(s)",
+                        alt,
+                        len(alt_brains),
+                    )
+                    return alt_brains
+
+            return brains
+        except Exception as exc:
+            logger.error(f"Failed to list brains via registry service: {exc}", exc_info=True)
             return []
     
     # Attach handlers to app
@@ -372,4 +471,30 @@ def setup_chat_operations(app: Any) -> None:
     app._on_load_brain = _on_load_brain
     app._on_unload_model = _on_unload_model
     app._on_list_brains = _on_list_brains
+
+    # Opportunistically warm the router during startup so the first user prompt doesn't stall
+    def _warm_router() -> None:
+        global _router_warmup_started
+        with _router_init_lock:
+            if _router_warmup_started:
+                return
+            _router_warmup_started = True
+
+        start = time.time()
+        try:
+            registry, _ = _ensure_persistent_router()
+            brain_count = len(registry.brains) if getattr(registry, "brains", None) else 0
+            logger.info("Chat router warm-up complete in %.3fs (%d cached brain(s))", time.time() - start, brain_count)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("Chat router warm-up failed: %s", exc, exc_info=True)
+
+    try:
+        submit_background(
+            "chat-router-warmup",
+            _warm_router,
+            pool=getattr(app, "_worker_pool", None),
+        )
+    except RuntimeError as exc:  # pragma: no cover - defensive logging
+        logger.debug("Unable to schedule chat router warm-up: %s", exc, exc_info=True)
+        _warm_router()
 

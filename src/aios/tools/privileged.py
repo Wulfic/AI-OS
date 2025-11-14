@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import sqlite3
 from typing import Callable, Optional, TypeVar
 
 from aios.core.budgets import SafetyBudget, defaults_for_risk_tier
 from aios.memory.store import load_budgets, load_budget_usage, update_budget_usage
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -21,6 +24,8 @@ def run_privileged(
     The provided function is expected to perform a privileged operation (or proxy call).
     This wrapper enforces budget before running, and records usage on success.
     """
+    logger.debug(f"Privileged operation requested with cost={cost}")
+    
     tier = (cfg or {}).get("risk_tier", "conservative")
     limits = defaults_for_risk_tier(tier)
     used = {}
@@ -28,18 +33,21 @@ def run_privileged(
         try:
             limits.update(load_budgets(conn))
             used = load_budget_usage(conn)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to load budgets from database: {e}")
     sb = SafetyBudget(limits=limits)
     for d, v in used.items():
         sb.usage[d] = float(v)
     if not sb.allow("privileged_calls", cost):
+        logger.error(f"Budget exceeded for privileged_calls (cost={cost})")
         raise PermissionError("Budget exceeded for privileged_calls")
 
     result = fn()
+    logger.info(f"Privileged operation completed successfully")
+    
     if conn is not None:
         try:
             update_budget_usage(conn, "privileged_calls", cost)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to update budget usage: {e}")
     return result

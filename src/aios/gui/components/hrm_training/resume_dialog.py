@@ -11,8 +11,11 @@ from typing import Optional, Dict, Any
 from pathlib import Path
 import json
 from datetime import datetime
+import logging
 
 from aios.gui.utils.theme_utils import apply_theme_to_toplevel, get_spacing_multiplier
+
+logger = logging.getLogger(__name__)
 
 
 class ResumeDialog(tk.Toplevel):
@@ -47,7 +50,7 @@ class ResumeDialog(tk.Toplevel):
             y = parent_y + (parent_height // 2) - (self.winfo_reqheight() // 2)
             self.geometry(f"+{x}+{y}")
         except Exception as e:
-            print(f"[resume_dialog] Could not center dialog: {e}")
+            logger.debug(f"Could not center dialog: {e}")
             # Fallback to center of screen
             try:
                 self.update_idletasks()
@@ -76,7 +79,7 @@ class ResumeDialog(tk.Toplevel):
             self.wait_visibility()
             self.grab_set()
         except Exception as e:
-            print(f"[resume_dialog] Could not grab focus: {e}")
+            logger.debug(f"Could not grab focus: {e}")
             try:
                 self.grab_set()
             except Exception:
@@ -137,7 +140,7 @@ class ResumeDialog(tk.Toplevel):
                         }
                         return
                 except Exception as e:
-                    print(f"[resume_dialog] Error reading brain.json: {e}")
+                    logger.debug(f"Error reading brain.json: {e}")
             
             # Fall back to chunk_tracker_state.json (from parallel training)
             if chunk_tracker_path.exists():
@@ -175,13 +178,13 @@ class ResumeDialog(tk.Toplevel):
                     }
                     return
                 except Exception as e:
-                    print(f"[resume_dialog] Error reading chunk_tracker_state.json: {e}")
+                    logger.debug(f"Error reading chunk_tracker_state.json: {e}")
             
             # No valid metadata found
             self.resume_info = None
             
         except Exception as e:
-            print(f"[resume_dialog] Error loading checkpoint info: {e}")
+            logger.error(f"Error loading checkpoint info: {e}", exc_info=True)
             self.resume_info = None
     
     def _build_ui(self):
@@ -402,17 +405,15 @@ def show_resume_dialog(parent, brain_name: str, save_dir: str, dataset_file: str
         True if resume, False if start fresh, None if cancelled
     """
     try:
-        print(f"[resume_dialog] Creating dialog for brain: {brain_name}")
+        logger.debug(f"Creating dialog for brain: {brain_name}")
         dialog = ResumeDialog(parent, brain_name, save_dir, dataset_file)
         
-        print(f"[resume_dialog] Waiting for dialog to close...")
+        logger.debug("Waiting for dialog to close...")
         # Wait for dialog to close
         parent.wait_window(dialog)
         
-        print(f"[resume_dialog] Dialog closed with result: {dialog.result}")
+        logger.debug(f"Dialog closed with result: {dialog.result}")
         return dialog.result
     except Exception as e:
-        print(f"[resume_dialog] Error showing dialog: {e}")
-        import traceback
-        traceback.print_exc()
-        raise
+        logger.error(f"Error showing dialog: {e}", exc_info=True)
+        return None

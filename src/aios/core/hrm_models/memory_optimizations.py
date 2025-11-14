@@ -13,10 +13,13 @@ These techniques can enable 2-10x larger contexts on the same hardware.
 
 from __future__ import annotations
 from typing import Optional, Any, Dict, List, Union
+import logging
 import torch
 import torch.nn as nn
 from torch.optim import Optimizer
 import warnings
+
+logger = logging.getLogger(__name__)
 
 
 def create_8bit_optimizer(
@@ -222,74 +225,74 @@ def print_memory_optimization_recommendations(
         target_context_length: Desired context length
         current_context_length: Current working context length
     """
-    print("\n" + "="*70)
-    print("MEMORY OPTIMIZATION RECOMMENDATIONS")
-    print("="*70)
-    print(f"Model Parameters: {num_params:,}")
-    print(f"Available VRAM: {current_vram_gb:.1f} GB")
-    print(f"Current Context: {current_context_length:,} tokens")
-    print(f"Target Context: {target_context_length:,} tokens")
-    print(f"Required Increase: {target_context_length / current_context_length:.1f}x")
-    print()
+    logger.info("\n" + "="*70)
+    logger.info("MEMORY OPTIMIZATION RECOMMENDATIONS")
+    logger.info("="*70)
+    logger.info(f"Model Parameters: {num_params:,}")
+    logger.info(f"Available VRAM: {current_vram_gb:.1f} GB")
+    logger.info(f"Current Context: {current_context_length:,} tokens")
+    logger.info(f"Target Context: {target_context_length:,} tokens")
+    logger.info(f"Required Increase: {target_context_length / current_context_length:.1f}x")
+    logger.info("")
     
     # Calculate 8-bit optimizer savings
     savings = estimate_8bit_savings(num_params)
-    print("1. 8-BIT OPTIMIZER (bitsandbytes)")
-    print(f"   Current optimizer memory: {savings['fp32_optimizer_gb']:.2f} GB")
-    print(f"   With 8-bit optimizer: {savings['int8_optimizer_gb']:.2f} GB")
-    print(f"   Savings: {savings['savings_gb']:.2f} GB ({savings['savings_percent']:.1f}%)")
-    print(f"   Enable with: --use-8bit-optimizer")
-    print()
+    logger.info("1. 8-BIT OPTIMIZER (bitsandbytes)")
+    logger.info(f"   Current optimizer memory: {savings['fp32_optimizer_gb']:.2f} GB")
+    logger.info(f"   With 8-bit optimizer: {savings['int8_optimizer_gb']:.2f} GB")
+    logger.info(f"   Savings: {savings['savings_gb']:.2f} GB ({savings['savings_percent']:.1f}%)")
+    logger.info(f"   Enable with: --use-8bit-optimizer")
+    logger.info("")
     
     # DeepSpeed ZeRO
-    print("2. DEEPSPEED ZERO-3")
+    logger.info("2. DEEPSPEED ZERO-3")
     zero3_savings_gb = savings['fp32_optimizer_gb'] * 0.75  # Approximate
-    print(f"   Estimated savings: {zero3_savings_gb:.2f} GB (75% of optimizer+gradients+params)")
-    print(f"   Enable with: --zero-stage zero3")
-    print(f"   Note: Can work on single GPU with CPU offload")
-    print()
+    logger.info(f"   Estimated savings: {zero3_savings_gb:.2f} GB (75% of optimizer+gradients+params)")
+    logger.info(f"   Enable with: --zero-stage zero3")
+    logger.info(f"   Note: Can work on single GPU with CPU offload")
+    logger.info("")
     
     # Layer freezing
     freeze_savings_gb = (num_params * 0.3 * 4 * 2) / (1024**3)  # 30% of params
-    print("3. LAYER FREEZING")
-    print(f"   Freeze 30% of layers: ~{freeze_savings_gb:.2f} GB saved")
-    print(f"   Example: Freeze embeddings and early layers")
-    print(f"   Enable with: --freeze-embeddings")
-    print()
+    logger.info("3. LAYER FREEZING")
+    logger.info(f"   Freeze 30% of layers: ~{freeze_savings_gb:.2f} GB saved")
+    logger.info(f"   Example: Freeze embeddings and early layers")
+    logger.info(f"   Enable with: --freeze-embeddings")
+    logger.info("")
     
     # Model size reduction
     smaller_model_params = num_params // 4  # 1/4 size
     smaller_savings = (num_params - smaller_model_params) * 12 / (1024**3)  # model+opt+grad
-    print("4. SMALLER MODEL")
-    print(f"   Current: {num_params:,} params")
-    print(f"   Suggested: {smaller_model_params:,} params (1/4 size)")
-    print(f"   Savings: ~{smaller_savings:.2f} GB")
-    print(f"   Example: --h-layers 1 --l-layers 1 --hidden-size 256")
-    print()
+    logger.info("4. SMALLER MODEL")
+    logger.info(f"   Current: {num_params:,} params")
+    logger.info(f"   Suggested: {smaller_model_params:,} params (1/4 size)")
+    logger.info(f"   Savings: ~{smaller_savings:.2f} GB")
+    logger.info(f"   Example: --h-layers 1 --l-layers 1 --hidden-size 256")
+    logger.info("")
     
     # Combined approach
     total_savings = savings['savings_gb'] + zero3_savings_gb + freeze_savings_gb
-    print("5. COMBINED APPROACH (MAXIMUM SAVINGS)")
-    print(f"   8-bit optimizer: {savings['savings_gb']:.2f} GB")
-    print(f"   DeepSpeed ZeRO-3: {zero3_savings_gb:.2f} GB")
-    print(f"   Layer freezing: {freeze_savings_gb:.2f} GB")
-    print(f"   TOTAL: ~{total_savings:.2f} GB saved")
-    print(f"   New available VRAM: ~{current_vram_gb + total_savings:.2f} GB")
-    print()
+    logger.info("5. COMBINED APPROACH (MAXIMUM SAVINGS)")
+    logger.info(f"   8-bit optimizer: {savings['savings_gb']:.2f} GB")
+    logger.info(f"   DeepSpeed ZeRO-3: {zero3_savings_gb:.2f} GB")
+    logger.info(f"   Layer freezing: {freeze_savings_gb:.2f} GB")
+    logger.info(f"   TOTAL: ~{total_savings:.2f} GB saved")
+    logger.info(f"   New available VRAM: ~{current_vram_gb + total_savings:.2f} GB")
+    logger.info("")
     
     # Estimate achievable context
     context_multiplier = (current_vram_gb + total_savings) / current_vram_gb
     estimated_context = int(current_context_length * context_multiplier)
-    print(f"   Estimated achievable context: {estimated_context:,} tokens")
-    print(f"   (vs target of {target_context_length:,} tokens)")
+    logger.info(f"   Estimated achievable context: {estimated_context:,} tokens")
+    logger.info(f"   (vs target of {target_context_length:,} tokens)")
     
     if estimated_context >= target_context_length:
-        print(f"   ✅ Target is achievable with combined optimizations!")
+        logger.info(f"   ✅ Target is achievable with combined optimizations!")
     else:
         shortfall = target_context_length - estimated_context
-        print(f"   ⚠️  Still {shortfall:,} tokens short - consider smaller model")
+        logger.info(f"   ⚠️  Still {shortfall:,} tokens short - consider smaller model")
     
-    print("="*70 + "\n")
+    logger.info("="*70 + "\n")
 
 
 def enable_torch_compile_optimization(model: nn.Module) -> Any:
@@ -307,7 +310,7 @@ def enable_torch_compile_optimization(model: nn.Module) -> Any:
     """
     try:
         if hasattr(torch, 'compile') and hasattr(model, '__call__'):
-            print("Enabling torch.compile() for optimized training...")
+            logger.info("Enabling torch.compile() for optimized training...")
             return torch.compile(model, mode='reduce-overhead')
         else:
             warnings.warn("torch.compile() not available (requires PyTorch 2.0+)")
@@ -392,7 +395,7 @@ def setup_memory_optimized_training(
     # Freeze layers if requested
     if freeze_embeddings:
         num_frozen = freeze_model_layers(model, freeze_embeddings=True)
-        print(f"Froze {num_frozen:,} embedding parameters")
+        logger.info(f"Froze {num_frozen:,} embedding parameters")
     
     # Create optimizer
     optimizer = None
@@ -404,7 +407,7 @@ def setup_memory_optimized_training(
                 weight_decay=weight_decay,
                 optimizer_type='adamw'
             )
-            print("✓ Using 8-bit AdamW optimizer (75% memory savings on optimizer states)")
+            logger.info("✓ Using 8-bit AdamW optimizer (75% memory savings on optimizer states)")
         except ImportError:
             warnings.warn("bitsandbytes not available - falling back to standard optimizer")
     
@@ -419,17 +422,17 @@ def setup_memory_optimized_training(
 
 if __name__ == "__main__":
     # Example usage
-    print("Memory Optimization Tools Demo")
-    print("="*70)
+    logger.info("Memory Optimization Tools Demo")
+    logger.info("="*70)
     
     # Example 1: 8-bit optimizer savings
-    print("\n1. 8-bit Optimizer Savings:")
+    logger.info("\n1. 8-bit Optimizer Savings:")
     for params in [60_000_000, 500_000_000, 1_000_000_000]:
         savings = estimate_8bit_savings(params)
-        print(f"   {params:,} params: {savings['savings_gb']:.2f} GB saved ({savings['savings_percent']:.1f}%)")
+        logger.info(f"   {params:,} params: {savings['savings_gb']:.2f} GB saved ({savings['savings_percent']:.1f}%)")
     
     # Example 2: Recommendations
-    print("\n2. Sample Recommendations:")
+    logger.info("\n2. Sample Recommendations:")
     print_memory_optimization_recommendations(
         num_params=60_000_000,
         current_vram_gb=11.0,

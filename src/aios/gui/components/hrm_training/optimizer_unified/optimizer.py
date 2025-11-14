@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import time
 import uuid
@@ -19,6 +20,8 @@ from .command_builder import parse_cuda_devices, extend_with_device_args
 from .batch_runner import run_single_batch
 from .result_parser import parse_training_throughput
 
+logger = logging.getLogger(__name__)
+
 
 class UnifiedOptimizer:
     """Unified optimizer that works across all interfaces."""
@@ -28,6 +31,9 @@ class UnifiedOptimizer:
         self.session_id = str(uuid.uuid4())[:8]
         self.output_dir = Path(config.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        logger.info(f"Initializing UnifiedOptimizer: session_id={self.session_id}, model={config.model}")
+        logger.debug(f"Output directory: {self.output_dir}")
         
         # Clean up old optimization runs (keep last 3)
         cleanup_on_startup(self.output_dir, keep_last_n=3)
@@ -55,6 +61,8 @@ class UnifiedOptimizer:
             "target_util": target_util,
             "multi_gpu": self.config.use_multi_gpu and len(cuda_ids) > 1
         }
+        
+        logger.debug(f"GPU config: ids={cuda_ids}, target_util={target_util}, multi_gpu={self.gpu_config['multi_gpu']}")
 
         all_ids: List[int] = []
         for token in cuda_ids:
@@ -74,7 +82,7 @@ class UnifiedOptimizer:
         if self.config.log_callback:
             self.config.log_callback(full_msg)
         else:
-            print(full_msg)
+            logger.info(full_msg)
     
     def is_stop_requested(self) -> bool:
         """Check if user requested stop."""
@@ -87,11 +95,13 @@ class UnifiedOptimizer:
     
     def force_stop(self):
         """Immediately terminate all processes and cleanup."""
+        logger.warning("Force stop requested - terminating all optimization processes")
         self.log("Stop requested - terminating all processes...")
         self.cleanup()
     
     def cleanup(self):
         """Clean up session files and processes."""
+        logger.info(f"Cleaning up optimization session: {self.session_id}")
         try:
             self.process_manager.cleanup()
             
@@ -100,13 +110,19 @@ class UnifiedOptimizer:
                 try:
                     if file_path.exists():
                         file_path.unlink()
-                except:
-                    pass
+                        logger.debug(f"Removed session file: {file_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove session file {file_path}: {e}")
         except Exception as e:
+            logger.error(f"Cleanup error: {e}", exc_info=True)
             self.log(f"Cleanup error: {e}")
     
     def optimize(self) -> Dict[str, Any]:
         """Run complete optimization process."""
+        
+        logger.info("="*60)
+        logger.info(f"Starting Training Optimization: session={self.session_id}, model={self.config.model}")
+        logger.info(f"Optimization parameters: max_seq_len={self.config.max_seq_len}, batch_sizes={self.config.batch_sizes}, test_duration={self.config.test_duration}s")
         
         self.log("=" * 60)
         self.log("Starting Training Optimization System")

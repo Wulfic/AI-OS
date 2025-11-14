@@ -4,9 +4,13 @@ Orchestrates all UI builders and provides the main panel interface.
 """
 
 from __future__ import annotations
+import logging
+import threading
 import tkinter as tk
 from tkinter import ttk
 from typing import Any, Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class HRMTrainingPanel(ttk.LabelFrame):  # type: ignore[misc]
@@ -26,9 +30,13 @@ class HRMTrainingPanel(ttk.LabelFrame):  # type: ignore[misc]
         title: str = "HRM Training",
         worker_pool: Any = None,
         resources_panel: Any = None,
+        post_to_ui: Optional[Callable[[Callable[..., None]], None]] = None,
     ) -> None:
         if tk is None or ttk is None:
             raise RuntimeError("Tkinter not available")
+        
+        logger.info("Initializing HRM Training Panel")
+        
         super().__init__(parent, text=title)
         self.pack(fill="both", expand=True, padx=8, pady=8)
 
@@ -38,13 +46,16 @@ class HRMTrainingPanel(ttk.LabelFrame):  # type: ignore[misc]
         self._save_after_id: Optional[str] = None
         self._worker_pool = worker_pool
         self._resources_panel = resources_panel
+        self._post_to_ui = post_to_ui
         
         # Get project root
         from .helpers import project_root
         self._project_root = project_root()
+        logger.debug(f"Project root: {self._project_root}")
         
         # Initialize variables
         from .variable_setup import setup_variables, setup_variable_traces
+        logger.debug("Setting up HRM training panel variables")
         setup_variables(self)
         setup_variable_traces(self)
         
@@ -57,6 +68,7 @@ class HRMTrainingPanel(ttk.LabelFrame):  # type: ignore[misc]
         self._step_hist = []
         self._stopped_dialog_shown = False
         self._bg_thread = None
+        self._bg_future = None
         self._proc = None
         self._stop_requested = False
         self._graceful_stop_requested = False  # Track graceful stop state for two-stage stop button
@@ -79,12 +91,16 @@ class HRMTrainingPanel(ttk.LabelFrame):  # type: ignore[misc]
         self._heartbeat_timeout = float(os.environ.get("AIOS_HEARTBEAT_TIMEOUT", "30"))
         self._stop_escalation_timeout = float(os.environ.get("AIOS_STOP_TIMEOUT", "10"))
         self._vram_update_after_id: Optional[str] = None
+        self._vram_task_id = 0
+        self._vram_estimate_future = None
+        self._vram_warned_long_seq: Optional[tuple[int, bool]] = None
         
         # Layout
         g = ttk.Frame(self)
         g.pack(fill="x")
         
         # Build UI sections
+        logger.debug("Building HRM training panel UI sections")
         from .ui_core_form import build_core_form
         from .ui_architecture import build_architecture_display
         from .ui_optimizations import build_optimizations_section
@@ -100,6 +116,8 @@ class HRMTrainingPanel(ttk.LabelFrame):  # type: ignore[misc]
         build_epoch_tracking_panel(self, self)
         initialize_epoch_tracking_display(self)
         build_memory_panels(self, self)
+        
+        logger.info("HRM Training Panel UI constructed successfully")
         
         # Data loading deferred to async initialization during startup
         # (prefill_last_safe_batches and update_vram_estimate will be called
@@ -135,12 +153,31 @@ class HRMTrainingPanel(ttk.LabelFrame):  # type: ignore[misc]
         # Initial update of DeepSpeed state
         self.update_deepspeed_state()
 
+    def dispatch_to_ui(self, callback: Callable[[], None]) -> bool:
+        """Schedule ``callback`` on the Tk UI thread."""
+        if self._post_to_ui is not None:
+            try:
+                self._post_to_ui(callback)
+                return True
+            except Exception:
+                logger.debug("Failed to dispatch via post_to_ui", exc_info=True)
+
+        if threading.current_thread() is threading.main_thread():
+            try:
+                self.after(0, callback)
+                return True
+            except Exception:
+                logger.debug("Failed to schedule callback with after", exc_info=True)
+
+        return False
+
     def update_theme(self) -> None:
         """Update Text widget colors when theme changes."""
         from .theme_utils import get_theme_colors
         
         try:
             theme_colors = get_theme_colors()
+            logger.debug(f"Applying theme to HRM panel: bg={theme_colors.get('bg')}, fg={theme_colors.get('fg')}")
             self.log.config(
                 bg=theme_colors["bg"],
                 fg=theme_colors["fg"],
@@ -148,8 +185,8 @@ class HRMTrainingPanel(ttk.LabelFrame):  # type: ignore[misc]
                 selectforeground=theme_colors["selectfg"],
                 insertbackground=theme_colors["insertbg"]
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Failed to apply theme to HRM panel: {e}")
 
     def update_deepspeed_state(self) -> None:
         """Update DeepSpeed ZeRO dropdown state based on training mode.
@@ -173,6 +210,8 @@ class HRMTrainingPanel(ttk.LabelFrame):  # type: ignore[misc]
             # DeepSpeed ZeRO should only be enabled on Linux with multiple GPUs in DDP mode
             should_enable = is_linux and num_gpus > 1 and training_mode == "ddp"
             
+            logger.debug(f"DeepSpeed state update: enabled={should_enable} (Linux={is_linux}, GPUs={num_gpus}, mode={training_mode})")
+            
             if hasattr(self, "zero_combo"):
                 if should_enable:
                     # Enable ZeRO dropdown
@@ -180,9 +219,12 @@ class HRMTrainingPanel(ttk.LabelFrame):  # type: ignore[misc]
                 else:
                     # Disable ZeRO dropdown and set to "none"
                     self.zero_combo.config(state="disabled")
+                    current_stage = self.zero_stage_var.get()
+                    if current_stage != "none":
+                        logger.debug(f"DeepSpeed ZeRO disabled, resetting stage from '{current_stage}' to 'none'")
                     self.zero_stage_var.set("none")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Failed to update DeepSpeed state: {e}")
 
     def _log(self, msg: str) -> None:
         """Append a line of text to the panel log and external output."""
@@ -257,3 +299,72 @@ class HRMTrainingPanel(ttk.LabelFrame):  # type: ignore[misc]
         """
         from .ui_architecture import set_arch_widgets_state
         set_arch_widgets_state(self, state)
+
+    def cleanup(self) -> None:
+        """Clean up HRM training panel resources on shutdown."""
+        logger.info("Cleaning up HRM Training Panel")
+        
+        # Stop any running training processes
+        if self._run_in_progress:
+            logger.info("Stopping active training run during cleanup")
+            try:
+                self._on_stop()
+            except Exception as e:
+                logger.warning(f"Error stopping training during cleanup: {e}")
+        
+        # Cancel any scheduled VRAM updates
+        if self._vram_update_after_id:
+            try:
+                self.after_cancel(self._vram_update_after_id)
+                logger.debug("Cancelled scheduled VRAM update")
+            except Exception as e:
+                logger.debug(f"Error cancelling VRAM update: {e}")
+        
+        # Cancel any scheduled state saves
+        if self._save_after_id:
+            try:
+                self.after_cancel(self._save_after_id)
+                logger.debug("Cancelled scheduled state save")
+            except Exception as e:
+                logger.debug(f"Error cancelling state save: {e}")
+        
+        # Stop metrics polling
+        if self._metrics_polling_active:
+            logger.debug("Stopping metrics polling")
+            self._metrics_polling_active = False
+        
+        # Clean up subprocess if present
+        if self._proc and self._proc.poll() is None:
+            logger.info(f"Terminating HRM training process (PID: {self._proc.pid})")
+            try:
+                self._proc.terminate()
+            except Exception as e:
+                logger.error(f"Error terminating HRM training process: {e}")
+            else:
+
+                def _finalize_termination(attempt: int = 0) -> None:
+                    if self._proc is None:
+                        return
+                    if self._proc.poll() is None and attempt < 8:
+                        logger.debug("Waiting for training process to exit…")
+                        try:
+                            self.after(250, lambda: _finalize_termination(attempt + 1))
+                        except Exception:
+                            _finalize_termination(attempt + 1)
+                        return
+                    if self._proc.poll() is None:
+                        logger.warning("Process did not terminate, forcing kill")
+                        try:
+                            self._proc.kill()
+                        except Exception as kill_exc:
+                            logger.error(f"Error forcing HRM process kill: {kill_exc}")
+                    self._proc = None
+
+                try:
+                    self.after(250, _finalize_termination)
+                except Exception:
+                    _finalize_termination()
+        else:
+            self._proc = None
+
+        logger.info("HRM Training Panel cleanup complete")

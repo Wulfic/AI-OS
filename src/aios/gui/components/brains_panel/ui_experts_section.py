@@ -5,6 +5,9 @@ Creates the dynamic experts table and all management buttons/entries.
 
 from __future__ import annotations
 
+# Import safe variable wrappers
+from ...utils import safe_variables
+
 from typing import Any, cast
 
 try:  # pragma: no cover
@@ -115,7 +118,7 @@ def _build_experts_controls(parent: Any, panel: Any) -> None:
     btn_unfreeze_expert.pack(side="left", padx=(6, 0))
     
     ttk.Label(expert_mgmt, text="Set Parent:").pack(side="left", padx=(12, 2))
-    panel.expert_parent_var = tk.StringVar(value="")
+    panel.expert_parent_var = safe_variables.StringVar(value="")
     entry_expert_parent = ttk.Entry(expert_mgmt, textvariable=panel.expert_parent_var, width=15)
     entry_expert_parent.pack(side="left")
     

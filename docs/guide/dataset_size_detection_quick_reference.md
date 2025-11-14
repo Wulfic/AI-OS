@@ -135,6 +135,8 @@ else:
 - Only file sizes (must estimate rows)
 - Requires huggingface_hub library
 
+> **Auto fallback:** When the Dataset Viewer APIs return errors, AI-OS now automatically falls back to the Hub API (if `huggingface_hub` is installed). Disable this behavior with `AIOS_AUTO_ENABLE_HF_HUB_FALLBACK=0` or force-enable/disable it explicitly with `AIOS_ENABLE_HF_HUB_FALLBACK`.
+
 ## Troubleshooting
 
 ### "Unknown" size displayed
@@ -146,6 +148,7 @@ else:
 2. Verify network connection
 3. Check if dataset was renamed on HuggingFace
 4. Try accessing the dataset directly on HuggingFace Hub
+5. If you intentionally disabled the Hub fallback, consider re-enabling it when Dataset Viewer outages occur (`AIOS_AUTO_ENABLE_HF_HUB_FALLBACK=1`).
 
 ### Row count marked "(est.)"
 

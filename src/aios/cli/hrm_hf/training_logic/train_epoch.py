@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Optional, Any, Callable, Dict
 
 from .distributed import average_gradients_if_distributed
 from .memory import sys_mem_used_pct
+
+logger = logging.getLogger(__name__)
 
 
 def train_epoch(
@@ -59,6 +62,11 @@ def train_epoch(
     - step_offset: Start counting from this step (for display purposes)
     - Actual training still runs for 'steps' iterations
     """
+    logger.info(
+        f"Starting training epoch: steps={steps}, batch_size={batch_size}, "
+        f"device={dev}, distributed={is_distributed}, step_offset={step_offset}"
+    )
+    
     steps_done = 0
     stopped_early = False
     stop_reason: Optional[str] = None
@@ -532,6 +540,8 @@ def train_epoch(
                 break
             except RuntimeError as e:
                 if ("out of memory" in str(e).lower()) and (dev == "cuda"):
+                    logger.warning(f"OOM detected on attempt {attempt + 1}/{max_attempts}, batch_size={batch_size}")
+                    
                     import gc
                     gc.collect()
                     
@@ -539,6 +549,7 @@ def train_epoch(
                         if torch.cuda.is_available():
                             torch.cuda.synchronize()
                             torch.cuda.empty_cache()
+                            logger.debug("Cleared CUDA cache after OOM")
                     except Exception:
                         pass
                     
@@ -547,6 +558,10 @@ def train_epoch(
                             allocated = torch.cuda.memory_allocated() / 1e9
                             reserved = torch.cuda.memory_reserved() / 1e9
                             total = torch.cuda.get_device_properties(0).total_memory / 1e9
+                            logger.info(
+                                f"OOM memory state: allocated={allocated:.2f}GB, "
+                                f"reserved={reserved:.2f}GB, total={total:.2f}GB"
+                            )
                             print({
                                 "event": "oom_memory_stats",
                                 "allocated_gb": round(allocated, 2),
@@ -560,6 +575,9 @@ def train_epoch(
                     attempt += 1
                     
                     if attempt >= max_attempts:
+                        logger.error(
+                            f"OOM recovery failed after {attempt} attempts, batch_size={batch_size}"
+                        )
                         print({
                             "event": "oom_max_attempts",
                             "attempts": attempt,
@@ -577,12 +595,14 @@ def train_epoch(
                     if new_bs < batch_size:
                         batch_size = new_bs
                         write_last_safe_batches(train_bs=int(batch_size))
+                        logger.info(f"OOM recovery: reduced batch_size to {batch_size} (attempt {attempt})")
                         try:
                             print({"event": "oom_backoff", "batch_size": int(batch_size), "attempt": int(attempt)})
                         except Exception:
                             pass
                         continue
                     else:
+                        logger.error("OOM recovery failed: already at minimum batch_size=1")
                         print({
                             "event": "oom_at_min_batch",
                             "batch_size": 1,

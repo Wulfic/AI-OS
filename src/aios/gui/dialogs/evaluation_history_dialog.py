@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+# Import safe variable wrappers
+from ..utils import safe_variables
+
+import logging
 import tkinter as tk
 from datetime import datetime
 from tkinter import messagebox, ttk
@@ -9,6 +13,8 @@ from typing import Any, Callable, Optional
 
 from aios.core.evaluation import EvaluationHistory
 from aios.gui.utils.theme_utils import apply_theme_to_toplevel, get_spacing_multiplier
+
+logger = logging.getLogger(__name__)
 
 
 class EvaluationHistoryDialog(tk.Toplevel):  # type: ignore[misc]
@@ -28,6 +34,8 @@ class EvaluationHistoryDialog(tk.Toplevel):  # type: ignore[misc]
             on_view_details: Callback when user wants to view details (receives eval_id)
         """
         super().__init__(parent)
+        
+        logger.info("Opening evaluation history dialog")
         
         self.history = history
         self.on_view_details = on_view_details
@@ -78,13 +86,13 @@ class EvaluationHistoryDialog(tk.Toplevel):  # type: ignore[misc]
         
         # Model filter
         ttk.Label(filter_grid, text="Model:").grid(row=0, column=0, sticky="w", padx=(0, int(5 * spacing)))
-        self.model_filter_var = tk.StringVar()
+        self.model_filter_var = safe_variables.StringVar()
         self.model_filter_entry = ttk.Entry(filter_grid, textvariable=self.model_filter_var, width=20)
         self.model_filter_entry.grid(row=0, column=1, sticky="w", padx=(0, int(10 * spacing)))
         
         # Status filter
         ttk.Label(filter_grid, text="Status:").grid(row=0, column=2, sticky="w", padx=(0, int(5 * spacing)))
-        self.status_filter_var = tk.StringVar(value="all")
+        self.status_filter_var = safe_variables.StringVar(value="all")
         status_combo = ttk.Combobox(
             filter_grid,
             textvariable=self.status_filter_var,
@@ -96,7 +104,7 @@ class EvaluationHistoryDialog(tk.Toplevel):  # type: ignore[misc]
         
         # Limit
         ttk.Label(filter_grid, text="Limit:").grid(row=0, column=4, sticky="w", padx=(0, int(5 * spacing)))
-        self.limit_var = tk.StringVar(value="50")
+        self.limit_var = safe_variables.StringVar(value="50")
         limit_spin = ttk.Spinbox(filter_grid, textvariable=self.limit_var, from_=10, to=500, width=8)
         limit_spin.grid(row=0, column=5, sticky="w", padx=(0, int(10 * spacing)))
         
@@ -207,6 +215,8 @@ class EvaluationHistoryDialog(tk.Toplevel):  # type: ignore[misc]
         except ValueError:
             limit = 50
         
+        logger.debug(f"Loading evaluation history: model_filter={model_filter or 'none'}, status_filter={status_filter or 'all'}, limit={limit}")
+        
         # Load evaluations
         try:
             evaluations = self.history.get_recent_evaluations(
@@ -214,6 +224,9 @@ class EvaluationHistoryDialog(tk.Toplevel):  # type: ignore[misc]
                 model_name=model_filter if model_filter else None,
                 status=status_filter,
             )
+            
+            logger.info(f"Loaded {len(evaluations)} evaluation history entries")
+            logger.debug(f"Evaluation IDs: {[e['id'] for e in evaluations]}")
             
             for eval_data in evaluations:
                 # Format data
@@ -259,6 +272,7 @@ class EvaluationHistoryDialog(tk.Toplevel):  # type: ignore[misc]
             self._update_statistics()
         
         except Exception as e:
+            logger.error(f"Failed to load evaluation history: {e}", exc_info=True)
             messagebox.showerror("Error", f"Failed to load history:\n{e}")
     
     def _update_statistics(self) -> None:
@@ -296,6 +310,8 @@ class EvaluationHistoryDialog(tk.Toplevel):  # type: ignore[misc]
         try:
             eval_id = int(eval_id_str)
             
+            logger.info(f"Viewing evaluation details: eval_id={eval_id}")
+            
             if self.on_view_details:
                 self.on_view_details(eval_id)
             else:
@@ -312,6 +328,7 @@ class EvaluationHistoryDialog(tk.Toplevel):  # type: ignore[misc]
                     messagebox.showinfo("Evaluation Details", info)
         
         except Exception as e:
+            logger.error(f"Failed to view evaluation details: {e}", exc_info=True)
             messagebox.showerror("Error", f"Failed to view details:\n{e}")
     
     def _on_view_samples(self) -> None:
@@ -328,15 +345,19 @@ class EvaluationHistoryDialog(tk.Toplevel):  # type: ignore[misc]
         try:
             eval_id = int(eval_id_str)
             
+            logger.info(f"Viewing evaluation samples: eval_id={eval_id}")
+            
             # Get evaluation data
             eval_data = self.history.get_evaluation(eval_id)
             if not eval_data:
+                logger.error(f"Evaluation not found: eval_id={eval_id}")
                 messagebox.showerror("Error", "Evaluation not found.")
                 return
             
             # Check if samples are available
             samples_path = eval_data.get("samples_path", "")
             if not samples_path:
+                logger.warning(f"No samples available for evaluation {eval_id}")
                 messagebox.showinfo(
                     "No Samples",
                     "This evaluation does not have logged samples.\n\n"
@@ -349,11 +370,14 @@ class EvaluationHistoryDialog(tk.Toplevel):  # type: ignore[misc]
             if isinstance(tasks, str):
                 tasks = tasks.split(",")
             
+            logger.debug(f"Opening samples dialog for {len(tasks)} tasks: {tasks}")
+            
             # Open samples viewer dialog
             from aios.gui.dialogs.evaluation_samples_dialog import EvaluationSamplesDialog
             EvaluationSamplesDialog(self, samples_path, tasks)
         
         except Exception as e:
+            logger.error(f"Failed to view samples: {e}", exc_info=True)
             messagebox.showerror("Error", f"Failed to view samples:\n{e}")
     
     def _on_compare_selected(self) -> None:
@@ -373,12 +397,17 @@ class EvaluationHistoryDialog(tk.Toplevel):  # type: ignore[misc]
                 eval_id_str = self.tree.item(item, "text")
                 eval_ids.append(int(eval_id_str))
             
+            logger.info(f"Comparing {len(eval_ids)} evaluations: {eval_ids}")
+            
             # Get comparison
             comparison = self.history.compare_evaluations(eval_ids)
             
             if not comparison:
+                logger.warning(f"No comparison data available for evaluations: {eval_ids}")
                 messagebox.showwarning("No Data", "No comparison data available.")
                 return
+            
+            logger.debug(f"Comparison benchmarks: {list(comparison.get('benchmarks', {}).keys())}")
             
             # Build comparison text
             lines = ["Evaluation Comparison\n" + "=" * 50 + "\n"]
@@ -419,6 +448,7 @@ class EvaluationHistoryDialog(tk.Toplevel):  # type: ignore[misc]
             ttk.Button(comp_dialog, text="Close", command=comp_dialog.destroy).pack(pady=5)
         
         except Exception as e:
+            logger.error(f"Failed to compare evaluations: {e}", exc_info=True)
             messagebox.showerror("Error", f"Failed to compare:\n{e}")
     
     def _on_delete_selected(self) -> None:
@@ -435,19 +465,26 @@ class EvaluationHistoryDialog(tk.Toplevel):  # type: ignore[misc]
             f"Are you sure you want to delete {count} evaluation(s)?\n"
             "This action cannot be undone."
         ):
+            logger.debug(f"User cancelled deletion of {count} evaluations")
             return
         
         try:
-            deleted = 0
+            eval_ids = []
             for item in selection:
                 eval_id_str = self.tree.item(item, "text")
-                eval_id = int(eval_id_str)
-                
+                eval_ids.append(int(eval_id_str))
+            
+            logger.info(f"Deleting {count} evaluations: {eval_ids}")
+            
+            deleted = 0
+            for eval_id in eval_ids:
                 if self.history.delete_evaluation(eval_id):
                     deleted += 1
             
+            logger.info(f"Successfully deleted {deleted} of {count} evaluations")
             messagebox.showinfo("Success", f"Deleted {deleted} evaluation(s).")
             self._load_history()
         
         except Exception as e:
+            logger.error(f"Failed to delete evaluations: {e}", exc_info=True)
             messagebox.showerror("Error", f"Failed to delete:\n{e}")

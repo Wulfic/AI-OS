@@ -4,10 +4,13 @@ This module handles creating brain directories and writing brain.json metadata f
 """
 
 from __future__ import annotations
+import logging
 import os
 import json
 import time
 from typing import Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 def create_brain_directory(
@@ -40,12 +43,15 @@ def create_brain_directory(
     Returns:
         Path to created brain directory
     """
+    logger.info(f"Creating new brain directory: {brain_name}")
+    
     # Sanitize brain name (replace spaces with underscores)
     safe_name = brain_name.replace(" ", "_")
     
     # Create brain directory
     brain_dir = os.path.join(project_root, "artifacts", "brains", "actv1", safe_name)
     os.makedirs(brain_dir, exist_ok=True)
+    logger.debug(f"Directory path: {brain_dir}")
     
     # Build brain metadata
     brain_metadata = {
@@ -64,6 +70,8 @@ def create_brain_directory(
         "num_experts_per_tok": num_experts_per_tok,
     }
     
+    logger.debug(f"Brain config: vocab_size={vocab_size}, MoE={use_moe}")
+    
     # Add architecture parameters if provided
     if architecture:
         brain_metadata.update({
@@ -77,6 +85,9 @@ def create_brain_directory(
             "pos_encoding": architecture.get("pos_encoding"),
             "dtype": architecture.get("dtype"),
         })
+        
+        logger.debug(f"Architecture: {architecture.get('h_layers')}H/{architecture.get('l_layers')}L layers, "
+                    f"{architecture.get('hidden_size')} hidden, {architecture.get('num_heads')} heads")
         
         # Calculate and store total parameters (source of truth)
         if all(k in architecture for k in ["hidden_size", "h_layers", "l_layers"]):
@@ -93,14 +104,16 @@ def create_brain_directory(
                 )
                 brain_metadata["total_params"] = total_params
                 brain_metadata["model_size_mb"] = (total_params * 4) / (1024 * 1024)
-            except Exception:
-                pass  # Non-critical, can be calculated later
+                logger.debug(f"Calculated parameters: {total_params:,} ({brain_metadata['model_size_mb']:.1f} MB)")
+            except Exception as e:
+                logger.warning(f"Could not calculate model parameters: {e}")
     
     # Write brain.json
     brain_json_path = os.path.join(brain_dir, "brain.json")
     with open(brain_json_path, 'w', encoding='utf-8') as f:
         json.dump(brain_metadata, f, indent=2)
     
+    logger.info(f"Brain directory created successfully: {safe_name}")
     return brain_dir
 
 

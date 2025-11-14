@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import threading
+import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -10,6 +10,10 @@ if TYPE_CHECKING:
 
 from . import message_display
 from .event_handlers import scroll_to_bottom
+from ...utils.resource_management import submit_background
+
+
+logger = logging.getLogger(__name__)
 
 
 def refresh_brains(panel: RichChatPanel) -> None:
@@ -30,6 +34,7 @@ def refresh_brains(panel: RichChatPanel) -> None:
     def _do_refresh():
         """Background refresh operation."""
         try:
+            logger.info("Brain refresh task running")
             brains = panel._on_list_brains()
             
             # Schedule UI update on main thread
@@ -42,6 +47,7 @@ def refresh_brains(panel: RichChatPanel) -> None:
                     else:
                         panel.brain_combo["values"] = ["<no brains>"]
                         panel.brain_var.set("<no brains>")
+                    logger.info("Brain list updated (%d brain(s))", len(brains))
                 except Exception as e:
                     if hasattr(panel, 'canvas'):
                         message_display.add_system_message(panel, f"Failed to update brain list: {e}")
@@ -51,6 +57,7 @@ def refresh_brains(panel: RichChatPanel) -> None:
             except Exception:
                 pass
         except Exception as e:
+            logger.error("Failed to refresh brain list: %s", e, exc_info=True)
             # Schedule error handling on main thread
             def _handle_error():
                 if hasattr(panel, 'canvas'):
@@ -61,12 +68,11 @@ def refresh_brains(panel: RichChatPanel) -> None:
             except Exception:
                 pass
     
-    # Submit to worker pool if available
-    if panel._worker_pool:
-        panel._worker_pool.submit(_do_refresh)
-    else:
-        # Fallback to direct threading
-        threading.Thread(target=_do_refresh, daemon=True).start()
+    try:
+        submit_background("chat-brain-refresh", _do_refresh, pool=panel._worker_pool)
+    except RuntimeError as exc:
+        logger.error("Failed to queue brain refresh: %s", exc)
+        message_display.add_system_message(panel, f"Failed to refresh brains: {exc}")
 
 
 def load_brain(panel: RichChatPanel) -> None:
@@ -115,11 +121,11 @@ def load_brain(panel: RichChatPanel) -> None:
             except Exception:
                 pass
         
-        if panel._worker_pool:
-            panel._worker_pool.submit(_work)
-        else:
-            # Fallback to threading if no worker pool available
-            threading.Thread(target=_work, daemon=True).start()
+        try:
+            submit_background("chat-brain-load", _work, pool=panel._worker_pool)
+        except RuntimeError as exc:
+            message_display.add_system_message(panel, f"Failed to load brain: {exc}")
+            update_status(panel, "Load failed")
     except Exception as e:
         message_display.add_system_message(panel, f"Failed to load brain: {e}")
         update_status(panel, "Load failed")
@@ -156,10 +162,11 @@ def unload_model(panel: RichChatPanel) -> None:
             except Exception:
                 pass
         
-        if panel._worker_pool:
-            panel._worker_pool.submit(_work)
-        else:
-            threading.Thread(target=_work, daemon=True).start()
+        try:
+            submit_background("chat-brain-unload", _work, pool=panel._worker_pool)
+        except RuntimeError as exc:
+            message_display.add_system_message(panel, f"Failed to unload: {exc}")
+            update_status(panel, "Unload failed")
     except Exception as e:
         message_display.add_system_message(panel, f"Failed to unload: {e}")
 

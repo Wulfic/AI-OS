@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+# Import safe variable wrappers
+from ..utils import safe_variables
+
 import json
+import logging
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
 from typing import Any
 
 from aios.gui.utils.theme_utils import apply_theme_to_toplevel, get_spacing_multiplier
+
+logger = logging.getLogger(__name__)
 
 
 class EvaluationSamplesDialog(tk.Toplevel):  # type: ignore[misc]
@@ -28,6 +34,8 @@ class EvaluationSamplesDialog(tk.Toplevel):  # type: ignore[misc]
             tasks: List of task names evaluated
         """
         super().__init__(parent)
+        
+        logger.info(f"Opening evaluation samples dialog: path={samples_path}, tasks={len(tasks)}")
         
         self.samples_path = Path(samples_path)
         self.tasks = tasks
@@ -73,7 +81,7 @@ class EvaluationSamplesDialog(tk.Toplevel):  # type: ignore[misc]
         
         ttk.Label(top_frame, text="Task:").pack(side="left", padx=(0, int(5 * spacing)))
         
-        self.task_var = tk.StringVar()
+        self.task_var = safe_variables.StringVar()
         self.task_combo = ttk.Combobox(
             top_frame,
             textvariable=self.task_var,
@@ -85,7 +93,7 @@ class EvaluationSamplesDialog(tk.Toplevel):  # type: ignore[misc]
         
         # Filter controls
         ttk.Label(top_frame, text="Show:").pack(side="left", padx=(0, int(5 * spacing)))
-        self.filter_var = tk.StringVar(value="all")
+        self.filter_var = safe_variables.StringVar(value="all")
         filter_combo = ttk.Combobox(
             top_frame,
             textvariable=self.filter_var,
@@ -166,6 +174,7 @@ class EvaluationSamplesDialog(tk.Toplevel):  # type: ignore[misc]
     def _load_samples(self) -> None:
         """Load sample files from the samples directory."""
         if not self.samples_path.exists():
+            logger.error(f"Samples directory not found: {self.samples_path}")
             messagebox.showerror("Error", f"Samples directory not found:\n{self.samples_path}")
             self.destroy()
             return
@@ -175,6 +184,7 @@ class EvaluationSamplesDialog(tk.Toplevel):  # type: ignore[misc]
             sample_files = list(self.samples_path.glob("samples_*.jsonl"))
             
             if not sample_files:
+                logger.warning(f"No sample files found in {self.samples_path}")
                 messagebox.showwarning(
                     "No Samples",
                     f"No sample files found in:\n{self.samples_path}\n\n"
@@ -183,7 +193,10 @@ class EvaluationSamplesDialog(tk.Toplevel):  # type: ignore[misc]
                 self.destroy()
                 return
             
+            logger.debug(f"Found {len(sample_files)} sample file(s): {[f.name for f in sample_files]}")
+            
             # Load each sample file
+            total_samples = 0
             for sample_file in sample_files:
                 # Extract task name from filename: samples_<task>_<timestamp>.jsonl
                 task_name = sample_file.stem.replace("samples_", "").rsplit("_", 2)[0]
@@ -195,6 +208,10 @@ class EvaluationSamplesDialog(tk.Toplevel):  # type: ignore[misc]
                             samples.append(json.loads(line))
                 
                 self.samples_data[task_name] = samples
+                total_samples += len(samples)
+                logger.debug(f"Loaded {len(samples)} samples for task '{task_name}'")
+            
+            logger.info(f"Loaded {total_samples} total samples across {len(self.samples_data)} tasks")
             
             # Populate task dropdown
             task_names = sorted(self.samples_data.keys())
@@ -204,11 +221,14 @@ class EvaluationSamplesDialog(tk.Toplevel):  # type: ignore[misc]
                 self._on_task_changed()
         
         except Exception as e:
+            logger.error(f"Failed to load samples: {e}", exc_info=True)
             messagebox.showerror("Error", f"Failed to load samples:\n{e}")
             self.destroy()
     
     def _on_task_changed(self) -> None:
         """Handle task selection change."""
+        task = self.task_var.get()
+        logger.debug(f"Task selection changed to: {task}")
         self._apply_filter()
     
     def _apply_filter(self) -> None:
@@ -294,6 +314,8 @@ class EvaluationSamplesDialog(tk.Toplevel):  # type: ignore[misc]
             doc_id = int(doc_id_str)
         except (IndexError, ValueError):
             return
+        
+        logger.debug(f"Sample selected: doc_id={doc_id}, task={self.task_var.get()}")
         
         # Find the sample with this doc_id
         task = self.task_var.get()
@@ -420,7 +442,9 @@ class EvaluationSamplesDialog(tk.Toplevel):  # type: ignore[misc]
                 for sample in filtered_samples:
                     f.write(json.dumps(sample) + "\n")
             
+            logger.info(f"Exported {len(filtered_samples)} samples (filter={filter_val}) to {filename}")
             messagebox.showinfo("Success", f"Exported {len(filtered_samples)} samples to:\n{filename}")
         
         except Exception as e:
+            logger.error(f"Failed to export samples: {e}", exc_info=True)
             messagebox.showerror("Error", f"Failed to export samples:\n{e}")

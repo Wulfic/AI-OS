@@ -8,7 +8,10 @@ Fails safely (no-op) if Tk is not available (e.g. headless test env).
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional, cast
+
+logger = logging.getLogger(__name__)
 
 try:  # pragma: no cover - environment dependent
     import tkinter as tk  # type: ignore
@@ -48,6 +51,10 @@ class _Tooltip:
         try:
             if self._tip or not self.text:
                 return
+            
+            # Don't log tooltip shows - it creates noise in debug panel
+            # especially when hovering over the debug panel itself!
+            
             tip = tk.Toplevel(self.widget)
             self._tip = tip
             try:
@@ -87,6 +94,7 @@ class _Tooltip:
         self._after_id = None
         try:
             if self._tip is not None:
+                # Don't log tooltip hides - creates noise
                 self._tip.destroy()
         except Exception:
             pass

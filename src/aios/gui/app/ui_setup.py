@@ -10,6 +10,7 @@ This module creates the main UI structure:
 from __future__ import annotations
 
 import os
+import logging
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
@@ -22,6 +23,12 @@ else:
     except Exception:
         tk = None  # type: ignore
         ttk = None  # type: ignore
+
+# Import safe variable wrappers
+from ..utils import safe_variables
+
+
+logger = logging.getLogger(__name__)
 
 
 def create_ui_structure(app: Any, root: "tk.Tk") -> None:  # type: ignore[name-defined]
@@ -72,30 +79,43 @@ def create_ui_structure(app: Any, root: "tk.Tk") -> None:  # type: ignore[name-d
     
     # Refresh brains when returning to Brains tab
     def _on_tab_changed(event):
+        tab_text = None
         try:
             tab_id = app.nb.select()
             tab_text = app.nb.tab(tab_id, "text")
-            if tab_text == "Brains":
-                try:
-                    app.brains_panel.refresh()  # populated later
-                except Exception:
-                    pass
-            elif tab_text == "MCP & Tools":
-                try:
-                    app.mcp_panel.refresh()  # populated later
-                except Exception:
-                    pass
-            elif tab_text == "Evaluation":
-                # Panel already loaded during startup
-                pass
-            elif tab_text == "Help":
-                try:
-                    # ensure help panel has focus on search for quick typing
-                    app.help_panel.focus_search()
-                except Exception:
-                    pass
+            logger.info("Notebook tab changed to %s", tab_text)
         except Exception:
-            pass
+            logger.debug("Failed to resolve notebook tab selection", exc_info=True)
+            return
+
+        try:
+            if tab_text == "Brains":
+                if hasattr(app, 'brains_panel') and app.brains_panel:
+                    app.brains_panel.refresh()  # populated later
+            elif tab_text == "MCP & Tools":
+                if hasattr(app, 'mcp_panel') and app.mcp_panel:
+                    app.mcp_panel.refresh()  # populated later
+            elif tab_text == "Resources":
+                try:
+                    if hasattr(app, 'resources_panel') and app.resources_panel:
+                        logger.info("Resources tab activation handler start")
+                        app.resources_panel.on_tab_activated()
+                        logger.info("Resources tab activation handler done")
+                except Exception:
+                    logger.exception("Resources tab activation handler failed")
+            elif tab_text == "Evaluation":
+                try:
+                    if hasattr(app, 'evaluation_panel') and app.evaluation_panel:
+                        logger.info("Evaluation tab activation handler start")
+                        app.evaluation_panel.on_tab_activated()
+                        logger.info("Evaluation tab activation handler done")
+                except Exception:
+                    logger.exception("Evaluation tab activation handler failed")
+            elif tab_text == "Help":
+                if hasattr(app, 'help_panel') and app.help_panel:
+                    app.help_panel.focus_search()
+        except Exception:
+            logger.exception("Notebook tab change side-effect failed")
     
     cast(Any, app.nb).bind("<<NotebookTabChanged>>", _on_tab_changed)
 
@@ -122,13 +142,13 @@ def create_ui_structure(app: Any, root: "tk.Tk") -> None:  # type: ignore[name-d
     top.pack(fill="x", padx=8, pady=4)
     
     # Core toggles/state (no direct UI here; ResourcesPanel handles devices)
-    app.cpu_var = tk.BooleanVar(value=False)
-    app.cuda_var = tk.BooleanVar(value=False)
-    app.xpu_var = tk.BooleanVar(value=False)
-    app.dml_var = tk.BooleanVar(value=False)
-    app.mps_var = tk.BooleanVar(value=False)
-    app.dml_py_var = tk.StringVar(value="")
-    app.dataset_path_var = tk.StringVar(value="")
+    app.cpu_var = safe_variables.BooleanVar(value=False)
+    app.cuda_var = safe_variables.BooleanVar(value=False)
+    app.xpu_var = safe_variables.BooleanVar(value=False)
+    app.dml_var = safe_variables.BooleanVar(value=False)
+    app.mps_var = safe_variables.BooleanVar(value=False)
+    app.dml_py_var = safe_variables.StringVar(value="")
+    app.dataset_path_var = safe_variables.StringVar(value="")
     
     # Resource controls state
     try:
@@ -139,7 +159,7 @@ def create_ui_structure(app: Any, root: "tk.Tk") -> None:  # type: ignore[name-d
     app._cores = cores
     
     # Command var used by on_run (legacy)
-    app.cmd_var = tk.StringVar(value="")
+    app.cmd_var = safe_variables.StringVar(value="")
     
     # Create horizontal split container for output and builder
     top_container = ttk.Frame(app.datasets_tab)

@@ -6,34 +6,52 @@ making the YAML config file the single source of truth for resource configuratio
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Optional
 import yaml
 
+logger = logging.getLogger(__name__)
 
-def get_config_path() -> Path:
-    """Get the path to the config/default.yaml file.
+# Import centralized config loader
+try:
+    from ...config_loader import get_config_path, load_config as load_full_config, save_config as save_full_config
+except ImportError:
+    # Fallback for older code structure
+    def get_config_path() -> Path:
+        """Get the path to the user's config file."""
+        import os
+        env_path = os.environ.get("AIOS_CONFIG")
+        if env_path:
+            p = Path(env_path)
+            if p.exists():
+                return p
+        user_config = Path.home() / ".config" / "aios" / "config.yaml"
+        if user_config.exists():
+            return user_config
+        return Path.cwd() / "config" / "default.yaml"
     
-    Returns:
-        Path to config/default.yaml (may not exist yet)
-    """
-    # Try current working directory first
-    config_path = Path.cwd() / "config" / "default.yaml"
-    if config_path.exists():
-        return config_path
+    def load_full_config() -> dict:
+        """Fallback config loader."""
+        try:
+            config_path = get_config_path()
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    return yaml.safe_load(f) or {}
+        except Exception:
+            pass
+        return {}
     
-    # Try relative to this file (for installed packages)
-    try:
-        module_path = Path(__file__).resolve()
-        repo_root = module_path.parents[5]  # Up from src/aios/gui/components/resources_panel
-        config_path = repo_root / "config" / "default.yaml"
-        if config_path.exists():
-            return config_path
-    except Exception:
-        pass
-    
-    # Fall back to cwd path even if it doesn't exist
-    return Path.cwd() / "config" / "default.yaml"
+    def save_full_config(config: dict) -> bool:
+        """Fallback config saver."""
+        try:
+            config_path = get_config_path()
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+            return True
+        except Exception:
+            return False
 
 
 def load_resources_from_config() -> dict[str, Any]:
@@ -43,22 +61,22 @@ def load_resources_from_config() -> dict[str, Any]:
         Dict of resources settings, or empty dict if config doesn't exist or has no resources section
     """
     try:
-        config_path = get_config_path()
-        if not config_path.exists():
-            return {}
+        config = load_full_config()
         
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config = yaml.safe_load(f) or {}
-        
-        if not isinstance(config, dict):
+        if not config:
+            logger.debug("No config loaded")
             return {}
         
         resources = config.get('resources', {})
         if not isinstance(resources, dict):
+            logger.warning("Resources section in config is not a dict")
             return {}
         
+        logger.info("Successfully loaded resource config")
+        logger.debug(f"Resource config: {resources}")
         return resources
-    except Exception:
+    except Exception as e:
+        logger.error(f"Failed to load resource config: {e}", exc_info=True)
         return {}
 
 
@@ -72,19 +90,11 @@ def save_resources_to_config(resources_values: dict[str, Any]) -> bool:
         True if saved successfully, False otherwise
     """
     try:
-        config_path = get_config_path()
-        
-        # Ensure config directory exists
-        config_path.parent.mkdir(parents=True, exist_ok=True)
+        logger.info("Saving resource config")
+        logger.debug(f"Resource values: {resources_values}")
         
         # Load existing config
-        config: dict[str, Any] = {}
-        if config_path.exists():
-            with open(config_path, 'r', encoding='utf-8') as f:
-                config = yaml.safe_load(f) or {}
-        
-        if not isinstance(config, dict):
-            config = {}
+        config = load_full_config()
         
         # Update resources section
         if 'resources' not in config:
@@ -129,13 +139,17 @@ def save_resources_to_config(resources_values: dict[str, Any]) -> bool:
         else:
             resources['system_mem_limit_gb'] = None
         
-        # Write config back to file
-        with open(config_path, 'w', encoding='utf-8') as f:
-            yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        # Save config back to file
+        success = save_full_config(config)
         
-        return True
+        if success:
+            logger.info("Successfully saved resource config")
+        else:
+            logger.error("Failed to save resource config")
+        
+        return success
     except Exception as e:
-        print(f"[Resources] Failed to save config: {e}")
+        logger.error(f"Failed to save resource config: {e}", exc_info=True)
         return False
 
 

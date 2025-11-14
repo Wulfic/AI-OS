@@ -119,6 +119,8 @@ class TrayManager:
             True if tray was created successfully, False otherwise
         """
         if not self.has_tray_support():
+            logger.error("Tray icon creation failed: missing dependencies or icon")
+            logger.warning("System tray not supported")
             logger.info("System tray not supported (missing pystray/PIL or icon)")
             return False
         
@@ -155,18 +157,21 @@ class TrayManager:
             )
             
             # Start tray in separate thread (run() blocks)
+            logger.debug("Starting system tray thread")
             self._tray_thread = threading.Thread(
                 target=self._tray_icon.run,  # type: ignore[union-attr]
                 daemon=True,
                 name="TrayThread"
             )
             self._tray_thread.start()
+            logger.debug("System tray thread started")
             
             logger.info("System tray icon created successfully")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to create tray icon: {e}")
+            logger.error(f"Tray icon creation failed: {e}", exc_info=True)
+            logger.warning("System tray not supported")
             return False
     
     def _on_toggle_window(self, icon: Any = None, item: Any = None) -> None:
@@ -175,10 +180,13 @@ class TrayManager:
         This is called from the tray thread, so we must use root.after()
         for thread safety.
         """
-        if self._is_visible:
-            self.hide_window()
-        else:
-            self.show_window()
+        try:
+            if self._is_visible:
+                self.hide_window()
+            else:
+                self.show_window()
+        except Exception as e:
+            logger.error(f"Tray click handler failed: {e}", exc_info=True)
     
     def _on_settings_click(self, icon: Any = None, item: Any = None) -> None:
         """Open settings (tray menu callback)."""
@@ -189,12 +197,13 @@ class TrayManager:
     
     def _on_exit_click(self, icon: Any = None, item: Any = None) -> None:
         """Exit application (tray menu callback)."""
+        logger.info("Application quit via tray icon")
         # Stop tray icon first
         if self._tray_icon:
             try:
                 self._tray_icon.stop()  # type: ignore[union-attr]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Quit handler failed: {e}", exc_info=True)
         
         # Quit application (thread-safe)
         self.root.after(0, self._quit_app)

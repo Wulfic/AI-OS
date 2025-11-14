@@ -4,12 +4,16 @@ Handles get_state/set_state for saving and loading panel configuration.
 """
 
 from __future__ import annotations
+import logging
 import os
+import threading
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .panel_main import HRMTrainingPanel
 
+
+logger = logging.getLogger(__name__)
 
 def get_state(panel: HRMTrainingPanel) -> dict:
     """Return a dict of current UI settings for persistence.
@@ -83,8 +87,15 @@ def set_state(panel: HRMTrainingPanel, state: dict) -> None:
         panel: The HRMTrainingPanel instance
         state: State dictionary to apply
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
     if not isinstance(state, dict):
+        logger.warning(f"set_state called with non-dict type: {type(state)}")
         return
+    
+    logger.info(f"HRM Training set_state: Applying {len(state)} parameters")
+    logger.debug(f"HRM Training state keys: {list(state.keys())}")
     
     # helpers
     def _set_str(var, key):
@@ -97,8 +108,8 @@ def set_state(panel: HRMTrainingPanel, state: dict) -> None:
                     var.set(formatted)
                 else:
                     var.set(str(v))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to set {key}: {e}")
     
     def _set_bool(var, key):
         try:
@@ -107,8 +118,8 @@ def set_state(panel: HRMTrainingPanel, state: dict) -> None:
                 var.set(v)
             elif isinstance(v, (int, float)):
                 var.set(bool(v))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to set {key}: {e}")
 
     # core
     _set_str(panel.dataset_var, "dataset")
@@ -195,9 +206,32 @@ def prefill_last_safe_batches(panel: HRMTrainingPanel) -> None:
                 data = json.loads(f.read())
             if isinstance(data, dict):
                 tb = data.get("train_batch")
+                value: str | None = None
                 if isinstance(tb, int) and tb > 0:
-                    panel.batch_var.set(str(tb))
+                    value = str(tb)
                 elif isinstance(tb, str) and tb.isdigit():
-                    panel.batch_var.set(tb)
+                    value = tb
+
+                if value:
+                    def _apply() -> None:
+                        try:
+                            panel.batch_var.set(value or "")
+                        except Exception:
+                            logger.debug("Failed to apply last safe batch size", exc_info=True)
+
+                    if threading.current_thread() is threading.main_thread():
+                        _apply()
+                        return
+
+                    dispatcher = getattr(panel, "dispatch_to_ui", None)
+                    scheduled = False
+                    if callable(dispatcher):
+                        try:
+                            scheduled = bool(dispatcher(_apply))
+                        except Exception:
+                            logger.debug("dispatch_to_ui failed when scheduling last safe batch size", exc_info=True)
+
+                    if not scheduled:
+                        logger.debug("Could not dispatch last safe batch size update to UI thread")
     except Exception:
-        pass
+        logger.debug("Failed to prefill last safe batches", exc_info=True)

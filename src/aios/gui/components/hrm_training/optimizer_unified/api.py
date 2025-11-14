@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Dict, Any, Tuple, List, Optional
 
 from .config import OptimizationConfig
 from .optimizer import UnifiedOptimizer
+
+logger = logging.getLogger(__name__)
 
 
 def optimize_from_config(config: OptimizationConfig) -> Tuple[Dict[str, Any], UnifiedOptimizer]:
@@ -173,7 +176,7 @@ def optimize_cli(
     
     def log_callback(message: str):
         if verbose:
-            print(message)
+            logger.info(message)
 
     batch_list = [int(x.strip()) for x in batch_sizes.split(",") if x.strip()]
     if not batch_list:

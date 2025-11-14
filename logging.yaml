@@ -2,24 +2,75 @@ version: 1
 formatters:
   json:
     format: "%(asctime)s %(levelname)s %(name)s %(message)s"
+  standard:
+    (): aios.utils.async_logging.NonBlockingFormatter
+    format: "%(asctime)s.%(msecs)03d | %(levelname)s | %(name)s | %(message)s"
+    datefmt: "%Y-%m-%d %H:%M:%S"
+  simple:
+    format: "%(asctime)s.%(msecs)03d | %(levelname)s | %(name)s | %(message)s"
+    datefmt: "%Y-%m-%d %H:%M:%S"
+  verbose:
+    format: "%(asctime)s.%(msecs)03d | %(levelname)s | %(name)s | %(filename)s:%(lineno)d | %(message)s"
+    datefmt: "%Y-%m-%d %H:%M:%S"
+  fast_debug:
+    # Lightweight formatter for debug mode with timestamps for session tracking
+    format: "%(asctime)s.%(msecs)03d | %(levelname)s | %(name)s | %(message)s"
+    datefmt: "%Y-%m-%d %H:%M:%S"
+  ultra_simple:
+    # Ultra-minimal formatter for maximum performance in heavy debug logging
+    format: "%(levelname)s: %(message)s"
+filters:
+  debug_trace_filter:
+    (): aios.utils.async_logging.DebugAndTraceFilter
 handlers:
   console:
-    class: logging.StreamHandler
+    class: aios.utils.async_logging.UTF8StreamHandler
     level: INFO
-    formatter: json
-    stream: ext://sys.stdout
+    formatter: simple
+    stream: ext://sys.stderr
+    include_tracebacks: false
   file:
-    class: logging.handlers.RotatingFileHandler
+    # Non-blocking timed rotating handler with size limits
+    # Rotates at midnight OR when file reaches 20 MB (whichever comes first)
+    # Format: aios_DD-MM-YYYY_SSS_PPP.log
+    # where SSS = session number (increments each program restart, resets daily)
+    #       PPP = part number (increments for each rotation within a session)
+    # Example: aios_11-11-2025_001_000.log
+    # backupCount = number of SESSIONS to keep (not individual files)
+    # If a session has 5 parts, all 5 parts count as 1 session
+    class: aios.utils.async_logging.NonBlockingTimedRotatingFileHandler
     level: INFO
-    formatter: json
-    filename: "aios.log"
-    maxBytes: 1048576
-    backupCount: 3
+    formatter: verbose
+    filename: "logs/aios.log"
+    when: "midnight"
+    interval: 1
+    backupCount: 10  # Keep last 10 sessions (all parts of each session included)
+    encoding: "utf-8"
+    utc: false
+    maxBytes: 20971520  # 20 MB per file - rotate on size as well as time
+    include_tracebacks: false
+  file_rotating:
+    # Size-based rotating handler for high-volume debug logging
+    # Rotates when file reaches 20 MB
+    # Format: aios_debug_DD-MM-YYYY_SSS_PPP.log
+    # where SSS = session number (increments each program restart, resets daily)
+    #       PPP = part number (increments for each rotation within a session)
+    # Example: aios_debug_11-11-2025_001_000.log
+    # backupCount = number of SESSIONS to keep (not individual files)
+    # If a session has 5 parts, all 5 parts count as 1 session
+    class: aios.utils.async_logging.NonBlockingRotatingFileHandler
+    level: DEBUG
+    formatter: fast_debug
+    filename: "logs/aios_debug.log"
+    maxBytes: 20971520  # 20 MB per file
+    backupCount: 10  # Keep last 10 sessions (all parts of each session included)
+    encoding: "utf-8"
+    filters: [debug_trace_filter]
 loggers:
   aios:
     level: INFO
-    handlers: [console]
+    handlers: [console, file]
     propagate: false
 root:
-  level: WARNING
-  handlers: [console]
+  level: INFO
+  handlers: [console, file]

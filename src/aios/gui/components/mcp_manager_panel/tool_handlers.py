@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, cast
 
 try:  # pragma: no cover - environment dependent
     from tkinter import messagebox  # type: ignore
 except Exception:  # pragma: no cover - environment dependent
     messagebox = cast(Any, None)
+
+logger = logging.getLogger(__name__)
 
 
 def handle_tool_toggle(tools_tree: Any, tools_loader: Any, tools_saver: Any, refresh_callback: Any, log_callback: Any) -> None:
@@ -36,6 +39,8 @@ def handle_tool_toggle(tools_tree: Any, tools_loader: Any, tools_saver: Any, ref
     # Toggle status
     new_status = "Disabled" if current_status == "✅ Enabled" else "Enabled"
     enabled = (new_status == "Enabled")
+    
+    logger.info(f"Tool toggled: {tool_name} → {'enabled' if enabled else 'disabled'}")
     
     # Update in config
     tools = tools_loader()

@@ -12,7 +12,10 @@ This module provides advanced memory management techniques for pushing the limit
 from __future__ import annotations
 from typing import Optional, Any
 import gc
+import logging
 import torch
+
+logger = logging.getLogger(__name__)
 
 
 def enable_extreme_memory_mode():
@@ -28,7 +31,7 @@ def enable_extreme_memory_mode():
     # Force aggressive garbage collection
     gc.set_threshold(500, 5, 5)  # More aggressive than default (700, 10, 10)
     
-    print({
+    logger.info({
         "extreme_memory_mode": "enabled",
         "settings": {
             "cuda_alloc": "aggressive_fragmentation_control",
@@ -203,7 +206,7 @@ def estimate_extreme_context_memory(
     # Verification (warn if mismatch)
     param_mismatch = abs(total_params - model_params) / max(model_params, 1)
     if param_mismatch > 0.1:  # >10% mismatch
-        print(f"⚠️  Warning: Estimated params ({total_params:,}) differs from actual ({model_params:,}) by {param_mismatch*100:.1f}%")
+        logger.warning(f"Estimated params ({total_params:,}) differs from actual ({model_params:,}) by {param_mismatch*100:.1f}%")
     
     # === 2. OPTIMIZER STATES (AdamW) ===
     # AdamW stores: momentum (1st moment) + variance (2nd moment)

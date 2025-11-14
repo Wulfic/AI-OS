@@ -46,8 +46,9 @@ class DatasetRegistry:
             True if removed, False if not found
         """
         if dataset_id in self.datasets:
+            dataset_name = self.datasets[dataset_id].name
             del self.datasets[dataset_id]
-            logger.info(f"[DatasetRegistry] Removed dataset: {dataset_id}")
+            logger.info(f"[DatasetRegistry] Removed dataset: {dataset_id} ({dataset_name})")
             return True
         logger.warning(f"[DatasetRegistry] Dataset not found: {dataset_id}")
         return False
@@ -215,6 +216,10 @@ class DatasetRegistry:
         Args:
             path: Path to JSON file
         """
+        import time
+        start_time = time.time()
+        
+        logger.debug(f"[DatasetRegistry] Serializing {len(self.datasets)} datasets")
         data = {
             "datasets": {
                 dataset_id: metadata.to_dict()
@@ -226,7 +231,10 @@ class DatasetRegistry:
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         
+        duration = (time.time() - start_time) * 1000  # Convert to ms
+        file_size = Path(path).stat().st_size / 1024  # Convert to KB
         logger.info(f"[DatasetRegistry] Saved {len(self.datasets)} datasets to {path}")
+        logger.debug(f"[DatasetRegistry] Registry saved in {duration:.1f}ms, file size: {file_size:.1f} KB")
     
     @classmethod
     def load(cls, path: str) -> "DatasetRegistry":
@@ -239,18 +247,25 @@ class DatasetRegistry:
         Returns:
             DatasetRegistry instance
         """
+        import time
+        start_time = time.time()
+        
         registry = cls()
         
         if not Path(path).exists():
             logger.warning(f"[DatasetRegistry] File not found: {path}")
             return registry
         
+        logger.debug(f"[DatasetRegistry] Loading registry from {path}")
         with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
+        logger.debug(f"[DatasetRegistry] Validating {len(data.get('datasets', {}))} dataset entries")
         for dataset_id, dataset_data in data.get("datasets", {}).items():
             metadata = DatasetMetadata.from_dict(dataset_data)
             registry.datasets[dataset_id] = metadata
         
+        duration = (time.time() - start_time) * 1000  # Convert to ms
         logger.info(f"[DatasetRegistry] Loaded {len(registry.datasets)} datasets from {path}")
+        logger.debug(f"[DatasetRegistry] Registry loaded in {duration:.1f}ms")
         return registry

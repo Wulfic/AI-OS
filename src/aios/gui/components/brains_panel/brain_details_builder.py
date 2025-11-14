@@ -343,6 +343,7 @@ def build_dataset_section(
     lines.append("📊 DATASET TRACKING")
     lines.append("─" * 70)
     
+    dataset_stats = dict(dataset_stats or {})
     if dataset_stats:
         num_datasets = len(dataset_stats)
         lines.append(f"Datasets Used:     {num_datasets}")
@@ -498,9 +499,10 @@ def build_relationships_section(brain_stats: dict[str, Any]) -> list[str]:
 def build_brain_details_text(
     brain_name: str,
     store_dir: str,
-    run_cli: Callable[[list[str]], str],
-    parse_cli_dict: Callable[[str], dict[str, Any]],
-    goals_list_callback: Optional[Callable[[str], list[str]]]
+    run_cli: Optional[Callable[[list[str]], str]] = None,
+    parse_cli_dict: Optional[Callable[[str], dict[str, Any]]] = None,
+    goals_list_callback: Optional[Callable[[str], list[str]]] = None,
+    brain_stats_data: Optional[dict[str, Any]] = None
 ) -> str:
     """Build complete brain details text.
     
@@ -509,9 +511,10 @@ def build_brain_details_text(
     Args:
         brain_name: Name of the brain
         store_dir: Path to brains store directory
-        run_cli: Callback to run CLI commands
-        parse_cli_dict: Function to parse CLI dict output
+        run_cli: Optional callback to run CLI commands (deprecated path for stats)
+        parse_cli_dict: Optional function to parse CLI dict output
         goals_list_callback: Optional callback to get goals list
+        brain_stats_data: Optional pre-fetched stats dict to avoid spawning CLI
         
     Returns:
         Complete formatted details text
@@ -530,13 +533,38 @@ def build_brain_details_text(
             pass
     
     # Get current brain stats from registry
-    stats_out = run_cli(["brains", "stats", "--store-dir", store_dir])
-    stats_data = parse_cli_dict(stats_out)
-    brain_stats = stats_data.get("brains", {}).get(brain_name, {})
+    stats_data: dict[str, Any] = brain_stats_data or {}
+
+    if not stats_data:
+        if run_cli is not None:
+            stats_out = run_cli(["brains", "stats", "--store-dir", store_dir])
+            if parse_cli_dict is not None:
+                stats_data = parse_cli_dict(stats_out)
+            else:
+                try:
+                    stats_data = json.loads(stats_out)
+                except Exception:
+                    stats_data = {}
+        else:
+            stats_data = {}
+
+    brain_stats: dict[str, Any] = {}
+    if isinstance(stats_data, dict):
+        direct_entry = stats_data.get(brain_name)
+        if isinstance(direct_entry, dict):
+            brain_stats = direct_entry
+        else:
+            brains_section = stats_data.get("brains")
+            if isinstance(brains_section, dict):
+                nested_entry = brains_section.get(brain_name)
+                if isinstance(nested_entry, dict):
+                    brain_stats = nested_entry
     
     # Load training steps (may need to read metrics.jsonl)
     brain_path = os.path.join(store_dir, "actv1", brain_name)
-    training_steps = load_training_steps(brain_path, brain_metadata)
+    training_steps = int(brain_stats.get("training_steps", 0) or brain_metadata.get("training_steps", 0) or 0)
+    if training_steps <= 0:
+        training_steps = load_training_steps(brain_path, brain_metadata)
     
     # Build all sections
     details = []

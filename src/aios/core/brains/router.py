@@ -7,9 +7,12 @@ from typing import Any, Dict, Iterable, List, Optional, Set
 from pathlib import Path
 import hashlib
 import json
+import logging
 import os
 
 from aios.core.brains.registry_core import BrainRegistry
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -117,7 +120,7 @@ class Router:
                                 max_seq_len=trained_max_seq_len,
                             )
                 except Exception as e:
-                    print(f"[Router] Failed to load master {master_name}: {e}")
+                    logger.error(f"[Router] Failed to load master {master_name}: {e}")
             if brain is not None:
                 try:
                     res = brain.run(task)

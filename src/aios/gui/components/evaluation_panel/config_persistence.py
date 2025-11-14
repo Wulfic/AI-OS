@@ -6,18 +6,35 @@ making the YAML config file the single source of truth for evaluation configurat
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 import yaml
 
+logger = logging.getLogger(__name__)
+
 
 def get_config_path() -> Path:
-    """Get the path to the config/default.yaml file.
+    """Get the path to the user's config file, following same logic as CLI.
     
     Returns:
-        Path to config/default.yaml (may not exist yet)
+        Path to user config file (respects AIOS_CONFIG env var, falls back to repo default)
     """
-    # Try current working directory first
+    import os
+    
+    # Check environment variable first (matches CLI behavior)
+    env_path = os.environ.get("AIOS_CONFIG")
+    if env_path:
+        p = Path(env_path)
+        if p.exists():
+            return p
+    
+    # Check user config directory (~/.config/aios/config.yaml)
+    user_config = Path.home() / ".config" / "aios" / "config.yaml"
+    if user_config.exists():
+        return user_config
+    
+    # Fall back to repo default (current working directory)
     config_path = Path.cwd() / "config" / "default.yaml"
     if config_path.exists():
         return config_path
@@ -44,27 +61,36 @@ def load_evaluation_from_config() -> dict[str, Any]:
     """
     try:
         config_path = get_config_path()
+        logger.info(f"Loading evaluation config from {config_path}")
+        
         if not config_path.exists():
+            logger.debug(f"Config file not found: {config_path}")
             return {}
         
         # Use safe_load with timeout protection (YAML parsing can be slow)
         with open(config_path, 'r', encoding='utf-8') as f:
             try:
                 config = yaml.safe_load(f) or {}
-            except yaml.YAMLError:
+            except yaml.YAMLError as e:
                 # Corrupted YAML, return empty
+                logger.error(f"YAML parsing error in config file: {e}")
                 return {}
         
         if not isinstance(config, dict):
+            logger.warning(f"Config file is not a dict: {type(config)}")
             return {}
         
         evaluation = config.get('evaluation', {})
         if not isinstance(evaluation, dict):
+            logger.warning("Evaluation section in config is not a dict")
             return {}
         
+        logger.info("Successfully loaded evaluation config")
+        logger.debug(f"Evaluation config: {evaluation}")
         return evaluation
-    except Exception:
+    except Exception as e:
         # Any file I/O error, return empty config
+        logger.error(f"Failed to load evaluation config: {e}")
         return {}
 
 
@@ -79,6 +105,8 @@ def save_evaluation_to_config(evaluation_values: dict[str, Any]) -> bool:
     """
     try:
         config_path = get_config_path()
+        logger.info(f"Saving evaluation config to {config_path}")
+        logger.debug(f"Evaluation values: {evaluation_values}")
         
         # Ensure config directory exists
         config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -126,9 +154,10 @@ def save_evaluation_to_config(evaluation_values: dict[str, Any]) -> bool:
         with open(config_path, 'w', encoding='utf-8') as f:
             yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
         
+        logger.info("Successfully saved evaluation config")
         return True
     except Exception as e:
-        print(f"[Evaluation] Failed to save config: {e}")
+        logger.error(f"Failed to save evaluation config: {e}", exc_info=True)
         return False
 
 

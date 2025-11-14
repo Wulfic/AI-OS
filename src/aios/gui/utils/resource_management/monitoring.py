@@ -43,6 +43,7 @@ class ResourceMonitor:
         }
         
         if not self._psutil:
+            logger.warning("Metrics collection unavailable: psutil not installed")
             return report
         
         try:
@@ -59,11 +60,11 @@ class ResourceMonitor:
             if platform.system() != "Windows":
                 try:
                     report["open_files"] = len(process.open_files())
-                except Exception:
-                    pass  # May not be available on all platforms
+                except Exception as e:
+                    logger.debug(f"Could not get open files count: {e}")
         
         except Exception as e:
-            logger.warning(f"Failed to get health metrics: {e}")
+            logger.error(f"Metrics collection failed: {e}")
         
         return report
     

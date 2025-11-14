@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from typing import Callable, Dict, Optional, Tuple
 
+import logging
 import torch
 import torch.nn.functional as F
+
+logger = logging.getLogger(__name__)
 
 
 def _sequence_ce_loss(logits: torch.Tensor, targets: torch.Tensor, ignore_index: int = -100) -> torch.Tensor:
@@ -30,7 +33,7 @@ def _sequence_ce_loss(logits: torch.Tensor, targets: torch.Tensor, ignore_index:
     if not torch.isfinite(logits).all():
         nan_count = torch.isnan(logits).sum().item()
         inf_count = torch.isinf(logits).sum().item()
-        print(f"[CE_LOSS] Input logits: {nan_count} NaNs, {inf_count} Infs out of {logits.numel()} values")
+        logger.warning(f"[CE_LOSS] Input logits: {nan_count} NaNs, {inf_count} Infs out of {logits.numel()} values")
         logits = torch.nan_to_num(logits, nan=0.0, posinf=20.0, neginf=-20.0)
     
     # Clip logits to prevent numerical instability with small hidden sizes and large vocab
@@ -39,7 +42,7 @@ def _sequence_ce_loss(logits: torch.Tensor, targets: torch.Tensor, ignore_index:
     
     # Validate targets are in valid range
     if torch.isnan(targets.float()).any() or (targets < -100).any() or (targets >= V).any():
-        print(f"[CE_LOSS] Invalid targets! min={targets.min()}, max={targets.max()}, vocab_size={V}")
+        logger.error(f"[CE_LOSS] Invalid targets! min={targets.min()}, max={targets.max()}, vocab_size={V}")
     
     loss = F.cross_entropy(
         logits_clipped.view(B * S, V), targets.view(B * S), ignore_index=ignore_index, reduction="mean"
@@ -47,7 +50,7 @@ def _sequence_ce_loss(logits: torch.Tensor, targets: torch.Tensor, ignore_index:
     
     # Check loss validity (memory-efficient for scalar)
     if not torch.isfinite(loss):
-        print(f"[CE_LOSS] Output loss is NaN/Inf (input shape={logits.shape}, valid_tokens={num_valid})")
+        logger.error(f"[CE_LOSS] Output loss is NaN/Inf (input shape={logits.shape}, valid_tokens={num_valid})")
         return torch.tensor(0.0, device=logits.device, dtype=torch.float32)
     
     return loss
@@ -104,7 +107,7 @@ def segment_rollout(
     # Validate targets before training
     targets = batch["targets"].to(torch.int64)
     if torch.isnan(targets.float()).any():
-        print(f"[segment_rollout] NaN in targets! Replacing with ignore_index")
+        logger.warning(f"[segment_rollout] NaN in targets! Replacing with ignore_index")
         targets = torch.where(torch.isnan(targets.float()), ignore_index, targets)
     
     # Get vocab_size from model to validate targets
@@ -125,7 +128,7 @@ def segment_rollout(
     if (targets < ignore_index).any() or (targets >= vocab_size).any():
         valid_mask = (targets != ignore_index) & ((targets < 0) | (targets >= vocab_size))
         if valid_mask.any():
-            print(f"[segment_rollout] Invalid target values! min={targets.min()}, max={targets.max()}, vocab_size={vocab_size}")
+            logger.error(f"[segment_rollout] Invalid target values! min={targets.min()}, max={targets.max()}, vocab_size={vocab_size}")
             targets = torch.clamp(targets, min=ignore_index, max=vocab_size - 1)
     batch["targets"] = targets
 
@@ -153,8 +156,8 @@ def segment_rollout(
         
         # Debug: Check CE loss validity
         if torch.isnan(ce).any() or torch.isinf(ce).any():
-            print(f"[segment_rollout] NaN/Inf CE at segment {m}! logits shape={logits.shape}, dtype={logits.dtype}")
-            print(f"[segment_rollout] logits stats: min={logits.min():.2f}, max={logits.max():.2f}, mean={logits.mean():.2f}")
+            logger.error(f"[segment_rollout] NaN/Inf CE at segment {m}! logits shape={logits.shape}, dtype={logits.dtype}")
+            logger.error(f"[segment_rollout] logits stats: min={logits.min():.2f}, max={logits.max():.2f}, mean={logits.mean():.2f}")
             ce = torch.tensor(0.0, device=device, dtype=torch.float32)
         
         total_ce = total_ce + ce
@@ -191,11 +194,11 @@ def segment_rollout(
     
     # Check for NaN/Inf in loss components
     if torch.isnan(total_ce).any() or torch.isinf(total_ce).any():
-        print(f"[segment_rollout] WARNING: NaN/Inf in CE loss: {total_ce}")
+        logger.warning(f"[segment_rollout] WARNING: NaN/Inf in CE loss: {total_ce}")
     if torch.isnan(total_bce_halt).any() or torch.isinf(total_bce_halt).any():
-        print(f"[segment_rollout] WARNING: NaN/Inf in BCE halt loss: {total_bce_halt}")
+        logger.warning(f"[segment_rollout] WARNING: NaN/Inf in BCE halt loss: {total_bce_halt}")
     if torch.isnan(total_bce_continue).any() or torch.isinf(total_bce_continue).any():
-        print(f"[segment_rollout] WARNING: NaN/Inf in BCE continue loss: {total_bce_continue}")
+        logger.warning(f"[segment_rollout] WARNING: NaN/Inf in BCE continue loss: {total_bce_continue}")
 
     metrics = {
         "ce": total_ce,

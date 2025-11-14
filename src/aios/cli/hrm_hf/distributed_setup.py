@@ -1,12 +1,15 @@
 """Distributed training setup (DDP and DeepSpeed)."""
 from __future__ import annotations
 
+import logging
 import os
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Tuple
 
 import torch
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from aios.core.hrm_training.training_config import TrainingConfig
@@ -31,11 +34,15 @@ def initialize_deepspeed(
     """
     zero_stage = config.zero_stage
     
+    logger.info(f"Initializing DeepSpeed with ZeRO stage: {zero_stage}")
+    
     if not zero_stage or zero_stage == "none":
+        logger.debug("DeepSpeed disabled (zero_stage=none)")
         return None, False
     
     dev = str(device_obj).split(':')[0]
     if dev != "cuda":
+        logger.warning(f"DeepSpeed skipped - only CUDA supported, got device: {dev}")
         log_fn({
             "deepspeed": "skipped",
             "reason": "Only CUDA devices supported",
@@ -51,9 +58,11 @@ def initialize_deepspeed(
         if importlib.util.find_spec("deepspeed") is None:
             raise ImportError("deepspeed module not found in path")
         
+        ds_version = getattr(deepspeed, "__version__", "unknown")
+        logger.info(f"DeepSpeed version: {ds_version}")
         log_fn({
             "deepspeed": "import_success",
-            "version": getattr(deepspeed, "__version__", "unknown"),
+            "version": ds_version,
             "note": "Using DeepSpeed without distributed launcher for single-GPU ZeRO"
         })
         
@@ -259,10 +268,14 @@ def handle_windows_zero_multi_gpu(
     Returns:
         Tuple of (ddp_enabled, world_size)
     """
+    logger.debug(f"Checking Windows ZeRO multi-GPU compatibility (os.name={os.name})")
+    
     if os.name != "nt":
+        logger.debug("Not on Windows, no special handling needed")
         return config.ddp, config.world_size
     
     if not config.zero_stage or config.zero_stage == "none":
+        logger.debug("ZeRO not enabled, no special handling needed")
         return config.ddp, config.world_size
     
     # Check if multi-GPU is configured
@@ -273,8 +286,11 @@ def handle_windows_zero_multi_gpu(
         except Exception:
             num_gpus = 0
     
+    logger.debug(f"Detected {num_gpus} GPUs configured")
+    
     if num_gpus > 1 or (config.ddp and config.world_size and config.world_size > 1):
         # Auto-convert to single GPU
+        logger.warning(f"Windows ZeRO multi-GPU incompatibility detected: Converting to single GPU (first device)")
         log_fn({
             "windows_zero_multi_gpu_detected": True,
             "action": "auto_convert_to_single_gpu",
@@ -291,6 +307,7 @@ def handle_windows_zero_multi_gpu(
         if config.cuda_ids:
             first_gpu = str(config.cuda_ids).split(",")[0].strip()
             os.environ["CUDA_VISIBLE_DEVICES"] = first_gpu
+            logger.info(f"Set CUDA_VISIBLE_DEVICES={first_gpu} (first GPU only)")
         
         log_fn({
             "note": "To use multi-GPU on Windows, disable ZeRO and use standard DDP"
@@ -298,6 +315,7 @@ def handle_windows_zero_multi_gpu(
         
         return False, 1
     
+    logger.debug("Windows ZeRO configuration is compatible")
     return config.ddp, config.world_size
 
 
@@ -327,6 +345,7 @@ def ensure_model_on_device(
     )
     
     if will_use_zero3:
+        logger.info("Keeping model on CPU for ZeRO-3 initialization")
         log_fn({
             "model_placement": "cpu",
             "reason": "ZeRO-3 will handle GPU placement during initialization"
@@ -337,11 +356,14 @@ def ensure_model_on_device(
     try:
         first_param = next(model.parameters())
         if first_param.device.type == str(device_obj).split(':')[0]:
+            logger.debug(f"Model already on {device_obj}")
             return model
     except StopIteration:
+        logger.warning("Model has no parameters to check device placement")
         pass
     
     # Move to device
+    logger.info(f"Moving model to {device_obj}")
     model.to(device_obj)
     log_fn({
         "model_placement": str(device_obj),

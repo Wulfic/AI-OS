@@ -1,12 +1,15 @@
 """Configuration validation and processing."""
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Any
 
 if TYPE_CHECKING:
     from aios.core.hrm_training.training_config import TrainingConfig
+
+logger = logging.getLogger(__name__)
 
 
 def extract_and_log_config(config: "TrainingConfig", log_fn) -> dict:
@@ -123,6 +126,7 @@ def setup_cuda_devices(cuda_ids: Optional[str], log_fn) -> None:
         log_fn: Logging function
     """
     if not cuda_ids:
+        logger.debug("No CUDA device IDs specified, using default device selection")
         return
     
     try:
@@ -130,11 +134,13 @@ def setup_cuda_devices(cuda_ids: Optional[str], log_fn) -> None:
             str(int(x)) for x in str(cuda_ids).split(",") if str(x).strip() != ""
         ]
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(device_list)
+        logger.info(f"CUDA_VISIBLE_DEVICES set to: {','.join(device_list)}")
         log_fn({
             "cuda_devices": device_list,
             "note": "CUDA_VISIBLE_DEVICES set"
         })
     except Exception as e:
+        logger.warning(f"Failed to set CUDA_VISIBLE_DEVICES from '{cuda_ids}': {e}")
         log_fn({
             "cuda_devices": "error",
             "cuda_ids": cuda_ids,
@@ -156,11 +162,17 @@ def validate_dependencies(log_fn) -> bool:
         from pathlib import Path
         import torch
         
+        logger.info(f"Validating dependencies - torch version: {torch.__version__}")
+        logger.debug(f"PyTorch CUDA available: {torch.cuda.is_available()}")
+        
         # Suppress deprecation warnings BEFORE importing transformers
         _warnings.filterwarnings("ignore", message=".*TRANSFORMERS_CACHE.*", category=FutureWarning)
         _warnings.filterwarnings("ignore", message=".*weights_only.*", category=FutureWarning)
         
         from transformers import AutoTokenizer, AutoModelForCausalLM
+        import transformers
+        
+        logger.info(f"Transformers version: {transformers.__version__}")
         
         # Suppress noisy deprecation warnings from Transformers
         try:
@@ -172,9 +184,11 @@ def validate_dependencies(log_fn) -> bool:
         from aios.core.hrm_models import build_act_v1
         from aios.core.hrm_models.auto_chunking import auto_chunked_segment_rollout
         
+        logger.info("All required dependencies validated successfully")
         return True
         
     except Exception as e:
+        logger.error(f"Dependency validation failed: {e}")
         log_fn({
             "started": False,
             "error": f"Missing deps: {e}",
@@ -206,6 +220,8 @@ def setup_output_directory(
     
     out_dir_path = None
     
+    logger.debug(f"Setting up output directory - brain_name: {brain_name}, bundle_dir: {bundle_dir}")
+    
     log_fn({
         "setup_output_directory": "called",
         "brain_name": brain_name,
@@ -226,6 +242,8 @@ def setup_output_directory(
             # Always prefer saving artifacts into the bundle dir
             save_dir = str(out_dir_path)
             
+            logger.info(f"Output directory created: {out_dir_path} (log_file: {log_file})")
+            
             log_fn({
                 "output_directory": str(out_dir_path),
                 "log_file": log_file,
@@ -233,11 +251,14 @@ def setup_output_directory(
                 "note": "Brain artifacts will be saved to bundle directory"
             })
         except Exception as e:
+            logger.warning(f"Failed to create output directory for brain '{brain_name}': {e}, falling back to {save_dir}")
             log_fn({
                 "output_directory": "error",
                 "error": str(e),
                 "fallback": save_dir
             })
             out_dir_path = None
+    else:
+        logger.debug("No brain_name specified, using default save_dir")
     
     return out_dir_path, save_dir, log_file

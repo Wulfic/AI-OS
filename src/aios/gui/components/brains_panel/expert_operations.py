@@ -5,6 +5,7 @@ All expert action methods extracted as functions.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional, cast
 
 try:  # pragma: no cover
@@ -12,6 +13,8 @@ try:  # pragma: no cover
 except Exception:  # pragma: no cover
     messagebox = cast(Any, None)
     simpledialog = cast(Any, None)
+
+logger = logging.getLogger(__name__)
 
 
 def get_selected_expert_id(panel: Any) -> Optional[str]:
@@ -49,10 +52,13 @@ def create_expert(panel: Any) -> None:
     # Get expert details from user
     name = simpledialog.askstring("Create Expert", "Expert name:")
     if not name:
+        logger.debug("User cancelled expert creation (no name provided)")
         return
     
     category = simpledialog.askstring("Create Expert", "Category (e.g., Programming, Math):") or "General"
     description = simpledialog.askstring("Create Expert", "Description:") or ""
+    
+    logger.info(f"User action: Create expert - name='{name}', category='{category}'")
     
     # Expert creation via GUI - CLI integration pending
     panel._append_out(
@@ -60,6 +66,7 @@ def create_expert(panel: Any) -> None:
         f"[experts] Note: CLI integration for expert creation is in development"
     )
     
+    logger.warning("Expert creation via GUI not yet implemented - requires CLI integration")
     messagebox.showinfo("Create Expert", "Expert creation via GUI is under development.\n"
                                          "Use CLI commands for expert management.")
 
@@ -80,12 +87,16 @@ def delete_expert(panel: Any) -> None:
     # Confirm
     ok = messagebox.askyesno("Delete Expert", f"Are you sure you want to delete expert {expert_id[:8]}...?")
     if not ok:
+        logger.info(f"User cancelled deletion of expert {expert_id}")
         return
+    
+    logger.info(f"User action: Delete expert {expert_id}")
     
     # Expert deletion via GUI - CLI integration pending
     panel._append_out(f"[experts] Delete expert: {expert_id}\n"
                      f"[experts] Note: CLI integration for expert deletion is in development")
     
+    logger.warning("Expert deletion via GUI not yet implemented - requires CLI integration")
     messagebox.showinfo("Delete Expert", "Expert deletion via GUI is under development.\n"
                                         "Use CLI commands for expert management.")
 
@@ -106,10 +117,13 @@ def set_expert_status(panel: Any, action: str) -> None:
         messagebox.showwarning("Set Status", "Please select an expert first.")
         return
     
+    logger.info(f"User action: Set expert status - expert={expert_id}, action={action}")
+    
     # Expert status management via GUI - CLI integration pending
     panel._append_out(f"[experts] Set status: expert={expert_id[:8]}..., action={action}\n"
                      f"[experts] Note: CLI integration for expert status is in development")
     
+    logger.warning(f"Expert {action} via GUI not yet implemented - requires CLI integration")
     messagebox.showinfo("Set Status", f"Expert {action} via GUI is under development.\n"
                                      "Use CLI commands for expert management.")
 

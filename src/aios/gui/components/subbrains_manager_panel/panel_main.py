@@ -9,6 +9,9 @@ Provides a Tkinter panel for managing dynamic subbrains (experts) with:
 
 from __future__ import annotations
 
+# Import safe variable wrappers
+from ...utils import safe_variables
+
 import os
 from typing import Any, Callable, Optional, cast
 
@@ -83,13 +86,13 @@ class SubbrainsManagerPanel(ttk.LabelFrame):  # type: ignore[misc]
         )
         
         # Create UI state variables
-        self.total_experts_var = tk.StringVar(value="0")
-        self.active_experts_var = tk.StringVar(value="0")
-        self.frozen_experts_var = tk.StringVar(value="0")
-        self.total_activations_var = tk.StringVar(value="0")
-        self.parent_expert_var = tk.StringVar(value="")
-        self.link_goal_var = tk.StringVar(value="")
-        self.goals_count_var = tk.StringVar(value="No expert selected")
+        self.total_experts_var = safe_variables.StringVar(value="0")
+        self.active_experts_var = safe_variables.StringVar(value="0")
+        self.frozen_experts_var = safe_variables.StringVar(value="0")
+        self.total_activations_var = safe_variables.StringVar(value="0")
+        self.parent_expert_var = safe_variables.StringVar(value="")
+        self.link_goal_var = safe_variables.StringVar(value="")
+        self.goals_count_var = safe_variables.StringVar(value="No expert selected")
         
         # Create UI sections
         create_summary_section(

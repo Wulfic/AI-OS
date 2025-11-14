@@ -11,11 +11,11 @@ This module orchestrates the training start process:
 
 from __future__ import annotations
 import os
-import threading
 from typing import Any
 from multiprocessing import Manager
 
 from .process_manager import launch_training_process
+from ....utils.resource_management import submit_background
 
 
 def on_start(panel: Any) -> None:
@@ -127,8 +127,17 @@ def on_start(panel: Any) -> None:
     def _launch_bg():
         launch_training_process(panel, args, config, stop_event, graceful_stop_event)
 
-    panel._bg_thread = threading.Thread(target=_launch_bg, daemon=True)
-    panel._bg_thread.start()
+    panel._bg_thread = None
+    try:
+        panel._bg_future = submit_background(
+            "hrm-start",
+            _launch_bg,
+            pool=getattr(panel, "_worker_pool", None),
+        )
+    except RuntimeError as exc:
+        panel._log(f"[hrm] Failed to queue training start: {exc}")
+        panel._bg_future = None
+        _launch_bg()
 
 
 def _auto_detect_gpus_if_needed(panel: Any) -> None:
@@ -416,17 +425,48 @@ def _auto_add_default_goal(panel: Any, config: Any) -> None:
         on_goals_list = getattr(panel, '_on_goals_list_for_brain', None)
 
         if callable(on_goal_add) and callable(on_goals_list):
-            # Check if goal already exists
-            existing_goals = on_goals_list(config.brain_name)
-            if existing_goals is None or not isinstance(existing_goals, list):
-                existing_goals = []
-            goal_exists = any(config.default_goal in str(g) for g in existing_goals)
-
-            if not goal_exists:
+            def _evaluate_and_add(goals: list[Any]) -> None:
+                goal_exists = any(config.default_goal in str(g) for g in (goals or []))
+                if goal_exists:
+                    panel._log(f"[hrm] Default goal already exists for brain '{config.brain_name}'")
+                    return
                 panel._log(f"[hrm] Auto-adding default goal to brain '{config.brain_name}': {config.default_goal[:60]}...")
-                on_goal_add(config.brain_name, config.default_goal)
+                try:
+                    result = on_goal_add(config.brain_name, config.default_goal)
+                    if hasattr(result, "add_done_callback"):
+                        def _on_done(fut):
+                            try:
+                                fut.result()
+                            except Exception as exc:  # pragma: no cover - defensive
+                                panel._log(f"[hrm] Auto-goal add failed: {exc}")
+
+                        result.add_done_callback(_on_done)  # type: ignore[call-arg]
+                except Exception as exc:
+                    panel._log(f"[hrm] Auto-goal add failed: {exc}")
+
+            try:
+                existing_goals = on_goals_list(config.brain_name)
+            except Exception as exc:
+                panel._log(f"[hrm] Could not fetch existing goals: {exc}")
+                existing_goals = []
+
+            if isinstance(existing_goals, list):
+                _evaluate_and_add(existing_goals)
+            elif hasattr(existing_goals, "add_done_callback"):
+                def _on_goals_ready(fut):
+                    try:
+                        goals_list = fut.result()
+                    except Exception as exc:  # pragma: no cover - defensive
+                        panel._log(f"[hrm] Could not fetch existing goals: {exc}")
+                        return
+                    try:
+                        panel.after(0, lambda: _evaluate_and_add(goals_list))
+                    except Exception:
+                        _evaluate_and_add(goals_list)
+
+                existing_goals.add_done_callback(_on_goals_ready)  # type: ignore[call-arg]
             else:
-                panel._log(f"[hrm] Default goal already exists for brain '{config.brain_name}'")
+                _evaluate_and_add([])
     except Exception as e:
         panel._log(f"[hrm] Note: Could not auto-add goal: {e}")
 

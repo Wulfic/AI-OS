@@ -1,16 +1,22 @@
 """Download manager for datasets.
 
-Provides threaded download functionality with progress tracking.
+Dispatches downloads via the shared worker pool with progress tracking.
 """
 
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import threading
 import time
 import urllib.request as _urlreq
-from typing import Any
+from concurrent.futures import Future
+from typing import Any, Optional
+
+from ...utils.resource_management import submit_background
+
+logger = logging.getLogger(__name__)
 
 
 def start_dataset_download(
@@ -26,8 +32,8 @@ def start_dataset_download(
     dataset_path_var: Any,
     log_callback: Any,
     append_out_callback: Any,
-) -> threading.Thread:
-    """Start a dataset download in a background thread.
+) -> Optional[Future]:
+    """Start a dataset download in the shared worker pool.
     
     Args:
         name: Dataset name for logging
@@ -43,8 +49,9 @@ def start_dataset_download(
         append_out_callback: Callback for debug output
         
     Returns:
-        The started download thread
+        Future for the queued download task, or None if dispatch failed
     """
+    logger.info(f"User action: Starting dataset download '{name}' from {url} to {dest}")
     log_callback(f"Downloading: {name}\n{url}\n→ {dest}")
     
     try:
@@ -86,9 +93,11 @@ def start_dataset_download(
                 cl = r.headers.get("Content-Length")
                 if cl and cl.isdigit():
                     total = int(cl)
+                    logger.debug(f"Download size known: {total / (1024*1024):.2f} MB for '{name}'")
                     _update_progress_ui(mode="determinate", value=0, status="Downloading...")
                     log_callback(f"Download started: {read_bytes}/{total} bytes")
                 else:
+                    logger.debug(f"Download size unknown for '{name}', using indeterminate progress")
                     _update_progress_ui(mode="indeterminate", status="Downloading...", start_indeterminate=True)
                     log_callback("Download started (size unknown)")
                 
@@ -96,6 +105,7 @@ def start_dataset_download(
                 last_log_bytes = 0
                 while True:
                     if download_cancel_event.is_set():
+                        logger.info(f"Dataset download cancelled by user: '{name}'")
                         raise RuntimeError("cancelled")
                     buf = r.read(chunk)
                     if not buf:
@@ -122,8 +132,42 @@ def start_dataset_download(
                         _update_progress_ui(value=pct, status=f"{pct}%  ETA {int(eta)}s")
             os.replace(dest + ".part", dest)
         except Exception as e:
-            log_callback(f"Download error: {e}")
-            append_out_callback(f"[error] Dataset download error: {e}")
+            error_context = f"Dataset download failed for '{name}'"
+            
+            # Provide contextual error messages and suggestions
+            if "cancelled" in str(e).lower():
+                suggestion = "Download was cancelled by user"
+                severity = "info"
+            elif "connection" in str(e).lower() or "network" in str(e).lower():
+                suggestion = "Network connection failed. Check your internet connection and try again"
+                severity = "error"
+            elif "timeout" in str(e).lower():
+                suggestion = "Connection timed out. Check your internet speed and firewall settings"
+                severity = "error"
+            elif "404" in str(e) or "not found" in str(e).lower():
+                suggestion = "Dataset URL not found (404). The dataset may have been moved or removed"
+                severity = "error"
+            elif "403" in str(e) or "forbidden" in str(e).lower():
+                suggestion = "Access forbidden (403). Authentication may be required for this dataset"
+                severity = "error"
+            elif "disk" in str(e).lower() or "space" in str(e).lower() or "no space" in str(e).lower():
+                suggestion = "Insufficient disk space. Free up space and try again"
+                severity = "error"
+            elif "permission" in str(e).lower() or "access denied" in str(e).lower():
+                suggestion = "Permission denied. Check write permissions for the datasets directory"
+                severity = "error"
+            else:
+                suggestion = "Check your internet connection, disk space, and try again"
+                severity = "error"
+            
+            if severity == "error":
+                logger.error(f"{error_context}: {e}. Suggestion: {suggestion}", exc_info=True)
+            else:
+                logger.info(f"{error_context}: {e}")
+            
+            log_callback(f"Download error: {e}\nSuggestion: {suggestion}")
+            append_out_callback(f"[error] Dataset download error: {e}\nSuggestion: {suggestion}")
+            
             try:
                 if os.path.exists(dest + ".part"):
                     os.remove(dest + ".part")
@@ -148,6 +192,8 @@ def start_dataset_download(
         
         # Success path
         h = sha.hexdigest()
+        elapsed = time.time() - start_ts
+        logger.info(f"Dataset download complete: '{name}' ({read_bytes / (1024*1024):.2f} MB in {elapsed:.1f}s, sha256={h[:16]}...)")
         log_callback(f"Download complete!\nsha256={h}\nFile: {dest}")
         
         def _cleanup_ui_success():
@@ -169,6 +215,30 @@ def start_dataset_download(
         except Exception:
             _cleanup_ui_success()
 
-    download_thread = threading.Thread(target=_dl, daemon=True)
-    download_thread.start()
-    return download_thread
+    try:
+        future = submit_background(
+            f"dataset-download-{name}",
+            _dl,
+        )
+        return future
+    except RuntimeError as exc:
+        logger.error("Failed to queue dataset download '%s': %s", name, exc)
+
+        def _reset_ui() -> None:
+            try:
+                progress_widget.stop()
+                progress_widget.configure(mode="determinate", value=0)
+                progress_status_var.set("Idle")
+                btn_download.configure(state="normal")
+                btn_cancel.configure(state="disabled")
+            except Exception:
+                pass
+
+        try:
+            progress_widget.after(0, _reset_ui)
+        except Exception:
+            _reset_ui()
+
+        log_callback(f"Download failed to start: {exc}")
+        append_out_callback(f"[error] Unable to queue dataset download: {exc}")
+        return None

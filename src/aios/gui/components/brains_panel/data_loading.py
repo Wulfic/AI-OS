@@ -6,31 +6,55 @@ Fetches data from CLI and populates tree widgets.
 from __future__ import annotations
 
 import json
+import logging
 import os
+import threading
+import traceback
 from typing import Any
+
+from ...services.brain_registry_service import get_brain_stats
+
+
+logger = logging.getLogger(__name__)
+
+
+def _run_on_main_thread(panel: Any, callback) -> None:
+    """Execute callback on Tk main thread, scheduling via `after` if needed."""
+    try:
+        if threading.current_thread() is threading.main_thread():
+            callback()
+        else:
+            panel.after(0, callback)
+    except Exception as schedule_err:
+        message = str(schedule_err)
+        if "main thread is not in main loop" in message:
+            try:
+                pending = getattr(panel, "_startup_callbacks")
+            except AttributeError:
+                pending = []
+                setattr(panel, "_startup_callbacks", pending)
+            pending.append(callback)
+            logger.debug("Queued brains panel UI callback until main loop starts")
+        else:
+            logger.warning("Failed to schedule brains panel UI update: %s", schedule_err)
 
 
 def refresh_brains_data(panel: Any) -> list[str]:
-    """Fetch and display brains data in tree widget.
-    
-    Args:
-        panel: BrainsPanel instance
-        
-    Returns:
-        List of brain names loaded
-    """
-    from .helpers import is_temporary_brain, load_training_steps, parse_cli_dict, scan_actv1_bundles
-    
-    names = []
-    
+    """Fetch brains data and update the UI safely."""
+    from .helpers import (
+        is_temporary_brain,
+        load_training_steps,
+        scan_actv1_bundles,
+    )
+
+    names: list[str] = []
+
     try:
-        raw = panel._run_cli(["brains", "stats", "--store-dir", panel._store_dir]) or "{}"
-        data = parse_cli_dict(raw)
+        data = get_brain_stats(panel._store_dir)
         brains = data.get("brains") if isinstance(data, dict) else {}
         if not isinstance(brains, dict):
             brains = {}
-        
-        # Merge in ACTV1 bundle directories (same source as Select Student dialog)
+
         try:
             actv1_base = os.path.join(panel._project_root, "artifacts", "brains", "actv1")
             actv1_brains = scan_actv1_bundles(actv1_base)
@@ -39,144 +63,151 @@ def refresh_brains_data(panel: Any) -> list[str]:
                     brains[entry] = info
         except Exception:
             pass
-        
-        # Filter out temporary/internal brains
+
         brains = {k: v for k, v in brains.items() if not is_temporary_brain(k)}
-        
-        # Summary
-        names = sorted(list(brains.keys()))
-        panel.brain_count_var.set(str(len(names)))
+
+        names = sorted(brains.keys())
         used_bytes = int(data.get("used_bytes", 0) or 0)
         total_mb = float(used_bytes) / (1024.0 * 1024.0)
         total_params_m = float(used_bytes) / 4.0 / 1_000_000.0 if used_bytes > 0 else 0.0
-        panel.total_mb_var.set(f"{total_mb:.2f}")
-        panel.total_params_m_var.set(f"{total_params_m:.3f}")
-        
-        # Table
-        for item in panel.tree.get_children():
-            panel.tree.delete(item)
-        
-        for n in names:
+
+        table_rows: list[tuple[str, ...]] = []
+        error_messages: list[str] = []
+
+        for brain_name in names:
             try:
-                info = brains.get(n) or {}
+                info = brains.get(brain_name) or {}
                 size_b = int(info.get("size_bytes", 0) or 0)
                 size_mb = float(size_b) / (1024.0 * 1024.0)
                 params_m = float(size_b) / 4.0 / 1_000_000.0 if size_b > 0 else 0.0
                 pinned = bool(info.get("pinned", False))
                 master = bool(info.get("master", False))
                 parent = info.get("parent") or ""
-                children = []
+                children: list[str] = []
                 try:
                     ch = info.get("children")
                     if isinstance(ch, list):
                         children = [str(c) for c in ch]
                 except Exception:
                     children = []
-                
+
                 rel = f"p:{parent}" if parent else ""
                 if children:
                     rel = (rel + ("; " if rel else "")) + "kids:" + ",".join(children[:5])
                     if len(children) > 5:
-                        rel += "…"
-                
-                # Get training steps (with metrics.jsonl fallback)
+                        rel += "..."
+
                 training_steps = int(info.get("training_steps", 0) or 0)
                 brain_metadata = None
                 if training_steps == 0:
                     try:
-                        # Try actv1 bundle directory first
-                        actv1_brain_path = os.path.join(panel._store_dir, "actv1", n)
+                        actv1_brain_path = os.path.join(panel._store_dir, "actv1", brain_name)
                         if os.path.isdir(actv1_brain_path):
                             meta_path = os.path.join(actv1_brain_path, "brain.json")
                             if os.path.exists(meta_path):
-                                with open(meta_path, "r", encoding="utf-8") as f:
-                                    brain_metadata = json.load(f)
+                                with open(meta_path, "r", encoding="utf-8") as brain_file:
+                                    brain_metadata = json.load(brain_file)
                                 training_steps = load_training_steps(actv1_brain_path, brain_metadata)
                         else:
-                            # Fallback: legacy direct path
-                            brain_path = os.path.join(panel._store_dir, n)
+                            brain_path = os.path.join(panel._store_dir, brain_name)
                             if os.path.isdir(brain_path):
                                 meta_path = os.path.join(brain_path, "brain.json")
                                 if os.path.exists(meta_path):
-                                    with open(meta_path, "r", encoding="utf-8") as f:
-                                        brain_metadata = json.load(f)
+                                    with open(meta_path, "r", encoding="utf-8") as brain_file:
+                                        brain_metadata = json.load(brain_file)
                                     training_steps = load_training_steps(brain_path, brain_metadata)
                     except Exception:
                         pass
-                
-                # Calculate params from architecture if file size is too small or metadata available
-                params_m = float(size_b) / 4.0 / 1_000_000.0 if size_b > 0 else 0.0
+
                 if params_m < 0.01 and brain_metadata is not None:
-                    # Try to calculate from architecture
                     from .helpers import calculate_params_from_metadata
+
                     calculated_params = calculate_params_from_metadata(brain_metadata)
                     if calculated_params > 0:
                         params_m = calculated_params / 1_000_000.0
-                        # Also update size estimate based on params (4 bytes per param for float32)
                         size_b = int(calculated_params * 4)
                         size_mb = float(size_b) / (1024.0 * 1024.0)
-                
+
                 last_used = info.get("last_used") or ""
                 values_tuple = (
-                    n,
+                    brain_name,
                     f"{size_mb:.2f}",
                     f"{params_m:.3f}",
-                    ("yes" if pinned else ""),
-                    ("yes" if master else ""),
+                    "yes" if pinned else "",
+                    "yes" if master else "",
                     rel,
-                    f"{training_steps:,}",  # Format with thousands separator
+                    f"{training_steps:,}",
                     str(last_used),
                 )
-                panel.tree.insert("", "end", values=values_tuple)
-            except Exception as e:
-                panel._append_out(f"[brains] Error processing brain {n}: {e}")
-                continue
-    except Exception as e:
-        # Report error instead of silently failing
-        panel._append_out(f"[brains] Refresh failed: {e}")
-        import traceback
-        panel._append_out(traceback.format_exc())
-    
+                table_rows.append(values_tuple)
+            except Exception as brain_err:
+                error_messages.append(f"[brains] Error processing brain {brain_name}: {brain_err}")
+
+        def apply_success() -> None:
+            try:
+                try:
+                    panel._brain_stats_cache = data  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+
+                panel.brain_count_var.set(str(len(names)))
+                panel.total_mb_var.set(f"{total_mb:.2f}")
+                panel.total_params_m_var.set(f"{total_params_m:.3f}")
+
+                for item in panel.tree.get_children():
+                    panel.tree.delete(item)
+                for row in table_rows:
+                    panel.tree.insert("", "end", values=row)
+
+                for message in error_messages:
+                    panel._append_out(message)
+            except Exception as ui_err:
+                logger.warning("Failed to apply brains data to UI: %s", ui_err)
+
+        _run_on_main_thread(panel, apply_success)
+
+    except Exception as exc:
+        tb = traceback.format_exc()
+
+        def apply_error() -> None:
+            try:
+                panel._append_out(f"[brains] Refresh failed: {exc}")
+                panel._append_out(tb)
+                try:
+                    panel._brain_stats_cache = {}  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+            except Exception as ui_err:
+                logger.warning("Failed to report brains refresh error: %s", ui_err)
+
+        _run_on_main_thread(panel, apply_error)
+
     return names
 
 
 def refresh_experts_data(panel: Any) -> None:
-    """Fetch and display experts data in tree widget.
-    
-    Args:
-        panel: BrainsPanel instance
-    """
+    """Fetch and display experts data in tree widget."""
     try:
-        # Load expert registry
         if os.path.exists(panel._registry_path):
-            with open(panel._registry_path, "r", encoding="utf-8") as f:
-                registry_data = json.load(f)
-            
+            with open(panel._registry_path, "r", encoding="utf-8") as registry_file:
+                registry_data = json.load(registry_file)
             experts = registry_data.get("experts", [])
         else:
             experts = []
-        
-        # Update summary stats
+
         total = len(experts)
-        active = sum(1 for e in experts if e.get("is_active", False))
-        frozen = sum(1 for e in experts if e.get("is_frozen", False))
-        total_acts = sum(e.get("total_activations", 0) for e in experts)
-        
-        panel.total_experts_var.set(str(total))
-        panel.active_experts_var.set(str(active))
-        panel.frozen_experts_var.set(str(frozen))
-        panel.total_activations_var.set(str(total_acts))
-        
-        # Update experts tree
-        for item in panel.experts_tree.get_children():
-            panel.experts_tree.delete(item)
-        
+        active = sum(1 for expert in experts if expert.get("is_active", False))
+        frozen = sum(1 for expert in experts if expert.get("is_frozen", False))
+        total_activations = sum(expert.get("total_activations", 0) for expert in experts)
+
+        rows: list[tuple[tuple[str, ...], str]] = []
+        error_messages: list[str] = []
+
         for expert in experts:
             try:
                 name = expert.get("name", "Unnamed")
                 category = expert.get("category", "")
-                
-                # Status
+
                 is_active = expert.get("is_active", False)
                 is_frozen = expert.get("is_frozen", False)
                 if is_frozen:
@@ -185,16 +216,13 @@ def refresh_experts_data(panel: Any) -> None:
                     status = "Active"
                 else:
                     status = "Inactive"
-                
-                # Metrics
+
                 activations = expert.get("total_activations", 0)
                 avg_weight = expert.get("avg_routing_weight", 0.0)
-                
-                # Goals
+
                 goals = expert.get("goals", [])
-                goals_display = f"{len(goals)} linked" if goals else "—"
-                
-                # Hierarchy
+                goals_display = f"{len(goals)} linked" if goals else "--"
+
                 parent = expert.get("parent_expert_id") or ""
                 children = expert.get("child_expert_ids", [])
                 hierarchy = ""
@@ -203,8 +231,8 @@ def refresh_experts_data(panel: Any) -> None:
                 if children:
                     hierarchy += ("; " if hierarchy else "") + f"{len(children)} child(ren)"
                 if not hierarchy:
-                    hierarchy = "—"
-                
+                    hierarchy = "--"
+
                 values = (
                     name,
                     category,
@@ -212,18 +240,44 @@ def refresh_experts_data(panel: Any) -> None:
                     str(activations),
                     f"{avg_weight:.3f}",
                     goals_display,
-                    hierarchy
+                    hierarchy,
                 )
-                
-                # Store expert_id as item tag for later retrieval
+
                 expert_id = expert.get("expert_id", "")
-                panel.experts_tree.insert("", "end", values=values, tags=(expert_id,))
-                
-            except Exception as e:
-                panel._append_out(f"[experts] Error displaying expert: {e}")
-                continue
-        
-    except Exception as e:
-        panel._append_out(f"[experts] Refresh failed: {e}")
-        import traceback
-        panel._append_out(traceback.format_exc())
+                rows.append((values, expert_id))
+            except Exception as expert_err:
+                error_messages.append(f"[experts] Error displaying expert: {expert_err}")
+
+        def apply_success() -> None:
+            try:
+                panel.total_experts_var.set(str(total))
+                panel.active_experts_var.set(str(active))
+                panel.frozen_experts_var.set(str(frozen))
+                panel.total_activations_var.set(str(total_activations))
+
+                for item in panel.experts_tree.get_children():
+                    panel.experts_tree.delete(item)
+                for values, expert_id in rows:
+                    if expert_id:
+                        panel.experts_tree.insert("", "end", values=values, tags=(expert_id,))
+                    else:
+                        panel.experts_tree.insert("", "end", values=values)
+
+                for message in error_messages:
+                    panel._append_out(message)
+            except Exception as ui_err:
+                logger.warning("Failed to apply experts data to UI: %s", ui_err)
+
+        _run_on_main_thread(panel, apply_success)
+
+    except Exception as exc:
+        tb = traceback.format_exc()
+
+        def apply_error() -> None:
+            try:
+                panel._append_out(f"[experts] Refresh failed: {exc}")
+                panel._append_out(tb)
+            except Exception as ui_err:
+                logger.warning("Failed to report experts refresh error: %s", ui_err)
+
+        _run_on_main_thread(panel, apply_error)

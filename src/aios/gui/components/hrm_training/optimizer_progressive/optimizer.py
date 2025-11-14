@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+import logging
 from pathlib import Path
 from typing import Dict, Any, List
 
@@ -11,6 +12,8 @@ from aios.utils.optimization_cleanup import cleanup_on_startup
 from .models import OptimizationConfig, OptimizationLevel
 from .level_factory import create_optimization_levels, create_exhaustive_levels
 from .batch_tester import test_single_batch
+
+logger = logging.getLogger(__name__)
 
 
 class ProgressiveOptimizer:
@@ -60,14 +63,14 @@ class ProgressiveOptimizer:
         )
         
     def log(self, message: str):
-        """Log message via callback or print."""
+        """Log message via callback or logger."""
         timestamp = time.strftime("%H:%M:%S")
         full_msg = f"[{timestamp}] {message}"
         
         if self.config.log_callback:
             self.config.log_callback(full_msg)
         else:
-            print(full_msg)
+            logger.info(message)
     
     def is_stop_requested(self) -> bool:
         """Check if user requested stop."""

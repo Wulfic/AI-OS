@@ -7,6 +7,11 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Any
 
+from ...utils.resource_management import submit_background
+
+# Import safe variable wrappers
+from ...utils import safe_variables
+
 if TYPE_CHECKING:
     from .panel_main import HRMTrainingPanel
 
@@ -71,10 +76,15 @@ def schedule_save(panel: HRMTrainingPanel, delay_ms: int = 400) -> None:
                 panel.after_cancel(panel._save_after_id)
             except Exception:
                 pass
-        panel._save_after_id = panel.after(
-            delay_ms, 
-            lambda: panel._save_state_fn() if callable(panel._save_state_fn) else None
-        )
+        def _trigger_save() -> None:
+            panel._save_after_id = None
+            try:
+                if callable(panel._save_state_fn):
+                    panel._save_state_fn()
+            except Exception:
+                pass
+
+        panel._save_after_id = panel.after(delay_ms, _trigger_save)
     except Exception:
         pass
 
@@ -90,7 +100,7 @@ def mk_bool(val: bool) -> Any:
     """
     try:
         import tkinter as tk
-        return tk.BooleanVar(value=val)
+        return safe_variables.BooleanVar(value=val)
     except Exception:  # pragma: no cover - headless
         class _B:
             def __init__(self, v): 
@@ -381,12 +391,17 @@ def auto_calculate_steps(panel: HRMTrainingPanel) -> None:
                     panel._auto_steps_calculating = False
                 panel.after(0, _show_error)
         
-        # Run in worker pool if available, otherwise in thread
-        if panel._worker_pool:
-            panel._worker_pool.submit(_count_and_update)
-        else:
-            import threading
-            threading.Thread(target=_count_and_update, daemon=True).start()
+        try:
+            submit_background(
+                "hrm-auto-steps",
+                _count_and_update,
+                pool=getattr(panel, "_worker_pool", None),
+            )
+        except RuntimeError as exc:
+            log(panel, f"[Auto Steps] Queue error: {exc}")
+            if hasattr(panel, '_auto_steps_btn'):
+                panel._auto_steps_btn.config(state="normal", text="Auto")
+            panel._auto_steps_calculating = False
     
     except Exception as e:
         log(panel, f"[Auto Steps] Error: {e}")

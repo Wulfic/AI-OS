@@ -4,11 +4,15 @@ Delegates to hrm_training package helpers for start, stop, select, optimize acti
 """
 
 from __future__ import annotations
-import threading
+import logging
 from typing import TYPE_CHECKING
+
+from ...utils.resource_management import submit_background
 
 if TYPE_CHECKING:
     from .panel_main import HRMTrainingPanel
+
+logger = logging.getLogger(__name__)
 
 
 def on_start_wrapper(panel: HRMTrainingPanel) -> None:
@@ -17,6 +21,7 @@ def on_start_wrapper(panel: HRMTrainingPanel) -> None:
     Args:
         panel: The HRMTrainingPanel instance
     """
+    logger.info("User action: Start HRM training")
     from ..hrm_training import on_start as _on_start_helper
     _on_start_helper(panel)
 
@@ -27,6 +32,7 @@ def on_stop_wrapper(panel: HRMTrainingPanel) -> None:
     Args:
         panel: The HRMTrainingPanel instance
     """
+    logger.info("User action: Stop HRM training")
     from ..hrm_training import on_stop as _on_stop_helper
     _on_stop_helper(panel)
 
@@ -37,6 +43,7 @@ def stop_all_wrapper(panel: HRMTrainingPanel) -> None:
     Args:
         panel: The HRMTrainingPanel instance
     """
+    logger.info("User action: Stop all HRM training processes")
     from ..hrm_training import stop_all as _stop_all_helper
     _stop_all_helper(panel)
 
@@ -47,6 +54,7 @@ def on_select_student(panel: HRMTrainingPanel) -> None:
     Args:
         panel: The HRMTrainingPanel instance
     """
+    logger.debug("Opening student brain selection dialog")
     from ..hrm_training import select_student as _select_student_helper
     _select_student_helper(panel)
 
@@ -72,6 +80,8 @@ def on_optimize(panel: HRMTrainingPanel) -> None:
     from .helpers import log
     from ..hrm_training.optimizer_progressive import optimize_from_gui_progressive
     
+    logger.info("User action: Start HRM training optimization")
+    
     # Require a selected student/brain
     try:
         si = (panel.student_init_var.get() or "").strip()
@@ -86,9 +96,11 @@ def on_optimize(panel: HRMTrainingPanel) -> None:
                     try:
                         panel.student_init_var.set(cand)
                         si = cand
+                        logger.debug(f"Resolved student from brain bundle: {si}")
                     except Exception:
                         pass
         if not si:
+            logger.warning("Optimization aborted: no student brain selected")
             log(panel, "[opt] Please select a student/brain before optimizing → click 'Select Student'.")
             try:
                 on_select_student(panel)
@@ -97,15 +109,18 @@ def on_optimize(panel: HRMTrainingPanel) -> None:
             return
         else:
             try:
+                logger.info(f"Starting optimization for student: {si}")
                 log(panel, f"[opt] Using student for optimization: {si}")
             except Exception:
                 pass
-    except Exception:
+    except Exception as e:
+        logger.error(f"Failed to resolve student brain for optimization: {e}")
         log(panel, "[opt] Failed to resolve selected student; select a brain first.")
         return
     
     # Guard against concurrent runs
     if getattr(panel, "_run_in_progress", False):
+        logger.debug("Optimization aborted: another run in progress")
         try:
             log(panel, "[opt] Busy: wait for current run to finish.")
         except Exception:
@@ -135,8 +150,11 @@ def on_optimize(panel: HRMTrainingPanel) -> None:
     
     def _bg():
         try:
+            logger.info("Optimization process started in background task")
             optimize_from_gui_progressive(panel)
+            logger.info("Optimization process completed successfully")
         except Exception as e:
+            logger.error(f"Optimization failed: {e}", exc_info=True)
             try:
                 log(panel, f"[opt] error: {e}")
             except Exception:
@@ -153,7 +171,9 @@ def on_optimize(panel: HRMTrainingPanel) -> None:
                     if callable(getattr(panel, "_save_state_fn", None)):
                         try:
                             panel._save_state_fn()
-                        except Exception:
+                            logger.debug("Saved HRM training state after optimization")
+                        except Exception as e:
+                            logger.warning(f"Failed to save state after optimization: {e}")
                             pass
                 except Exception:
                     pass
@@ -163,5 +183,14 @@ def on_optimize(panel: HRMTrainingPanel) -> None:
             except Exception:
                 _done()
     
-    panel._bg_thread = threading.Thread(target=_bg, daemon=True)
-    panel._bg_thread.start()
+    panel._bg_thread = None
+    try:
+        panel._bg_future = submit_background(
+            "hrm-optimize",
+            _bg,
+            pool=getattr(panel, "_worker_pool", None),
+        )
+    except RuntimeError as exc:
+        logger.error("Failed to queue optimization background task: %s", exc)
+        panel._bg_future = None
+        _bg()

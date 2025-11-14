@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aios.core.brains.registry_core import BrainRegistry
+
+logger = logging.getLogger(__name__)
 
 
 def get_pins_path(registry: "BrainRegistry") -> Optional[str]:
@@ -52,15 +55,25 @@ def load_pinned_brains(registry: "BrainRegistry") -> bool:
         True if loaded successfully, False otherwise
     """
     p = get_pins_path(registry)
-    if not p or not os.path.exists(p):
+    if not p:
+        logger.debug("Cannot load pinned brains: no store directory configured")
         return False
+    
+    if not os.path.exists(p):
+        logger.debug(f"Pinned brains registry not found at {p}, will create on first save")
+        return False
+    
+    logger.info(f"Loading pinned brains from {p}")
     try:
         with open(p, "r", encoding="utf-8") as f:
             data = json.load(f)
         names = set(str(n) for n in (data or []))
         registry.pinned = names
+        logger.info(f"Loaded {len(names)} pinned brains")
+        logger.debug(f"Pinned brains: {sorted(names)}")
         return True
-    except Exception:
+    except Exception as e:
+        logger.error(f"Failed to load pinned brains from {p}: {e}")
         return False
 
 
@@ -74,8 +87,15 @@ def load_master_brains(registry: "BrainRegistry") -> bool:
         True if loaded successfully, False otherwise
     """
     p = get_masters_path(registry)
-    if not p or not os.path.exists(p):
+    if not p:
+        logger.debug("Cannot load master brains: no store directory configured")
         return False
+    
+    if not os.path.exists(p):
+        logger.debug(f"Master brains registry not found at {p}, will create on first save")
+        return False
+    
+    logger.info(f"Loading master brains from {p}")
     try:
         with open(p, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -83,8 +103,11 @@ def load_master_brains(registry: "BrainRegistry") -> bool:
         registry.masters = names
         # Ensure masters are pinned as well
         registry.pinned |= registry.masters
+        logger.info(f"Loaded {len(names)} master brains")
+        logger.debug(f"Master brains: {sorted(names)}")
         return True
-    except Exception:
+    except Exception as e:
+        logger.error(f"Failed to load master brains from {p}: {e}")
         return False
 
 
@@ -99,12 +122,23 @@ def save_pinned_brains(registry: "BrainRegistry") -> bool:
     """
     p = get_pins_path(registry)
     if not p:
+        logger.warning("Cannot save pinned brains: no store directory configured")
         return False
+    
+    logger.info("Saving pinned brains registry")
+    logger.debug(f"Saving {len(registry.pinned)} pinned brains to {p}")
+    
     try:
         with open(p, "w", encoding="utf-8") as f:
             json.dump(sorted(registry.pinned), f)
+        
+        # Log file size for debugging
+        file_size = os.path.getsize(p)
+        logger.info(f"Saved {len(registry.pinned)} pinned brains")
+        logger.debug(f"File size: {file_size} bytes")
         return True
-    except Exception:
+    except Exception as e:
+        logger.error(f"Failed to save pinned brains to {p}: {e}")
         return False
 
 
@@ -119,12 +153,23 @@ def save_master_brains(registry: "BrainRegistry") -> bool:
     """
     p = get_masters_path(registry)
     if not p:
+        logger.warning("Cannot save master brains: no store directory configured")
         return False
+    
+    logger.info("Saving master brains registry")
+    logger.debug(f"Saving {len(registry.masters)} master brains to {p}")
+    
     try:
         with open(p, "w", encoding="utf-8") as f:
             json.dump(sorted(registry.masters), f)
+        
+        # Log file size for debugging
+        file_size = os.path.getsize(p)
+        logger.info(f"Saved {len(registry.masters)} master brains")
+        logger.debug(f"File size: {file_size} bytes")
         return True
-    except Exception:
+    except Exception as e:
+        logger.error(f"Failed to save master brains to {p}: {e}")
         return False
 
 

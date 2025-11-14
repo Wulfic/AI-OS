@@ -13,6 +13,7 @@ from .orchestrator_pkg import (
     compute_limits_and_usage,
     ensure_budgets_in_db,
     build_registry_and_router,
+    warmup_router,
     bind_idle_handlers,
 )
 
@@ -59,7 +60,21 @@ class Orchestrator:
 
         # Optional: initialize registry/router from config
         brains_cfg = (self.config.get("brains") or {}) if isinstance(self.config, dict) else {}
-        registry, router = build_registry_and_router(brains_cfg)
+        registry, router = build_registry_and_router(brains_cfg, perform_warmup=False)
+
+        warmup_task: asyncio.Task[None] | None = None
+        if router is not None:
+            # Kick off heavy router warmup work on a worker thread to keep the loop responsive.
+            warmup_task = asyncio.create_task(warmup_router(router))
+
+        def _log_warmup_result(task: asyncio.Task[None]) -> None:
+            try:
+                task.result()
+            except Exception:
+                logger.exception("Router warmup failed")
+
+        if warmup_task is not None:
+            warmup_task.add_done_callback(_log_warmup_result)
 
         bind_idle_handlers(idle, brains_cfg=brains_cfg, registry=registry, router=router)
         await idle.start()

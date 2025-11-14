@@ -6,7 +6,9 @@ Functions for building the user interface components.
 
 import tkinter as tk
 from tkinter import ttk, scrolledtext, filedialog
-from typing import Callable
+
+# Import safe variable wrappers
+from ...utils import safe_variables
 
 # Import tooltip helper
 try:
@@ -26,47 +28,53 @@ def build_ui(panel):
     # Create main frame
     panel.frame = ttk.LabelFrame(panel.parent, text="📦 Dataset Search & Downloads", padding=10)
     panel.frame.pack(fill="both", expand=True, padx=5, pady=5)
-    
-    # Info label
+
+    # Inner content frame with grid-based layout so lower controls stay visible
+    panel.content_frame = ttk.Frame(panel.frame)
+    panel.content_frame.pack(fill="both", expand=True)
+    panel.content_frame.grid_columnconfigure(0, weight=1)
+
+    current_row = 0
     info_label = ttk.Label(
-        panel.frame,
+        panel.content_frame,
         text="Search HuggingFace for datasets, favorite them, and download for AI-OS training",
         font=("", 9)
     )
-    info_label.pack(anchor="w", pady=(0, 5))
-    
-    # Build control bar
-    _build_control_bar(panel)
-    
-    # Build search frame
-    _build_search_frame(panel)
-    
-    # Build results tree
-    _build_results_frame(panel)
-    
-    # Build action buttons
-    _build_action_buttons(panel)
-    
-    # Build download location
-    _build_location_frame(panel)
-    
-    # Build status label
-    panel.status_label = ttk.Label(panel.frame, text="Ready", font=("", 9, "italic"))
-    panel.status_label.pack(anchor="w", pady=(5, 0))
-    
-    # Build output text area (skip if output_parent is None and we have a log callback)
-    # This allows using a shared output panel at the top of the tab
-    if panel._output_parent is not None or not hasattr(panel, 'log'):
-        _build_output_frame(panel)
-    else:
-        # Using shared output via log callback - create dummy widget to avoid errors
-        panel.output_text = None
+    info_label.grid(row=current_row, column=0, sticky="w", pady=(0, 5))
+
+    current_row += 1
+    control_frame = _build_control_bar(panel, panel.content_frame)
+    control_frame.grid(row=current_row, column=0, sticky="ew", pady=(0, 5))
+
+    current_row += 1
+    search_frame = _build_search_frame(panel, panel.content_frame)
+    search_frame.grid(row=current_row, column=0, sticky="ew", pady=(0, 5))
+
+    current_row += 1
+    results_frame = _build_results_frame(panel, panel.content_frame)
+    panel.content_frame.grid_rowconfigure(current_row, weight=1)
+    results_frame.grid(row=current_row, column=0, sticky="nsew", pady=(0, 5))
+
+    current_row += 1
+    actions_frame = _build_action_buttons(panel, panel.content_frame)
+    actions_frame.grid(row=current_row, column=0, sticky="ew", pady=(0, 4))
+
+    current_row += 1
+    location_frame = _build_location_frame(panel, panel.content_frame)
+    location_frame.grid(row=current_row, column=0, sticky="ew", pady=(0, 5))
+
+    current_row += 1
+    panel.status_label = ttk.Label(panel.content_frame, text="Ready", font=("", 9, "italic"))
+    panel.status_label.grid(row=current_row, column=0, sticky="w", pady=(2, 0))
+
+    # Build output text area unless the panel is configured to use the shared output
+    if not getattr(panel, "_use_shared_output", False):
+        _build_output_frame(panel, panel.content_frame, current_row + 1)
 
 
-def _build_control_bar(panel):
+def _build_control_bar(panel, parent):
     """Build the top control bar with favorites and HF auth buttons."""
-    control_frame = ttk.Frame(panel.frame)
-    control_frame.pack(fill="x", pady=(0, 5))
+    control_frame = ttk.Frame(parent)
     
     # Favorites button
     panel.favorites_btn = ttk.Button(
@@ -100,11 +108,12 @@ def _build_control_bar(panel):
     add_tooltip(panel.hf_status_label, "HuggingFace login status. Some datasets require authentication.")
     panel.hf_status_label.pack(side="left")
 
+    return control_frame
 
-def _build_search_frame(panel):
+
+def _build_search_frame(panel, parent):
     """Build the search frame with query and filters."""
-    panel.search_frame = ttk.LabelFrame(panel.frame, text="🔍 Search HuggingFace Datasets", padding=5)
-    panel.search_frame.pack(fill="x", pady=(0, 5))
+    panel.search_frame = ttk.LabelFrame(parent, text="🔍 Search HuggingFace Datasets", padding=5)
     
     search_controls = ttk.Frame(panel.search_frame)
     search_controls.pack(fill="x", pady=(0, 5))
@@ -112,7 +121,7 @@ def _build_search_frame(panel):
     # Search query field
     ttk.Label(search_controls, text="Search:").pack(side="left", padx=(0, 5))
     
-    panel.search_var = tk.StringVar()
+    panel.search_var = safe_variables.StringVar()
     search_entry = ttk.Entry(search_controls, textvariable=panel.search_var, width=35)
     add_tooltip(search_entry, "Search HuggingFace datasets by name, topic, or task")
     search_entry.pack(side="left", padx=(0, 10))
@@ -121,14 +130,14 @@ def _build_search_frame(panel):
     # Max size filter field
     ttk.Label(search_controls, text="Max Size:").pack(side="left", padx=(0, 5))
     
-    panel.max_size_var = tk.StringVar(value="")  # Empty = no limit
+    panel.max_size_var = safe_variables.StringVar(value="")  # Empty = no limit
     max_size_entry = ttk.Entry(search_controls, textvariable=panel.max_size_var, width=8)
     add_tooltip(max_size_entry, "Maximum dataset size in GB (leave empty for no limit)")
     max_size_entry.pack(side="left", padx=(0, 2))
     max_size_entry.bind("<Return>", lambda e: panel._do_search())
     
     # Size unit dropdown
-    panel.size_unit_var = tk.StringVar(value="GB")
+    panel.size_unit_var = safe_variables.StringVar(value="GB")
     size_unit_combo = ttk.Combobox(
         search_controls,
         textvariable=panel.size_unit_var,
@@ -165,11 +174,12 @@ def _build_search_frame(panel):
     )
     panel.search_status_label.pack(anchor="w", pady=(0, 2))
 
+    return panel.search_frame
 
-def _build_results_frame(panel):
+
+def _build_results_frame(panel, parent):
     """Build the results treeview frame."""
-    results_frame = ttk.LabelFrame(panel.frame, text="📋 Results", padding=5)
-    results_frame.pack(fill="both", expand=True, pady=(0, 5))
+    results_frame = ttk.LabelFrame(parent, text="📋 Results", padding=5)
     
     # Create treeview for results
     tree_scroll = ttk.Scrollbar(results_frame)
@@ -179,7 +189,7 @@ def _build_results_frame(panel):
         results_frame,
         columns=("downloads", "size", "rows", "blocks", "description"),
         yscrollcommand=tree_scroll.set,
-        height=8,
+        height=6,
         selectmode="browse"
     )
     add_tooltip(panel.results_tree, "Search results. Click columns to sort. Select a dataset to download or view details.")
@@ -205,11 +215,12 @@ def _build_results_frame(panel):
     panel.results_tree.column("blocks", width=80, minwidth=60)
     panel.results_tree.column("description", width=300, minwidth=200)
 
+    return results_frame
 
-def _build_action_buttons(panel):
+
+def _build_action_buttons(panel, parent):
     """Build the result action buttons."""
-    actions_frame = ttk.Frame(panel.frame)
-    actions_frame.pack(fill="x", pady=(0, 5))
+    actions_frame = ttk.Frame(parent)
     
     download_btn = ttk.Button(
         actions_frame,
@@ -248,18 +259,19 @@ def _build_action_buttons(panel):
     add_tooltip(panel.cancel_btn, "Cancel current download operation")
     panel.cancel_btn.pack(side="right")
 
+    return actions_frame
 
-def _build_location_frame(panel):
+
+def _build_location_frame(panel, parent):
     """Build the download location selector."""
-    location_frame = ttk.LabelFrame(panel.frame, text="📁 Download Location", padding=5)
-    location_frame.pack(fill="x", pady=(0, 5))
+    location_frame = ttk.LabelFrame(parent, text="📁 Download Location", padding=5)
     
     location_controls = ttk.Frame(location_frame)
     location_controls.pack(fill="x")
     
     ttk.Label(location_controls, text="Save to:").pack(side="left", padx=(0, 5))
     
-    panel.download_location = tk.StringVar(value="training_datasets")
+    panel.download_location = safe_variables.StringVar(value="training_datasets")
     location_entry = ttk.Entry(
         location_controls,
         textvariable=panel.download_location,
@@ -277,8 +289,10 @@ def _build_location_frame(panel):
     add_tooltip(browse_btn, "Browse for dataset download location")
     browse_btn.pack(side="left")
 
+    return location_frame
 
-def _build_output_frame(panel):
+
+def _build_output_frame(panel, parent, grid_row):
     """Build the output text area."""
     # Output text area - skip if output_parent already has the output widget
     # (when shared output panel is used at top of tab)
@@ -300,8 +314,9 @@ def _build_output_frame(panel):
         panel.output_text.pack(fill="both", expand=True)
     else:
         # Create output in this panel's frame
-        output_frame = ttk.LabelFrame(panel.frame, text="📋 Output", padding=5)
-        output_frame.pack(fill="both", expand=True, pady=(5, 0))
+        output_frame = ttk.LabelFrame(parent, text="📋 Output", padding=5)
+        output_frame.grid(row=grid_row, column=0, sticky="nsew", pady=(5, 0))
+        parent.grid_rowconfigure(grid_row, weight=1)
         
         panel.output_text = scrolledtext.ScrolledText(
             output_frame,

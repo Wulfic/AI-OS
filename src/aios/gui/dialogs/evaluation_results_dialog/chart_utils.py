@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional, TYPE_CHECKING
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -32,7 +35,10 @@ def create_evaluation_charts(result: "EvaluationResult", container: Any) -> None
         container: Tkinter container to embed charts in
     """
     if not MATPLOTLIB_AVAILABLE or Figure is None or np is None or FigureCanvasTkAgg is None:
+        logger.debug("Matplotlib not available, skipping chart creation")
         return
+    
+    logger.debug("Creating evaluation result charts")
     
     # Create figure with subplots
     fig = Figure(figsize=(10, 8), dpi=100)
@@ -50,7 +56,10 @@ def create_evaluation_charts(result: "EvaluationResult", container: Any) -> None
             task_scores.append(float(primary_score) * 100)  # Convert to percentage
     
     if not task_names:
+        logger.debug("No task data available for charting")
         return
+    
+    logger.debug(f"Creating charts for {len(task_names)} tasks")
     
     # Chart 1: Bar chart (top half)
     ax1 = fig.add_subplot(2, 1, 1)
@@ -77,6 +86,7 @@ def create_evaluation_charts(result: "EvaluationResult", container: Any) -> None
     
     # Chart 2: Radar chart (bottom half) - only if 3+ benchmarks
     if len(task_names) >= 3:
+        logger.debug(f"Adding radar chart for {len(task_names)} benchmarks")
         ax2 = fig.add_subplot(2, 1, 2, projection='polar')
         
         # Prepare data for radar chart
@@ -97,6 +107,7 @@ def create_evaluation_charts(result: "EvaluationResult", container: Any) -> None
     fig.tight_layout()
     
     # Embed in tkinter
+    logger.debug("Embedding charts in tkinter container")
     canvas = FigureCanvasTkAgg(fig, master=container)
     canvas.draw()
     canvas.get_tk_widget().pack(fill="both", expand=True)

@@ -1,6 +1,7 @@
 """Event handlers for evaluation operations."""
 
 from __future__ import annotations
+import logging
 from tkinter import filedialog, messagebox
 from typing import TYPE_CHECKING
 from pathlib import Path
@@ -8,6 +9,8 @@ from pathlib import Path
 if TYPE_CHECKING:
     from aios.core.evaluation import EvaluationResult
     from .panel_main import EvaluationPanel
+
+logger = logging.getLogger(__name__)
 
 
 def browse_output_directory(panel: "EvaluationPanel") -> None:
@@ -35,6 +38,7 @@ def start_evaluation(panel: "EvaluationPanel") -> None:
     # Validate inputs
     selected = panel.selected_benchmarks_var.get()
     if not selected:
+        logger.info("Evaluation start aborted: no benchmarks selected")
         messagebox.showwarning(
             "No Benchmarks Selected",
             "Please select at least one benchmark to evaluate."
@@ -43,6 +47,7 @@ def start_evaluation(panel: "EvaluationPanel") -> None:
     
     model = panel.model_name_var.get().strip()
     if not model:
+        logger.info("Evaluation start aborted: no model specified")
         messagebox.showwarning(
             "No Model Selected",
             "Please specify a model to evaluate."
@@ -51,6 +56,7 @@ def start_evaluation(panel: "EvaluationPanel") -> None:
     
     # Check if lm_eval is installed
     if not HarnessWrapper.is_lm_eval_installed():
+        logger.error("lm-evaluation-harness not installed")
         messagebox.showerror(
             "lm-evaluation-harness Not Found",
             "The lm-evaluation-harness package is not installed.\n\n"
@@ -59,6 +65,7 @@ def start_evaluation(panel: "EvaluationPanel") -> None:
         )
         return
     
+    logger.info(f"Starting evaluation: model={model}, benchmarks={selected}")
     panel._log("[eval] Starting evaluation...")
     panel._log(f"[eval] Model: {model}")
     panel._log(f"[eval] Benchmarks: {selected}")
@@ -97,6 +104,7 @@ def start_evaluation(panel: "EvaluationPanel") -> None:
         if limit_pct == 0:
             limit = None
         elif limit_pct < 0 or limit_pct > 100:
+            logger.warning(f"Invalid limit percentage: {limit_pct}")
             messagebox.showerror("Invalid Limit", "Limit percentage must be between 0-100")
             panel.start_btn.config(state="normal")
             panel.stop_btn.config(state="disabled")
@@ -105,6 +113,7 @@ def start_evaluation(panel: "EvaluationPanel") -> None:
         else:
             # Convert percentage to fraction for lm_eval (e.g., 10% -> 0.10)
             limit = limit_pct / 100.0
+            logger.debug(f"Evaluation limit set to {limit_pct}% ({limit} fraction)")
     
     num_fewshot = int(panel.num_fewshot_var.get() or "5")
     
@@ -117,8 +126,12 @@ def start_evaluation(panel: "EvaluationPanel") -> None:
             run_device = str(rvals.get("run_device") or "cuda:0").lower()
             if run_device in {"cpu", "cuda", "xpu", "mps", "dml"} or run_device.startswith("cuda:"):
                 device = run_device
-    except Exception:
+                logger.debug(f"Using device from resources panel: {device}")
+    except Exception as e:
+        logger.warning(f"Failed to get device from resources panel, using default: {e}")
         pass
+    
+    logger.info(f"Evaluation config: batch_size={batch_size}, limit={limit}, num_fewshot={num_fewshot}, device={device}")
     
     output_path = panel.output_path_var.get() or "artifacts/evaluation"
     log_samples = panel.log_samples_var.get()
@@ -194,6 +207,7 @@ def start_evaluation(panel: "EvaluationPanel") -> None:
         on_evaluation_complete(panel, result)
     
     try:
+        logger.info(f"Launching async evaluation: {len(tasks)} tasks, model_type={model_type}")
         panel._harness.run_evaluation_async(
             model_name=model,
             tasks=tasks,
@@ -210,6 +224,7 @@ def start_evaluation(panel: "EvaluationPanel") -> None:
             callback=on_complete,
         )
     except Exception as e:
+        logger.error(f"Failed to start evaluation: {e}", exc_info=True)
         panel._log(f"[eval] Error starting evaluation: {e}")
         panel._is_running = False
         panel.start_btn.config(state="normal")
@@ -251,6 +266,7 @@ def on_evaluation_complete(panel: "EvaluationPanel", result: "EvaluationResult")
         panel: The evaluation panel instance
         result: The evaluation result
     """
+    logger.info(f"Evaluation complete: status={result.status}, score={result.overall_score:.2%}")
     panel._is_running = False
     panel.start_btn.config(state="normal")
     panel.stop_btn.config(state="disabled")
@@ -264,6 +280,7 @@ def on_evaluation_complete(panel: "EvaluationPanel", result: "EvaluationResult")
         pass
     
     if result.status == "completed":
+        logger.info(f"Evaluation successful: duration={result.duration_str}, benchmarks={len(result.benchmark_scores)}")
         panel._log(f"[eval] Evaluation completed in {result.duration_str}")
         panel._log(f"[eval] Overall score: {result.overall_score:.2%}")
         
@@ -361,32 +378,40 @@ def on_evaluation_complete(panel: "EvaluationPanel", result: "EvaluationResult")
                 except Exception as e:
                     panel._log(f"[eval] Error checking for samples: {e}")
             
-            eval_id = panel._history.save_evaluation(
-                result=result,
-                model_name=panel.model_name_var.get(),
-                model_source=panel.model_source_var.get(),
-                model_args="dtype=auto",  # Default model args
-                tasks=tasks,
-                config=config,
-                samples_path=samples_path,
-            )
-            
-            panel._log(f"[eval] Saved to history (ID: {eval_id})")
+            history = getattr(panel, "_history", None)
+            if history is None:
+                panel._log("[eval] Warning: Evaluation history is unavailable; results were not persisted.")
+            else:
+                eval_id = history.save_evaluation(
+                    result=result,
+                    model_name=panel.model_name_var.get(),
+                    model_source=panel.model_source_var.get(),
+                    model_args="dtype=auto",  # Default model args
+                    tasks=tasks,
+                    config=config,
+                    samples_path=samples_path,
+                )
+                
+                logger.info(f"Saved evaluation to history: ID={eval_id}, tasks={len(tasks)}, samples={bool(samples_path)}")
+                panel._log(f"[eval] Saved to history (ID: {eval_id})")
             
             # Refresh recent results list
             if hasattr(panel, "recent_tree"):
                 from . import ui_builders
                 ui_builders._refresh_recent_results(panel)
         except Exception as e:
+            logger.error(f"Failed to save evaluation to history: {e}", exc_info=True)
             panel._log(f"[eval] Warning: Failed to save to history: {e}")
         
     elif result.status == "cancelled":
+        logger.info("Evaluation cancelled by user")
         panel._log("[eval] Evaluation cancelled by user")
         panel.progress["value"] = 0
         panel.progress_label.config(text="cancelled")
         panel.results_label.config(text="")
         
     elif result.status == "failed":
+        logger.error(f"Evaluation failed: {result.error_message}")
         panel._log(f"[eval] Evaluation failed: {result.error_message}")
         panel.progress["value"] = 0
         panel.progress_label.config(text="failed")
@@ -404,8 +429,10 @@ def on_stop_evaluation(panel: "EvaluationPanel") -> None:
         panel: The evaluation panel instance
     """
     if not panel._is_running:
+        logger.debug("Stop evaluation called but no evaluation running")
         return
     
+    logger.info("User requested evaluation cancellation")
     panel._log("[eval] Stopping evaluation...")
     panel._harness.cancel()
     

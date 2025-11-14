@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -17,6 +18,8 @@ except Exception:  # pragma: no cover - absent in some envs
     _TRAFILATURA = None
 
 import bs4  # type: ignore
+
+logger = logging.getLogger(__name__)
 
 # (no re-exports needed)
 
@@ -136,6 +139,7 @@ class Crawler:
 
             rfp = RobotFileParser()
             try:
+                logger.debug(f"Fetching robots.txt from {robots_url}")
                 async with aiohttp.ClientSession(
                     headers={"User-Agent": self.user_agent}
                 ) as session:
@@ -144,12 +148,15 @@ class Crawler:
                     ) as resp:
                         if resp.status >= 400:
                             # Treat missing robots as allow by default
+                            logger.debug(f"robots.txt not found at {robots_url} (status={resp.status}), allowing all")
                             rfp.parse("")
                         else:
                             body = await resp.text()
                             rfp.parse(body.splitlines())
-            except Exception:
+                            logger.debug(f"Parsed robots.txt from {robots_url}")
+            except Exception as e:
                 # Network failures → be conservative: disallow
+                logger.warning(f"Failed to fetch robots.txt from {robots_url}: {e}, disallowing all")
                 rfp.parse("User-agent: *\nDisallow: /".splitlines())
             self._robots_cache[robots_url] = rfp
             # Cache crawl-delay if provided
@@ -157,9 +164,14 @@ class Crawler:
                 cd = rfp.crawl_delay(self.user_agent) or rfp.crawl_delay("*")
                 if cd is not None:
                     self._robots_delay_cache[base] = float(cd)
+                    logger.debug(f"robots.txt crawl-delay for {base}: {cd}s")
             except Exception:
                 pass
-        return rfp.can_fetch(self.user_agent, url)
+        
+        can_fetch_result = rfp.can_fetch(self.user_agent, url)
+        if not can_fetch_result:
+            logger.info(f"robots.txt disallows fetching: {url}")
+        return can_fetch_result
 
     def robots_crawl_delay(self, url: str) -> float:
         """Return robots.txt Crawl-delay for the URL's origin if known, else 0.
@@ -175,13 +187,16 @@ class Crawler:
             return 0.0
 
     def get_cached(self, url: str) -> Optional[Page]:
+        logger.debug(f"Checking cache for URL: {url}")
         cur = self.conn.execute(
             "SELECT url, title, fetched_ts, text, hash, meta_json FROM pages WHERE url = ?",
             (url,),
         )
         row = cur.fetchone()
         if not row:
+            logger.debug(f"Cache miss for {url}")
             return None
+        logger.debug(f"Cache hit for {url}")
         meta = json.loads(row[5]) if row[5] else {}
         return Page(
             url=row[0],
@@ -193,6 +208,7 @@ class Crawler:
         )
 
     def cache_page(self, page: Page) -> None:
+        logger.debug(f"Caching page: {page.url} ({len(page.text)} chars)")
         self.conn.execute(
             """
             INSERT INTO pages (url, title, fetched_ts, text, hash, meta_json)
@@ -214,8 +230,10 @@ class Crawler:
             ),
         )
         self.conn.commit()
+        logger.info(f"Cached page: {page.url} (title: '{page.title[:50]}{'...' if len(page.title) > 50 else ''}')")
 
     async def fetch(self, url: str) -> bytes:
+        logger.debug(f"Fetching URL: {url}")
         import aiohttp
         import os
 
@@ -229,7 +247,9 @@ class Crawler:
                 url, timeout=aiohttp.ClientTimeout(total=self.timeout_sec)
             ) as resp:
                 resp.raise_for_status()
-                return await resp.read()
+                content = await resp.read()
+                logger.info(f"Successfully fetched {url} ({len(content)} bytes, status={resp.status})")
+                return content
 
     async def render_html(self, url: str) -> str:
         """Render a page with Playwright and return HTML.
@@ -273,11 +293,18 @@ class Crawler:
                 if ts is not None:
                     age = (datetime.now(timezone.utc) - ts).total_seconds()
                     if age >= 0 and age < self.ttl_sec:
+                        logger.info(f"Using cached page for {url} (age: {age:.1f}s, TTL: {self.ttl_sec}s)")
                         return cached
+        
+        logger.debug(f"Cache miss for {url}, fetching fresh content")
         if not await self.can_fetch(url):
+            logger.warning(f"robots.txt forbids fetching: {url}")
             raise PermissionError(f"robots.txt forbids fetching: {url}")
+        
+        logger.info(f"Fetching and parsing page: {url}")
         html: str
         if self.render:
+            logger.debug(f"Using headless browser to render {url}")
             html = await self.render_html(url)
         else:
             body = await self.fetch(url)
@@ -288,25 +315,30 @@ class Crawler:
         text: str
         if self.use_trafilatura and _TRAFILATURA is not None:
             try:
+                logger.debug(f"Using trafilatura to extract content from {url}")
                 # Trafilatura extract gives article text; we still take <title> via BeautifulSoup
                 extracted = _TRAFILATURA.extract(html) or ""
                 t, simple_text = parse_html_to_text(html, base_url=url)
                 title = t
                 text = extracted.strip() or simple_text
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Trafilatura extraction failed for {url}: {e}, using simple parser")
                 title, text = parse_html_to_text(html, base_url=url)
         else:
             title, text = parse_html_to_text(html, base_url=url)
         # Extract links for potential recursive crawling; store in meta
         try:
             links = extract_links(html, base_url=url)
-        except Exception:
+            logger.debug(f"Extracted {len(links)} links from {url}")
+        except Exception as e:
+            logger.warning(f"Failed to extract links from {url}: {e}")
             links = []
         h = hashlib.sha256(text.encode("utf-8")).hexdigest()
         page = Page(
             url=url, title=title, text=text, fetched_ts=_utc_now(), hash=h, meta={"links": links}
         )
         self.cache_page(page)
+        logger.info(f"Successfully parsed page: {url} ({len(text)} chars, {len(links)} links)")
         return page
 
     def _normalize_url(self, url: str) -> str:
@@ -337,6 +369,8 @@ class Crawler:
         - Limits traversal by max_pages and max_depth
         - If same_domain, only follows links with the same netloc as root_url
         """
+        logger.debug(f"Starting async crawl of {root_url} (max_pages={max_pages}, max_depth={max_depth}, same_domain={same_domain})")
+        logger.info(f"Starting site crawl from {root_url} (max_pages={max_pages}, max_depth={max_depth}, same_domain={same_domain})")
         start = self._normalize_url(root_url)
         pages: List[Page] = []
         visited: Set[str] = set()
@@ -353,25 +387,31 @@ class Crawler:
                 continue
             # Enforce domain restriction at visit time as well (root always allowed)
             if depth > 0 and same_domain and not self._same_domain(root_url, url_n):
+                logger.debug(f"Skipping {url_n} (different domain from {root_url})")
                 continue
             # Polite rate limit BEFORE fetching as well
             effective_delay_pre = max(self.min_delay_sec, self.robots_crawl_delay(url_n))
             if effective_delay_pre > 0:
+                logger.debug(f"Async sleep before next fetch: {effective_delay_pre}s")
                 try:
                     await asyncio.sleep(effective_delay_pre)
                 except Exception:
                     pass
             # Fetch and parse; skip on errors or robots disallow
             try:
+                logger.debug(f"Async crawl processing URL: {url_n} (depth={depth})")
                 page = await self.fetch_and_parse(url_n)
-            except PermissionError:
+            except PermissionError as e:
+                logger.info(f"Skipping {url_n}: {e}")
                 visited.add(url_n)
                 continue
-            except Exception:
+            except Exception as e:
+                logger.error(f"Failed to fetch {url_n}: {e}")
                 visited.add(url_n)
                 continue
             pages.append(page)
             visited.add(url_n)
+            logger.info(f"Crawl progress: {len(pages)}/{max_pages} pages fetched")
             # Emit progress to callback if provided
             if on_page is not None:
                 try:
@@ -383,6 +423,7 @@ class Crawler:
             # Polite rate limit AFTER fetching as well
             effective_delay = max(self.min_delay_sec, self.robots_crawl_delay(url_n))
             if effective_delay > 0:
+                logger.debug(f"Async sleep after fetch: {effective_delay}s")
                 try:
                     await asyncio.sleep(effective_delay)
                 except Exception:
@@ -398,6 +439,7 @@ class Crawler:
                         links = []
                 except Exception:
                     links = []
+                newly_enqueued = 0
                 for ln in links:
                     ln_n = self._normalize_url(ln)
                     if ln_n in visited or ln_n in enqueued:
@@ -406,7 +448,13 @@ class Crawler:
                         continue
                     enqueued.add(ln_n)
                     q.append((ln_n, depth + 1))
+                    newly_enqueued += 1
+                if newly_enqueued > 0:
+                    logger.debug(f"Enqueued {newly_enqueued} new links from {url_n} at depth {depth}")
             # Respect page cap
             if len(pages) >= max_pages:
+                logger.info(f"Reached max_pages limit ({max_pages}), stopping crawl")
                 break
+        logger.debug(f"Async crawl completed: {len(pages)} pages crawled from {root_url}")
+        logger.info(f"Crawl complete: fetched {len(pages)} pages from {root_url}")
         return pages

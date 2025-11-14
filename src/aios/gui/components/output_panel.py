@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+# Import safe variable wrappers
+from ..utils import safe_variables
+
+import logging
 from typing import Any, Callable, List, cast
+
+logger = logging.getLogger(__name__)
 
 try:
     import tkinter as tk  # type: ignore
@@ -35,7 +41,7 @@ class OutputPanel:
         # top bar
         topbar = ttk.Frame(frame)
         topbar.pack(fill="x")
-        self.summary_var = tk.BooleanVar(value=False)
+        self.summary_var = safe_variables.BooleanVar(value=False)
         summary_chk = None  # default when toggle disabled
         if show_summary_toggle:
             summary_chk = ttk.Checkbutton(topbar, text="Summary view", variable=self.summary_var, command=self.refresh)
@@ -67,6 +73,9 @@ class OutputPanel:
 
     # --- public ops ---
     def write(self, text: str) -> None:
+        # If clearing (empty text), log the action
+        if not text:
+            logger.info("User action: Cleared output panel")
         self._raw = []
         if text:
             self._raw.extend(str(text).splitlines())
@@ -106,11 +115,14 @@ class OutputPanel:
     def on_copy(self) -> None:
         try:
             text = self.get_text()
+            char_count = len(text)
             w = self.text.winfo_toplevel()
             w.clipboard_clear()
             w.clipboard_append(text)
+            logger.info(f"User action: Copied output to clipboard ({char_count} characters)")
             self.append("[ui] Output copied to clipboard")
         except Exception as e:
+            logger.error(f"Failed to copy output to clipboard: {e}")
             self.append(f"[ui] copy failed: {e}")
 
     # --- internals ---

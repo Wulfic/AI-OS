@@ -34,6 +34,7 @@ class AsyncEventLoop:
         self._stop_event = threading.Event()
         self._started = threading.Event()
         self._running = False
+        self._closing = threading.Event()
     
     def start(self):
         """Start the async event loop in a background thread."""
@@ -41,8 +42,10 @@ class AsyncEventLoop:
             logger.warning("AsyncEventLoop already running")
             return
         
+        logger.debug("Starting AsyncEventLoop background thread...")
         self._stop_event.clear()
         self._started.clear()
+        self._closing.clear()
         self._running = True
         
         self._thread = threading.Thread(
@@ -50,46 +53,58 @@ class AsyncEventLoop:
             daemon=False,
             name="AsyncEventLoop"
         )
+        logger.debug("AsyncEventLoop thread created: AsyncEventLoop")
         self._thread.start()
+        logger.debug("AsyncEventLoop thread started, waiting for initialization...")
         
         # Wait for loop to be ready
-        self._started.wait(timeout=5.0)
+        if not self._started.wait(timeout=5.0):
+            self._running = False
+            self._stop_event.set()
+            if self._thread:
+                self._thread.join(timeout=1.0)
+            raise RuntimeError("AsyncEventLoop failed to start within timeout")
         logger.info("AsyncEventLoop started")
+        logger.debug("AsyncEventLoop ready (event loop running)")
     
     def _run_loop(self):
         """Internal method that runs the event loop."""
         try:
-            # Create new event loop for this thread
+            logger.debug("AsyncEventLoop thread running, creating event loop...")
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
             self._started.set()
-            
-            logger.debug("AsyncEventLoop worker started")
-            
-            # Run until stop is requested
-            while not self._stop_event.is_set():
+
+            logger.debug("Event loop created and set as current")
+            logger.debug("AsyncEventLoop entering run loop")
+
+            try:
+                self._loop.run_forever()
+            finally:
+                logger.debug("AsyncEventLoop exiting run loop, beginning shutdown")
+                self._closing.set()
+                pending = asyncio.all_tasks(self._loop)
+                if pending:
+                    logger.debug(f"Cancelling {len(pending)} pending async tasks")
+                    for task in pending:
+                        task.cancel()
+                    try:
+                        self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                        logger.debug("Pending async tasks cancelled")
+                    except Exception:
+                        logger.exception("Error while awaiting pending tasks during shutdown")
                 try:
-                    self._loop.run_until_complete(asyncio.sleep(0.1))
-                except Exception as e:
-                    logger.error(f"AsyncEventLoop error: {e}")
-            
-            logger.debug("AsyncEventLoop stopping...")
-            
-            # Cancel pending tasks
-            pending = asyncio.all_tasks(self._loop)
-            for task in pending:
-                task.cancel()
-            
-            # Wait for tasks to complete
-            if pending:
-                self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-            
+                    self._loop.run_until_complete(self._loop.shutdown_asyncgens())
+                except Exception:
+                    logger.debug("Async generator shutdown raised", exc_info=True)
         except Exception as e:
             logger.exception(f"AsyncEventLoop fatal error: {e}")
         finally:
             if self._loop:
                 self._loop.close()
-            logger.debug("AsyncEventLoop stopped")
+                self._loop = None
+            self._running = False
+            logger.debug("AsyncEventLoop thread stopped")
     
     def stop(self, timeout: float = 5.0):
         """Stop the event loop.
@@ -101,13 +116,23 @@ class AsyncEventLoop:
             return
         
         logger.info("Stopping AsyncEventLoop...")
+        logger.debug("Signaling AsyncEventLoop thread to stop")
         self._stop_event.set()
-        
+
+        if self._loop and not self._closing.is_set():
+            try:
+                self._loop.call_soon_threadsafe(self._loop.stop)
+            except RuntimeError:
+                # Loop might already be closing
+                pass
+
         if self._thread:
             self._thread.join(timeout=timeout)
             if self._thread.is_alive():
                 logger.warning(f"AsyncEventLoop did not stop within {timeout}s")
-        
+            else:
+                logger.debug("AsyncEventLoop thread joined successfully")
+
         self._running = False
         logger.info("AsyncEventLoop stopped")
     
@@ -122,7 +147,9 @@ class AsyncEventLoop:
         """
         if not self._loop or not self._running:
             raise RuntimeError("AsyncEventLoop is not running")
-        
+
+        coro_name = getattr(coro, "__name__", repr(coro))
+        logger.debug(f"Submitting async coroutine to loop: {coro_name}")
         return asyncio.run_coroutine_threadsafe(coro, self._loop)
     
     def create_task(self, coro):
@@ -136,11 +163,17 @@ class AsyncEventLoop:
         """
         if not self._loop or not self._running:
             raise RuntimeError("AsyncEventLoop is not running")
-        
-        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return future
+
+        coro_name = getattr(coro, "__name__", repr(coro))
+        logger.debug(f"Creating async task on loop: {coro_name}")
+        return asyncio.run_coroutine_threadsafe(coro, self._loop)
     
     @property
     def is_running(self) -> bool:
         """Check if the event loop is running."""
         return self._running
+
+    @property
+    def loop(self) -> Optional[asyncio.AbstractEventLoop]:
+        """Return the underlying event loop instance."""
+        return self._loop

@@ -1,9 +1,12 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Dict
+import logging
 import os
 import aiohttp
 from urllib.parse import urlparse, parse_qs, unquote, urljoin
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -35,12 +38,15 @@ def _normalize_ddg_href(href: str) -> str:
             if target:
                 return unquote(target)
         return href
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Failed to normalize DDG href {href}: {e}")
         return href
 
 
 async def ddg_search(query: str, limit: int = 3) -> List[SearchResult]:
     # Use HTML-only endpoint more resilient to JS changes
+    logger.debug(f"Starting async DDG search operation: query='{query}', limit={limit}")
+    logger.info(f"Starting DuckDuckGo search: query='{query}', limit={limit}")
     url = "https://html.duckduckgo.com/html/"
     params = {"q": query, **_us_params_from_env()}
     headers = {
@@ -52,11 +58,23 @@ async def ddg_search(query: str, limit: int = 3) -> List[SearchResult]:
     ua_suffix = os.environ.get("AIOS_WEB_UA_SUFFIX")
     if ua_suffix:
         headers["User-Agent"] = headers["User-Agent"] + f" {ua_suffix}"
-    async with aiohttp.ClientSession(headers=headers) as session:
-        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=25)) as resp:
-            text = await resp.text(errors="ignore")
+    
+    try:
+        logger.debug("Creating aiohttp session for DDG search")
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=25)) as resp:
+                text = await resp.text(errors="ignore")
+                logger.debug(f"DDG search response received: {len(text)} bytes")
+    except aiohttp.ClientError as e:
+        logger.error(f"DuckDuckGo search request failed for query '{query}': {e}")
+        return []
+    except Exception as e:
+        logger.error(f"Unexpected error during DuckDuckGo search for query '{query}': {e}")
+        return []
+    
     # Parse more than needed to allow filtering
     parsed = parse_ddg_html(text, limit=max(10, limit * 3))
+    logger.debug(f"Parsed {len(parsed)} raw results from DDG HTML")
     filtered: List[SearchResult] = []
     blocked_hosts = {
         "duckduckgo.com",  # ads/redirects
@@ -89,8 +107,12 @@ async def ddg_search(query: str, limit: int = 3) -> List[SearchResult]:
             filtered.append(SearchResult(title=r.title, url=href))
             if len(filtered) >= limit:
                 break
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Failed to process search result: {e}")
             continue
+    
+    logger.info(f"DuckDuckGo search completed: {len(filtered)} results for query '{query}'")
+    logger.debug(f"Async DDG search operation completed: filtered {len(filtered)} results from {len(parsed)} raw results")
     return filtered or parsed[:limit]
 
 
@@ -121,12 +143,13 @@ def parse_ddg_html(html: str, limit: int = 3) -> List[SearchResult]:
                     results.append(SearchResult(title=title, url=href))
                 if len(results) >= limit:
                     break
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Failed to parse HTML result element: {e}")
                 continue
         if results:
             return results
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"BeautifulSoup parsing failed, using regex fallback: {e}")
     # Regex fallback if bs4 not available or structure changed
     import re
     pattern = r'<a[^>]+class=["\']result__a["\'][^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>'

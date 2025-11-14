@@ -10,6 +10,7 @@ This module handles:
 from __future__ import annotations
 from typing import Any, TYPE_CHECKING
 import logging
+import time
 
 if TYPE_CHECKING:
     import tkinter as tk
@@ -28,15 +29,19 @@ def setup_event_handlers(app: Any) -> None:
     # Window close handler
     def _on_close() -> None:
         """Handle window close event."""
+        logger.info("User action: Closing application window")
         try:
             # Save state before closing
             app._save_state()
+            logger.debug("State saved before window close")
             
             # Clean up resources
             app._cleanup()
+            logger.debug("Resources cleaned up")
             
             # Destroy window
             app.root.destroy()
+            logger.info("Application window closed successfully")
         except Exception as e:
             logger.error(f"Error during close: {e}")
             # Force close anyway
@@ -47,31 +52,39 @@ def setup_event_handlers(app: Any) -> None:
     
     app.root.protocol("WM_DELETE_WINDOW", _on_close)
     
-    # Window configure handler (resize, move)
-    def _on_configure(event: tk.Event) -> None:
-        """Handle window configure event."""
-        # Debounce rapid configure events
-        if not hasattr(app, '_configure_timer'):
-            app._configure_timer = None
-        
-        # Cancel previous timer
-        if app._configure_timer:
-            app.root.after_cancel(app._configure_timer)
-        
-        # Set new timer to save state after 1 second
-        def _delayed_save() -> None:
-            try:
-                app._save_state()
-            except Exception as e:
-                logger.warning(f"Failed to save state on configure: {e}")
-        
-        app._configure_timer = app.root.after(1000, _delayed_save)
+    # DISABLED: Window configure auto-save (too aggressive, causes hangs)
+    # State is now only saved:
+    # 1. On window close
+    # 2. On Ctrl+S
+    # 3. Periodically every 5 minutes
+    # 4. When user clicks Save in settings
     
-    app.root.bind("<Configure>", _on_configure)
+    # # Window configure handler (resize, move)
+    # def _on_configure(event: tk.Event) -> None:
+    #     """Handle window configure event."""
+    #     # Debounce rapid configure events
+    #     if not hasattr(app, '_configure_timer'):
+    #         app._configure_timer = None
+    #     
+    #     # Cancel previous timer
+    #     if app._configure_timer:
+    #         app.root.after_cancel(app._configure_timer)
+    #     
+    #     # Set new timer to save state after 1 second
+    #     def _delayed_save() -> None:
+    #         try:
+    #             app._save_state()
+    #         except Exception as e:
+    #             logger.warning(f"Failed to save state on configure: {e}")
+    #     
+    #     app._configure_timer = app.root.after(1000, _delayed_save)
+    # 
+    # app.root.bind("<Configure>", _on_configure)
     
     # Keyboard shortcuts
     def _on_ctrl_s(event: tk.Event) -> str:
         """Handle Ctrl+S (save state)."""
+        logger.info("User action: Ctrl+S pressed - saving state")
         try:
             app._save_state()
             logger.info("State saved via Ctrl+S")
@@ -81,17 +94,21 @@ def setup_event_handlers(app: Any) -> None:
     
     def _on_ctrl_q(event: tk.Event) -> str:
         """Handle Ctrl+Q (quit)."""
+        logger.info("User action: Ctrl+Q pressed - quitting application")
         _on_close()
         return "break"
     
     def _on_f5(event: tk.Event) -> str:
         """Handle F5 (refresh)."""
+        logger.info("User action: F5 pressed - refreshing panels")
         try:
             # Refresh all panels
             if hasattr(app, 'brains_panel') and app.brains_panel:
                 app.brains_panel.refresh()
+                logger.debug("Brains panel refreshed")
             if hasattr(app, 'mcp_panel') and app.mcp_panel:
                 app.mcp_panel.refresh()
+                logger.debug("MCP panel refreshed")
             logger.info("Panels refreshed via F5")
         except Exception as e:
             logger.error(f"Failed to refresh: {e}")
@@ -140,3 +157,34 @@ def setup_periodic_tasks(app: Any) -> None:
     
     # Start resource check
     app.root.after(10000, _periodic_resource_check)
+
+    # UI watchdog to detect long-running callbacks on the Tk thread
+    watchdog_interval_ms = 250
+    watchdog_threshold = 0.35  # seconds
+    app._ui_watchdog_last_tick = time.perf_counter()
+    app._ui_watchdog_max_delta = 0.0
+
+    def _ui_watchdog() -> None:
+        """Detect prolonged UI thread stalls and log diagnostic details."""
+        try:
+            now = time.perf_counter()
+            last_tick = getattr(app, "_ui_watchdog_last_tick", now)
+            delta = now - last_tick
+            app._ui_watchdog_last_tick = now
+
+            if delta > watchdog_threshold:
+                app._ui_watchdog_max_delta = max(getattr(app, "_ui_watchdog_max_delta", 0.0), delta)
+                logger.warning(
+                    "UI watchdog detected %.1f ms pause (threshold %.0f ms)",
+                    delta * 1000.0,
+                    watchdog_threshold * 1000.0,
+                )
+        except Exception:
+            logger.debug("UI watchdog encountered an error", exc_info=True)
+        finally:
+            try:
+                app.root.after(watchdog_interval_ms, _ui_watchdog)
+            except Exception:
+                logger.debug("Failed to reschedule UI watchdog", exc_info=True)
+
+    app.root.after(watchdog_interval_ms, _ui_watchdog)

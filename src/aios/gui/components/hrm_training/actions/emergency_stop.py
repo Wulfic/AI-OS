@@ -6,9 +6,9 @@ used when closing the application or in emergency scenarios.
 
 from __future__ import annotations
 import time
-import platform
-import threading
 from typing import Any
+
+from ....utils.resource_management import submit_background
 
 
 def stop_all(panel: Any) -> None:
@@ -33,9 +33,13 @@ def stop_all(panel: Any) -> None:
         
         # Wait for background thread to exit
         try:
-            t = getattr(panel, "_bg_thread", None)
-            if t is not None and getattr(t, "is_alive", lambda: False)():
-                t.join(timeout=2.0)
+            future = getattr(panel, "_bg_future", None)
+            if future is not None and not getattr(future, "done", lambda: True)():
+                future.result(timeout=2.0)
+            else:
+                t = getattr(panel, "_bg_thread", None)
+                if t is not None and getattr(t, "is_alive", lambda: False)():
+                    t.join(timeout=2.0)
         except Exception:
             pass
         
@@ -43,8 +47,15 @@ def stop_all(panel: Any) -> None:
         # This runs synchronously to guarantee cleanup
         _force_terminate_subprocess(panel)
     
-    # Run everything in background thread
-    threading.Thread(target=_do_stop_all, daemon=True).start()
+    # Run everything via dispatcher
+    try:
+        submit_background(
+            "hrm-emergency-stop",
+            _do_stop_all,
+            pool=getattr(panel, "_worker_pool", None),
+        )
+    except RuntimeError:
+        _do_stop_all()
 
 
 def _force_terminate_subprocess(panel: Any) -> None:

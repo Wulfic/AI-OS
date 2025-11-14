@@ -79,9 +79,13 @@ def on_startup_changed(panel: "SettingsPanel") -> None:
         enabled = panel.startup_var.get()
         # Check if should start minimized
         minimized = panel.start_minimized_var.get()
+        
+        logger.info(f"User action: {'Enabling' if enabled else 'Disabling'} startup at Windows boot (minimized: {minimized})")
+        
         success = set_startup_enabled(enabled, minimized=minimized)
         
         if success:
+            logger.info(f"Successfully {'enabled' if enabled else 'disabled'} startup at Windows boot")
             if enabled:
                 # Verify the command is valid
                 is_valid, message = verify_startup_command()
@@ -93,12 +97,14 @@ def on_startup_changed(panel: "SettingsPanel") -> None:
                             text=f"✓ Enabled: {display_path}",
                             foreground="green"
                         )
+                        logger.debug(f"Startup registry path: {path}")
                     else:
                         panel.startup_info.config(
                             text="✓ Enabled successfully",
                             foreground="green"
                         )
                 else:
+                    logger.warning(f"Startup enabled but command validation failed: {message}")
                     panel.startup_info.config(
                         text=f"⚠ Warning: {message}",
                         foreground="orange"
@@ -113,6 +119,7 @@ def on_startup_changed(panel: "SettingsPanel") -> None:
             if panel._save_state_fn:
                 panel._save_state_fn()
         else:
+            logger.error("Failed to modify Windows registry for startup setting - check permissions")
             # Failed to set - revert checkbox
             panel.startup_var.set(not enabled)
             panel.startup_info.config(
@@ -120,6 +127,7 @@ def on_startup_changed(panel: "SettingsPanel") -> None:
                 foreground="red"
             )
     except Exception as e:
+        logger.error(f"Error changing startup setting: {e}", exc_info=True)
         # Error occurred - revert checkbox
         panel.startup_var.set(not panel.startup_var.get())
         panel.startup_info.config(
@@ -135,19 +143,22 @@ def on_start_minimized_changed(panel: "SettingsPanel") -> None:
         panel: The settings panel instance
     """
     try:
+        minimized = panel.start_minimized_var.get()
+        logger.info(f"User action: {'Enabling' if minimized else 'Disabling'} start minimized to tray")
+        
         # Update the startup command if startup is enabled
         from ...utils.startup import is_startup_enabled, set_startup_enabled
         if is_startup_enabled():
             # Re-set startup with updated minimized flag
             enabled = panel.startup_var.get()
-            minimized = panel.start_minimized_var.get()
             set_startup_enabled(enabled, minimized=minimized)
+            logger.debug(f"Updated Windows startup command with minimized flag: {minimized}")
         
         # Save state
         if panel._save_state_fn:
             panel._save_state_fn()
     except Exception as e:
-        logger.error(f"Error updating start minimized setting: {e}")
+        logger.error(f"Error updating start minimized setting: {e}", exc_info=True)
 
 
 def on_minimize_to_tray_changed(panel: "SettingsPanel") -> None:
@@ -157,6 +168,9 @@ def on_minimize_to_tray_changed(panel: "SettingsPanel") -> None:
         panel: The settings panel instance
     """
     try:
+        minimize_to_tray = panel.minimize_to_tray_var.get()
+        logger.info(f"User action: {'Enabling' if minimize_to_tray else 'Disabling'} minimize to tray on close")
+        
         # Update the app's minimize behavior
         if panel._save_state_fn:
             panel._save_state_fn()
@@ -169,7 +183,9 @@ def on_minimize_to_tray_changed(panel: "SettingsPanel") -> None:
                     app = getattr(app, 'master', None)
                 if app and hasattr(app, '_sync_tray_settings'):
                     app._sync_tray_settings()
-            except Exception:
+                    logger.debug("Synced tray settings with main app")
+            except Exception as e:
+                logger.debug(f"Could not sync tray settings: {e}")
                 pass
     except Exception as e:
-        logger.error(f"Error updating minimize to tray setting: {e}")
+        logger.error(f"Error updating minimize to tray setting: {e}", exc_info=True)

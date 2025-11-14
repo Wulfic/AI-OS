@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, TYPE_CHECKING
 
 from .constants import tk, ttk
+from ...utils import safe_variables
 
 if TYPE_CHECKING:
     from .panel_main import ResourcesPanel
@@ -21,32 +22,32 @@ def create_fallback_ui(panel: "ResourcesPanel", parent: Any) -> None:
     cpu_frame = ttk.Frame(parent)
     cpu_frame.pack(fill="x", padx=4, pady=2)
     ttk.Label(cpu_frame, text="CPU:", width=6).pack(side="left")
-    panel._cpu_label_var = tk.StringVar(value="-- %")
+    panel._cpu_label_var = safe_variables.StringVar(parent, value="-- %")
     ttk.Label(cpu_frame, textvariable=panel._cpu_label_var, width=35).pack(side="left")
-    panel._cpu_progress_var = tk.DoubleVar(value=0.0)
+    panel._cpu_progress_var = safe_variables.DoubleVar(parent, value=0.0)
     ttk.Progressbar(cpu_frame, variable=panel._cpu_progress_var, maximum=100, length=200).pack(side="left", padx=(4, 0))
 
     # RAM row
     ram_frame = ttk.Frame(parent)
     ram_frame.pack(fill="x", padx=4, pady=2)
     ttk.Label(ram_frame, text="RAM:", width=6).pack(side="left")
-    panel._ram_label_var = tk.StringVar(value="-- %")
+    panel._ram_label_var = safe_variables.StringVar(parent, value="-- %")
     ttk.Label(ram_frame, textvariable=panel._ram_label_var, width=35).pack(side="left")
-    panel._ram_progress_var = tk.DoubleVar(value=0.0)
+    panel._ram_progress_var = safe_variables.DoubleVar(parent, value=0.0)
     ttk.Progressbar(ram_frame, variable=panel._ram_progress_var, maximum=100, length=200).pack(side="left", padx=(4, 0))
 
     # Network row
     net_frame = ttk.Frame(parent)
     net_frame.pack(fill="x", padx=4, pady=2)
     ttk.Label(net_frame, text="NET:", width=6).pack(side="left")
-    panel._net_label_var = tk.StringVar(value="-- MB/s")
+    panel._net_label_var = safe_variables.StringVar(parent, value="-- MB/s")
     ttk.Label(net_frame, textvariable=panel._net_label_var, width=35).pack(side="left")
 
     # Disk row
     disk_frame = ttk.Frame(parent)
     disk_frame.pack(fill="x", padx=4, pady=2)
     ttk.Label(disk_frame, text="DISK:", width=6).pack(side="left")
-    panel._disk_label_var = tk.StringVar(value="-- MB/s")
+    panel._disk_label_var = safe_variables.StringVar(parent, value="-- MB/s")
     ttk.Label(disk_frame, textvariable=panel._disk_label_var, width=35).pack(side="left")
 
     # GPU rows container
@@ -65,7 +66,8 @@ def update_fallback_ui(panel: "ResourcesPanel") -> None:
         if len(panel._history["cpu_util"]) > 0:
             cpu_usage = panel._history["cpu_util"][-1]
             cpu_temp = panel._history["cpu_temp"][-1]
-            panel._cpu_label_var.set(f"{cpu_usage:.0f}% | Temp: {cpu_temp}")
+            temp_str = f"{cpu_temp:.1f}°C" if cpu_temp is not None else "N/A"
+            panel._cpu_label_var.set(f"{cpu_usage:.0f}% | Temp: {temp_str}")
             panel._cpu_progress_var.set(cpu_usage)
 
         if len(panel._history["ram_used"]) > 0:
@@ -115,9 +117,9 @@ def _update_gpu_monitor_rows(panel: "ResourcesPanel") -> None:
             frame = ttk.Frame(panel._gpu_monitor_frame)
             frame.pack(fill="x", pady=1)
             ttk.Label(frame, text=f"GPU{idx}:", width=6).pack(side="left")
-            label_var = tk.StringVar(value="--")
+            label_var = safe_variables.StringVar(panel._gpu_monitor_frame, value="--")
             ttk.Label(frame, textvariable=label_var, width=35).pack(side="left")
-            progress_var = tk.DoubleVar(value=0.0)
+            progress_var = safe_variables.DoubleVar(panel._gpu_monitor_frame, value=0.0)
             ttk.Progressbar(frame, variable=progress_var, maximum=100, length=200).pack(side="left", padx=(4, 0))
             
             panel._gpu_monitors[idx] = {

@@ -80,9 +80,11 @@ class LazyExpertLoader:
             # Move to GPU if needed
             if location == "gpu":
                 self.gpu_hits += 1
+                logger.debug(f"Expert {expert_id} cache hit (GPU)")
                 return expert
             elif location == "cpu":
                 self.cpu_hits += 1
+                logger.info(f"Expert {expert_id} cache hit (CPU) - moving to GPU")
                 expert = expert.to(self.device)
                 self.cache[expert_id] = (expert, "gpu")
                 self._evict_if_needed()
@@ -90,6 +92,7 @@ class LazyExpertLoader:
         
         # Load from disk
         self.disk_loads += 1
+        logger.info(f"Expert {expert_id} cache miss - loading from disk")
         
         if checkpoint_path and Path(checkpoint_path).exists():
             expert = FeedForward(hidden_size, intermediate_size)
@@ -128,6 +131,8 @@ class LazyExpertLoader:
         gpu_count = sum(1 for _, loc in self.cache.values() if loc == "gpu")
         cpu_count = sum(1 for _, loc in self.cache.values() if loc == "cpu")
         
+        logger.debug(f"Cache state: {gpu_count} GPU experts, {cpu_count} CPU experts (max GPU: {self.max_gpu_experts}, max CPU: {self.max_cpu_experts})")
+        
         # Evict from GPU to CPU
         while gpu_count > self.max_gpu_experts and len(self.access_order) > 0:
             # Find LRU GPU expert
@@ -140,7 +145,7 @@ class LazyExpertLoader:
                         self.cache[expert_id] = (expert, "cpu")
                         gpu_count -= 1
                         cpu_count += 1
-                        logger.debug(f"[LazyExpertLoader] Evicted {expert_id} from GPU to CPU")
+                        logger.info(f"Evicted expert {expert_id} from GPU to CPU (GPU count: {gpu_count}/{self.max_gpu_experts})")
                         break
         
         # Evict from CPU to disk (remove from cache)
@@ -154,7 +159,7 @@ class LazyExpertLoader:
                         del self.cache[expert_id]
                         self.access_order.remove(expert_id)
                         cpu_count -= 1
-                        logger.debug(f"[LazyExpertLoader] Evicted {expert_id} from CPU to disk")
+                        logger.info(f"Evicted expert {expert_id} from CPU to disk (CPU count: {cpu_count}/{self.max_cpu_experts})")
                         break
     
     def get_stats(self) -> Dict[str, float]:

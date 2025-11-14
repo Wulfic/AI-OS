@@ -9,6 +9,7 @@ from typing import Optional
 
 from .orchestrator import Orchestrator
 from ..memory.store import get_db, init_db, list_artifacts
+from aios.utils.diagnostics import timed_blocking_call
 
 
 def default_ckpt_dir() -> Path:
@@ -88,10 +89,11 @@ def upload_checkpoint_to_repo(ckpt: Path, repo_root: Optional[Path] = None, dest
 def git_commit(paths: list[Path], message: str, repo_root: Optional[Path] = None, push: bool = False) -> bool:
     root = (repo_root or detect_repo_root() or Path.cwd()).resolve()
     try:
-        subprocess.run(["git", "add", *[str(p.relative_to(root)) for p in paths]], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        subprocess.run(["git", "commit", "-m", message], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        cmd = ["git", "add", *[str(p.relative_to(root)) for p in paths]]
+        timed_blocking_call("git add", subprocess.run, cmd, cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        timed_blocking_call("git commit", subprocess.run, ["git", "commit", "-m", message], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if push:
-            subprocess.run(["git", "push"], cwd=root, check=True)
+            timed_blocking_call("git push", subprocess.run, ["git", "push"], cwd=root, check=True)
         return True
     except Exception:
         return False
@@ -106,7 +108,7 @@ def restart_agent_service() -> bool:
         return False
     try:
         # user service restart
-        subprocess.run(["systemctl", "--user", "restart", "aios.service"], check=True)
+        timed_blocking_call("systemctl --user restart aios.service", subprocess.run, ["systemctl", "--user", "restart", "aios.service"], check=True)
         return True
     except Exception:
         return False

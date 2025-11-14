@@ -5,6 +5,9 @@ Creates the goals listbox, add/remove controls (conditional on callbacks).
 
 from __future__ import annotations
 
+# Import safe variable wrappers
+from ...utils import safe_variables
+
 from typing import Any, cast
 
 try:  # pragma: no cover
@@ -63,13 +66,14 @@ def build_goals_section(parent: Any, panel: Any) -> None:
     if panel._on_goal_remove is not None:
         btn_remove_goal = ttk.Button(goals_controls, text="Remove Selected", command=panel._remove_selected_goals)
         btn_remove_goal.pack(side="left")
+        panel.goal_remove_button = btn_remove_goal
         try:  # pragma: no cover
             from ..tooltips import add_tooltip
             add_tooltip(btn_remove_goal, "Remove selected goals (excluding protected [primary] goals).")
         except Exception:
             pass
     
-    panel.goals_count_var = tk.StringVar(value="0 goals")
+    panel.goals_count_var = safe_variables.StringVar(value="0 goals")
     ttk.Label(goals_controls, textvariable=panel.goals_count_var).pack(side="right")
     
     # Add goal bar
@@ -79,13 +83,15 @@ def build_goals_section(parent: Any, panel: Any) -> None:
     ttk.Label(add_goal_bar, text="Add Goal:").pack(side="left")
     
     # Empty default - user should set custom goal
-    panel.goal_text_var = tk.StringVar(value="")
+    panel.goal_text_var = safe_variables.StringVar(value="")
     goal_entry = ttk.Entry(add_goal_bar, textvariable=panel.goal_text_var)
     goal_entry.pack(side="left", fill="x", expand=True, padx=(4, 8))
+    panel.goal_text_entry = goal_entry
     
     if panel._on_goal_add is not None:
         btn_add_goal = ttk.Button(add_goal_bar, text="Add", command=panel._add_goal)
         btn_add_goal.pack(side="left")
+        panel.goal_add_button = btn_add_goal
         # Bind Return key to add goal for convenience
         goal_entry.bind("<Return>", lambda e: panel._add_goal())
         try:  # pragma: no cover

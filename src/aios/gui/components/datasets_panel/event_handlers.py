@@ -9,6 +9,7 @@ Provides UI event handling methods for:
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +21,8 @@ except Exception:  # pragma: no cover - environment dependent
 if TYPE_CHECKING:
     import threading
 
+logger = logging.getLogger(__name__)
+
 
 def handle_browse_dataset(dataset_path_var: Any) -> None:
     """Handle browse button click to select a dataset file.
@@ -28,16 +31,19 @@ def handle_browse_dataset(dataset_path_var: Any) -> None:
         dataset_path_var: Tkinter StringVar to update with selected path
     """
     if filedialog is None:
+        logger.warning("Cannot browse for dataset - filedialog not available")
         return
     try:
         path = filedialog.askopenfilename(title="Select dataset file")
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error opening file dialog for dataset browse: {e}")
         path = ""
     if path:
+        logger.info(f"User action: Selected dataset file via browse: {path}")
         try:
             dataset_path_var.set(path)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Failed to set dataset path var: {e}")
 
 
 def handle_load_known_datasets(
@@ -62,18 +68,23 @@ def handle_load_known_datasets(
     """
     # Use cached list if present; allow manual refresh in future
     if known_ds_cache is not None:
+        logger.debug(f"Using cached known datasets list ({len(known_ds_cache)} items)")
         items = list(known_ds_cache)
     else:
+        logger.info("Loading known datasets from remote sources")
         items = []
         try:
             items = fetch_datasets_callback()
+            logger.info(f"Successfully fetched {len(items)} known datasets")
         except Exception as e:
+            logger.error(f"Failed to fetch known datasets: {e}", exc_info=True)
             log_callback(f"[datasets] Fetch error: {e}")
             append_out_callback(f"[error] Dataset fetch error: {e}")
             items = []
         
         if not items:
             # curated fallback
+            logger.debug("Falling back to curated datasets list")
             try:
                 from aios.data.datasets import known_datasets as _known
 
@@ -81,7 +92,9 @@ def handle_load_known_datasets(
                     {"name": kd.name, "url": kd.url, "size_bytes": int(kd.approx_size_gb * (1024 ** 3))}
                     for kd in _known(max_size_gb=15)
                 ]
-            except Exception:
+                logger.info(f"Loaded {len(items)} curated datasets as fallback")
+            except Exception as e:
+                logger.error(f"Failed to load curated datasets fallback: {e}")
                 items = []
         
         known_ds_cache = list(items)
@@ -122,6 +135,7 @@ def handle_use_known_dataset(
     sel = known_ds_var.get().strip()
     name = sel
     if not name:
+        logger.debug("No dataset selected for use")
         return
     
     url = ""
@@ -131,7 +145,8 @@ def handle_use_known_dataset(
             if base == name or sel.startswith(base):
                 url = it.get("url", "")
                 break
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Error finding URL for dataset '{name}': {e}")
         url = ""
     
     try:
@@ -139,8 +154,9 @@ def handle_use_known_dataset(
         fname = os.path.basename(url) if url else "data.jsonl"
         hint = os.path.join(base, name, fname)
         dataset_path_var.set(hint)
-    except Exception:
-        pass
+        logger.info(f"User action: Selected known dataset '{name}' (path hint: {hint})")
+    except Exception as e:
+        logger.error(f"Failed to set dataset path hint for '{name}': {e}")
     
     if url:
         log_callback(f"Selected: {name}\nURL: {url}")

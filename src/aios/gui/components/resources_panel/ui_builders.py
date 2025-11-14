@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, TYPE_CHECKING
 
 from .constants import MATPLOTLIB_AVAILABLE, tk, ttk
@@ -11,6 +12,8 @@ from . import fallback_widgets
 if TYPE_CHECKING:
     from .panel_main import ResourcesPanel
 
+logger = logging.getLogger(__name__)
+
 
 def build_limits_ui(panel: "ResourcesPanel") -> None:
     """Build CPU/GPU/RAM limits section.
@@ -18,23 +21,40 @@ def build_limits_ui(panel: "ResourcesPanel") -> None:
     Args:
         panel: ResourcesPanel instance
     """
-    r = ttk.Frame(panel)
-    r.pack(fill="x")
+    try:
+        r = ttk.Frame(panel)
+        r.pack(fill="x")
+    except Exception as e:
+        logger.error(f"Failed to create Frame widget: {e}")
+        logger.warning("Using fallback UI element")
+        return
     
-    lbl_cpu_threads = ttk.Label(r, text="CPU threads (logical):")
-    lbl_cpu_threads.pack(side="left")
-    ent_cpu_threads = ttk.Entry(r, textvariable=panel.cpu_threads_var, width=6)
-    ent_cpu_threads.pack(side="left", padx=(4, 8))
+    try:
+        lbl_cpu_threads = ttk.Label(r, text="CPU threads (logical):")
+        lbl_cpu_threads.pack(side="left")
+        ent_cpu_threads = ttk.Entry(r, textvariable=panel.cpu_threads_var, width=6)
+        ent_cpu_threads.pack(side="left", padx=(4, 8))
+    except Exception as e:
+        logger.error(f"Failed to create CPU threads widgets: {e}")
+        logger.warning("Using fallback UI element")
     
-    lbl_cpu_util = ttk.Label(r, text="CPU util %:")
-    lbl_cpu_util.pack(side="left")
-    ent_cpu_util = ttk.Entry(r, textvariable=panel.cpu_util_pct_var, width=4)
-    ent_cpu_util.pack(side="left", padx=(0, 12))
+    try:
+        lbl_cpu_util = ttk.Label(r, text="CPU util %:")
+        lbl_cpu_util.pack(side="left")
+        ent_cpu_util = ttk.Entry(r, textvariable=panel.cpu_util_pct_var, width=4)
+        ent_cpu_util.pack(side="left", padx=(0, 12))
+    except Exception as e:
+        logger.error(f"Failed to create CPU util widgets: {e}")
+        logger.warning("Using fallback UI element")
     
-    lbl_sys_mem = ttk.Label(r, text="System RAM limit (GB):")
-    lbl_sys_mem.pack(side="left")
-    ent_sys_mem = ttk.Entry(r, textvariable=panel.system_mem_limit_gb_var, width=8)
-    ent_sys_mem.pack(side="left", padx=(4, 12))
+    try:
+        lbl_sys_mem = ttk.Label(r, text="System RAM limit (GB):")
+        lbl_sys_mem.pack(side="left")
+        ent_sys_mem = ttk.Entry(r, textvariable=panel.system_mem_limit_gb_var, width=8)
+        ent_sys_mem.pack(side="left", padx=(4, 12))
+    except Exception as e:
+        logger.error(f"Failed to create System RAM widgets: {e}")
+        logger.warning("Using fallback UI element")
     
     # Add validation callback for RAM limit
     def _validate_ram_limit(*args):
@@ -91,6 +111,46 @@ def build_limits_ui(panel: "ResourcesPanel") -> None:
     lock_label = ttk.Label(r, text="", foreground="gray")
     lock_label.pack(side="left", padx=(8, 0))
     
+    # Add "Detect devices" button next to Multi-GPU Mode
+    if panel._detect_fn is not None:
+        btn_detect = ttk.Button(r, text="Detect devices", command=panel._detect_and_update)
+        btn_detect.pack(side="left", padx=(12, 0))
+        panel.detect_button = btn_detect
+        _add_detect_button_tooltip(btn_detect)
+    
+    # Add "Max Performance" checkbox
+    max_perf_cb = ttk.Checkbutton(
+        r, 
+        text="Max Performance", 
+        variable=panel.max_performance_var,
+        command=lambda: _on_max_performance_toggle(panel)
+    )
+    max_perf_cb.pack(side="left", padx=(12, 0))
+    
+    # Add tooltip for Max Performance
+    try:
+        from ..tooltips import add_tooltip
+        add_tooltip(max_perf_cb, "Enable maximum performance mode: Sets all GPUs to 100% memory and 0% utilization limit (no throttling)")
+    except Exception:
+        pass
+    
+    # Add Storage Caps inline on the same row
+    ttk.Label(r, text="Dataset cap (GB):").pack(side="left", padx=(24, 4))
+    dataset_cap_entry = ttk.Entry(r, width=8, textvariable=panel.dataset_cap_var)
+    dataset_cap_entry.pack(side="left")
+    panel.dataset_cap_entry = dataset_cap_entry
+    
+    # Add usage display label inline
+    panel.dataset_usage_label = ttk.Label(r, text="", font=("TkDefaultFont", 8), foreground="gray")
+    panel.dataset_usage_label.pack(side="left", padx=(6, 0))
+    
+    # Add tooltip
+    try:
+        from ..tooltips import add_tooltip
+        add_tooltip(dataset_cap_entry, "Maximum disk space for dataset downloads (GB). Empty = unlimited. Enforced in training_data folder.")
+    except Exception:
+        pass
+    
     # Store references for dynamic updates
     panel._training_mode_toggle_widgets = {
         "label": mode_label,
@@ -131,11 +191,15 @@ def build_devices_ui(panel: "ResourcesPanel") -> Any:
         The devices frame widget
     """
     devs = ttk.LabelFrame(panel, text="Devices")
-    devs.pack(fill="x", pady=(8, 0))
+    devs.pack(fill="both", expand=True, pady=(8, 0))
+
+    # Track canvas heights so inference list stays aligned with training list
+    panel._train_canvas_height = 0
+    panel._ensure_run_canvas_min_height = lambda: None
     
     # Train device selection
     train_box = ttk.LabelFrame(devs, text="Training Device")
-    train_box.pack(fill="x", padx=0, pady=2)
+    train_box.pack(fill="both", expand=True, padx=0, pady=2)
     train_auto_radio = ttk.Radiobutton(train_box, text="Auto", variable=panel.train_device_var, value="auto")
     train_auto_radio.pack(side="left")
     train_cpu_radio = ttk.Radiobutton(train_box, text="CPU", variable=panel.train_device_var, value="cpu")
@@ -152,13 +216,64 @@ def build_devices_ui(panel: "ResourcesPanel") -> Any:
     except Exception:
         pass
     
-    # CUDA Train selection list
-    panel.cuda_train_group = ttk.Frame(train_box)
-    panel.cuda_train_group.pack(fill="x", padx=(8, 0), pady=(4, 0))
+    # CUDA Train selection list - now with scrollable canvas and grid layout
+    train_scroll_frame = ttk.Frame(train_box)
+    train_scroll_frame.pack(fill="both", expand=True, padx=(8, 0), pady=(4, 0))
+    
+    # Create canvas and scrollbar for train GPUs (dynamic height, max 140px)
+    train_canvas = tk.Canvas(train_scroll_frame, borderwidth=0, highlightthickness=0)
+    train_scrollbar = ttk.Scrollbar(train_scroll_frame, orient="vertical", command=train_canvas.yview)
+    train_scrollable_frame = ttk.Frame(train_canvas)
+    
+    def _update_train_scroll():
+        """Update scroll region and canvas height based on content."""
+        train_canvas.update_idletasks()
+        bbox = train_canvas.bbox("all")
+        if bbox:
+            # Calculate content height
+            content_height = bbox[3]
+            # Set canvas height to content height, but max 140px
+            canvas_height = min(content_height, 140)
+            train_canvas.configure(height=canvas_height)
+            # Only set vertical scrolling, keep width at canvas width
+            train_canvas.configure(scrollregion=(0, 0, train_canvas.winfo_width(), bbox[3]))
+            panel._train_canvas_height = canvas_height
+            try:
+                panel._ensure_run_canvas_min_height()
+            except Exception:
+                pass
+    
+    train_scrollable_frame.bind("<Configure>", lambda e: _update_train_scroll())
+    
+    train_canvas_window = train_canvas.create_window((0, 0), window=train_scrollable_frame, anchor="nw")
+    train_canvas.configure(yscrollcommand=train_scrollbar.set)
+    
+    # Make the canvas window fill the width
+    def _configure_train_canvas(event):
+        train_canvas.itemconfig(train_canvas_window, width=event.width)
+        _update_train_scroll()
+    train_canvas.bind("<Configure>", _configure_train_canvas)
+    
+    panel._train_canvas = train_canvas
+    train_canvas.pack(side="left", fill="both", expand=True)
+    train_scrollbar.pack(side="right", fill="y")
+    
+    # Mouse wheel scrolling
+    def _on_train_mousewheel(event):
+        train_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+    train_canvas.bind_all("<MouseWheel>", _on_train_mousewheel)
+    
+    # Configure grid layout for GPU cards (4 columns)
+    for i in range(4):
+        train_scrollable_frame.grid_columnconfigure(i, weight=1, uniform="gpu_cards")
+    
+    panel.cuda_train_group = train_scrollable_frame
+    panel._cuda_train_grid_col = 0  # Track current grid column
+    panel._cuda_train_grid_row = 0  # Track current grid row
 
     # Run device selection
     run_box = ttk.LabelFrame(devs, text="Inference/Run Device")
-    run_box.pack(fill="x", padx=0, pady=2)
+    run_box.pack(fill="both", expand=True, padx=0, pady=2)
     run_auto_radio = ttk.Radiobutton(run_box, text="Auto", variable=panel.run_device_var, value="auto")
     run_auto_radio.pack(side="left")
     run_cpu_radio = ttk.Radiobutton(run_box, text="CPU", variable=panel.run_device_var, value="cpu")
@@ -175,9 +290,68 @@ def build_devices_ui(panel: "ResourcesPanel") -> Any:
     except Exception:
         pass
     
-    # CUDA Run selection list
-    panel.cuda_run_group = ttk.Frame(run_box)
-    panel.cuda_run_group.pack(fill="x", padx=(8, 0), pady=(4, 0))
+    # CUDA Run selection list - now with scrollable canvas and grid layout
+    run_scroll_frame = ttk.Frame(run_box)
+    run_scroll_frame.pack(fill="both", expand=True, padx=(8, 0), pady=(4, 0))
+    
+    # Create canvas and scrollbar for run GPUs (dynamic height, max 140px)
+    run_canvas = tk.Canvas(run_scroll_frame, borderwidth=0, highlightthickness=0)
+    run_scrollbar = ttk.Scrollbar(run_scroll_frame, orient="vertical", command=run_canvas.yview)
+    run_scrollable_frame = ttk.Frame(run_canvas)
+    
+    def _update_run_scroll():
+        """Update scroll region and canvas height based on content."""
+        run_canvas.update_idletasks()
+        bbox = run_canvas.bbox("all")
+        if bbox:
+            # Calculate content height
+            content_height = bbox[3]
+            # Set canvas height to content height, but max 140px
+            canvas_height = min(content_height, 140)
+            canvas_height = max(canvas_height, getattr(panel, "_train_canvas_height", 0))
+            run_canvas.configure(height=canvas_height)
+            # Only set vertical scrolling, keep width at canvas width
+            run_canvas.configure(scrollregion=(0, 0, run_canvas.winfo_width(), bbox[3]))
+        else:
+            baseline = getattr(panel, "_train_canvas_height", 0)
+            if baseline:
+                run_canvas.configure(height=baseline)
+    
+    run_scrollable_frame.bind("<Configure>", lambda e: _update_run_scroll())
+    
+    run_canvas_window = run_canvas.create_window((0, 0), window=run_scrollable_frame, anchor="nw")
+    run_canvas.configure(yscrollcommand=run_scrollbar.set)
+    
+    # Make the canvas window fill the width
+    def _configure_run_canvas(event):
+        run_canvas.itemconfig(run_canvas_window, width=event.width)
+        _update_run_scroll()
+    run_canvas.bind("<Configure>", _configure_run_canvas)
+    
+    panel._run_canvas = run_canvas
+    run_canvas.pack(side="left", fill="both", expand=True)
+    run_scrollbar.pack(side="right", fill="y")
+    
+    # Mouse wheel scrolling
+    def _on_run_mousewheel(event):
+        run_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+    run_canvas.bind_all("<MouseWheel>", _on_run_mousewheel)
+
+    def _ensure_run_canvas_min_height():
+        try:
+            _update_run_scroll()
+        except Exception:
+            pass
+
+    panel._ensure_run_canvas_min_height = _ensure_run_canvas_min_height
+    
+    # Configure grid layout for GPU cards (4 columns)
+    for i in range(4):
+        run_scrollable_frame.grid_columnconfigure(i, weight=1, uniform="gpu_cards")
+    
+    panel.cuda_run_group = run_scrollable_frame
+    panel._cuda_run_grid_col = 0  # Track current grid column
+    panel._cuda_run_grid_row = 0  # Track current grid row
     
     # Add tooltip
     _add_devices_tooltip(devs)
@@ -202,73 +376,29 @@ def build_status_ui(panel: "ResourcesPanel") -> None:
     panel._status_label.pack(side="left")
 
 
-def build_detect_button_ui(panel: "ResourcesPanel") -> Any:
-    """Build device detection button.
-    
-    Args:
-        panel: ResourcesPanel instance
-        
-    Returns:
-        The detect button widget or None
-    """
-    btn_detect = None
-    if panel._detect_fn is not None:
-        btn_detect = ttk.Button(panel, text="Detect devices", command=panel._detect_and_update)
-        btn_detect.pack(pady=(8,0))
-        _add_detect_button_tooltip(btn_detect)
-    return btn_detect
-
-
 def build_storage_caps_ui(panel: "ResourcesPanel") -> Any:
-    """Build storage caps section.
+    """Build storage caps section (now integrated into limits row).
     
     Args:
         panel: ResourcesPanel instance
         
     Returns:
-        The storage caps frame widget
+        None (storage caps now in top row)
     """
-    caps = ttk.LabelFrame(panel, text="Storage Caps")
-    caps.pack(fill="x", pady=(8, 0))
-    
-    # Dataset cap only (set on Datasets page, enforced for download folder)
-    row1 = ttk.Frame(caps)
-    row1.pack(fill="x", padx=0, pady=2)
-    ttk.Label(row1, text="Dataset cap (GB):").pack(side="left")
-    dataset_cap_entry = ttk.Entry(row1, width=8, textvariable=panel.dataset_cap_var)
-    dataset_cap_entry.pack(side="left", padx=(6, 12))
-    ttk.Label(row1, text="(enforced for dataset download folder)", font=("TkDefaultFont", 8, "italic")).pack(side="left")
-    
-    # Add usage display label
-    row2 = ttk.Frame(caps)
-    row2.pack(fill="x", padx=0, pady=2)
-    panel.dataset_usage_label = ttk.Label(row2, text="Usage: calculating...", font=("TkDefaultFont", 8))
-    panel.dataset_usage_label.pack(side="left", padx=(6, 0))
-    
-    # Add tooltip
-    try:
-        from ..tooltips import add_tooltip
-        add_tooltip(dataset_cap_entry, "Maximum disk space for dataset downloads (GB). Empty = unlimited. Enforced in training_data folder.")
-        add_tooltip(panel.dataset_usage_label, "Current dataset storage usage (excludes cached data, only counts downloaded datasets)")
-    except Exception:
-        pass
-    
-    _add_caps_tooltip(caps)
-    
-    return caps
+    # Storage caps are now built inline in build_limits_ui
+    # This function kept for compatibility but does nothing
+    pass
 
 
 def build_apply_button_ui(panel: "ResourcesPanel") -> None:
-    """Build bottom action bar with Apply button.
+    """Build bottom action bar with Apply button (deprecated - now auto-saves).
     
     Args:
         panel: ResourcesPanel instance
     """
-    bottom = ttk.Frame(panel)
-    bottom.pack(fill="x", pady=(10, 0))
-    btn_apply_all = ttk.Button(bottom, text="Apply", command=panel._on_apply_all)
-    btn_apply_all.pack(side="left")
-    _add_apply_button_tooltip(btn_apply_all)
+    # Apply button removed - settings now auto-save on change
+    # This function kept for compatibility but does nothing
+    pass
 
 
 def _add_tooltip(widget: Any, text: str) -> None:
@@ -342,9 +472,10 @@ def build_monitor_ui(panel: "ResourcesPanel") -> None:
         panel._charts_container = ttk.Frame(canvas_frame)
         panel._charts_container.pack(fill="both", expand=True)
         
-        # Configure grid for 4 columns
-        for i in range(4):
-            panel._charts_container.grid_columnconfigure(i, weight=1, minsize=300)
+        # Configure grid for 3 columns, 2 rows
+        # Columns 0-1: Wide charts (Processor, Memory)
+        # Column 2: Narrow charts (Network, Disk stacked)
+        # Grid weights are set in create_charts based on chart type
         
         # Create initial charts
         chart_widgets.create_charts(panel)
@@ -367,6 +498,73 @@ def _add_limits_tooltips(lbl_cpu_threads: Any, ent_cpu_threads: Any, lbl_cpu_uti
         add_tooltip(ent_sys_mem, "Limit RAM usage to prevent OOM. 0 = system limit. Values > system RAM are auto-capped.")
     except Exception:
         pass
+
+
+def _on_max_performance_toggle(panel: "ResourcesPanel") -> None:
+    """Handle Max Performance checkbox toggle.
+    
+    When enabled: Sets all GPU memory to 100% and utilization to 0% (no limits) and disables inputs
+    When disabled: Restores previous values and enables inputs
+    
+    Args:
+        panel: ResourcesPanel instance
+    """
+    is_max_perf = panel.max_performance_var.get()
+    
+    if is_max_perf:
+        logger.info("Max Performance mode enabled - setting all GPUs to 100% memory, 0% utilization")
+        # Apply to training GPUs
+        for row in panel._cuda_train_rows:
+            try:
+                row["mem_pct"].set("100")
+                row["util_pct"].set("0")
+                # Disable the input fields
+                for widget in row.get("widgets", []):
+                    if hasattr(widget, 'configure') and isinstance(widget, ttk.Entry):
+                        widget.configure(state="disabled")
+            except Exception:
+                pass
+        
+        # Apply to inference GPUs
+        for row in panel._cuda_run_rows:
+            try:
+                row["mem_pct"].set("100")
+                row["util_pct"].set("0")
+                # Disable the input fields
+                for widget in row.get("widgets", []):
+                    if hasattr(widget, 'configure') and isinstance(widget, ttk.Entry):
+                        widget.configure(state="disabled")
+            except Exception:
+                pass
+    else:
+        logger.info("Max Performance mode disabled - restoring default values")
+        # Restore to default values
+        default_mem = panel.gpu_mem_pct_var.get() or "90"
+        default_util = panel.gpu_util_pct_var.get() or "0"
+        
+        # Apply to training GPUs
+        for row in panel._cuda_train_rows:
+            try:
+                row["mem_pct"].set(default_mem)
+                row["util_pct"].set(default_util)
+                # Enable the input fields
+                for widget in row.get("widgets", []):
+                    if hasattr(widget, 'configure') and isinstance(widget, ttk.Entry):
+                        widget.configure(state="normal")
+            except Exception:
+                pass
+        
+        # Apply to inference GPUs
+        for row in panel._cuda_run_rows:
+            try:
+                row["mem_pct"].set(default_mem)
+                row["util_pct"].set(default_util)
+                # Enable the input fields
+                for widget in row.get("widgets", []):
+                    if hasattr(widget, 'configure') and isinstance(widget, ttk.Entry):
+                        widget.configure(state="normal")
+            except Exception:
+                pass
 
 
 def _add_devices_tooltip(devs: Any) -> None:
@@ -409,7 +607,6 @@ __all__ = [
     "build_limits_ui",
     "build_devices_ui",
     "build_status_ui",
-    "build_detect_button_ui",
     "build_storage_caps_ui",
     "build_apply_button_ui",
     "build_monitor_ui",

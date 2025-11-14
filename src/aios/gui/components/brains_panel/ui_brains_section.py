@@ -5,6 +5,9 @@ Creates the brain registry table and all management buttons/entries.
 
 from __future__ import annotations
 
+# Import safe variable wrappers
+from ...utils import safe_variables
+
 from typing import Any, cast
 
 try:  # pragma: no cover
@@ -103,7 +106,7 @@ def _build_brains_controls(parent: Any, panel: Any) -> None:
     # Rename controls
     lbl_rename = ttk.Label(mgmt_row, text="Rename:")
     lbl_rename.pack(side="left", padx=(12, 2))
-    panel.rename_var = tk.StringVar(value="")
+    panel.rename_var = safe_variables.StringVar(value="")
     entry_rename = ttk.Entry(mgmt_row, textvariable=panel.rename_var, width=15)
     entry_rename.pack(side="left")
     btn_rename = ttk.Button(mgmt_row, text="Apply", command=panel._on_rename)
@@ -118,7 +121,7 @@ def _build_brains_controls(parent: Any, panel: Any) -> None:
     # Parent controls
     lbl_parent = ttk.Label(mgmt_row, text="Set Parent:")
     lbl_parent.pack(side="left", padx=(12, 2))
-    panel.parent_var = tk.StringVar(value="")
+    panel.parent_var = safe_variables.StringVar(value="")
     entry_parent = ttk.Entry(mgmt_row, textvariable=panel.parent_var, width=15)
     entry_parent.pack(side="left")
     btn_set_parent = ttk.Button(mgmt_row, text="Apply", command=panel._on_set_parent)

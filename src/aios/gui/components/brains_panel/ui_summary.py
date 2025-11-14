@@ -5,6 +5,9 @@ Creates the top row showing aggregate stats for brains and experts.
 
 from __future__ import annotations
 
+# Import safe variable wrappers
+from ...utils import safe_variables
+
 from typing import Any, cast
 
 try:  # pragma: no cover
@@ -32,9 +35,9 @@ def build_summary_row(parent: Any, panel: Any) -> None:
     top.pack(fill="x", pady=(0, 6))
     
     # Brains stats
-    panel.brain_count_var = tk.StringVar(value="0")
-    panel.total_mb_var = tk.StringVar(value="0.0")
-    panel.total_params_m_var = tk.StringVar(value="0.0")
+    panel.brain_count_var = safe_variables.StringVar(value="0")
+    panel.total_mb_var = safe_variables.StringVar(value="0.0")
+    panel.total_params_m_var = safe_variables.StringVar(value="0.0")
     
     lbl_brains = ttk.Label(top, text="Brains:")
     lbl_brains.pack(side="left")
@@ -56,19 +59,19 @@ def build_summary_row(parent: Any, panel: Any) -> None:
     
     # Experts stats
     ttk.Label(top, text="Experts:").pack(side="left")
-    panel.total_experts_var = tk.StringVar(value="0")
+    panel.total_experts_var = safe_variables.StringVar(value="0")
     ttk.Label(top, textvariable=panel.total_experts_var, width=6).pack(side="left")
     
     ttk.Label(top, text="Active:").pack(side="left", padx=(4, 0))
-    panel.active_experts_var = tk.StringVar(value="0")
+    panel.active_experts_var = safe_variables.StringVar(value="0")
     ttk.Label(top, textvariable=panel.active_experts_var, width=6).pack(side="left")
     
     ttk.Label(top, text="Frozen:").pack(side="left", padx=(4, 0))
-    panel.frozen_experts_var = tk.StringVar(value="0")
+    panel.frozen_experts_var = safe_variables.StringVar(value="0")
     ttk.Label(top, textvariable=panel.frozen_experts_var, width=6).pack(side="left")
     
     ttk.Label(top, text="Activations:").pack(side="left", padx=(4, 0))
-    panel.total_activations_var = tk.StringVar(value="0")
+    panel.total_activations_var = safe_variables.StringVar(value="0")
     ttk.Label(top, textvariable=panel.total_activations_var, width=10).pack(side="left")
     
     # Force refresh (bypass throttling) when button clicked
@@ -76,7 +79,7 @@ def build_summary_row(parent: Any, panel: Any) -> None:
     btn_refresh.pack(side="right")
     
     # Status indicator for loading state
-    panel.status_var = tk.StringVar(value="")
+    panel.status_var = safe_variables.StringVar(value="")
     panel.status_label = ttk.Label(top, textvariable=panel.status_var, foreground="gray")
     panel.status_label.pack(side="right", padx=(0, 8))
     

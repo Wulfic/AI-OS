@@ -12,11 +12,14 @@ Optimization priorities:
 
 from __future__ import annotations
 
+import logging
 import os
 import gc
 from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass
 import torch
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -63,12 +66,16 @@ class TrainingOptimizer:
             (total_vram_gb, list of GPU info dicts)
         """
         if not torch.cuda.is_available():
+            logger.info("CUDA not available, no GPUs detected")
             return 0.0, []
+        
+        num_gpus = torch.cuda.device_count()
+        logger.info(f"Detecting VRAM across {num_gpus} GPU(s)...")
         
         gpus = []
         total_vram = 0.0
         
-        for gpu_id in range(torch.cuda.device_count()):
+        for gpu_id in range(num_gpus):
             props = torch.cuda.get_device_properties(gpu_id)
             total_gb = props.total_memory / (1024 ** 3)
             
@@ -81,17 +88,26 @@ class TrainingOptimizer:
             reserved_gb = torch.cuda.memory_reserved(gpu_id) / (1024 ** 3)
             available_gb = total_gb - reserved_gb
             
-            gpus.append({
+            gpu_info = {
                 "id": gpu_id,
                 "name": props.name,
                 "total_gb": total_gb,
                 "allocated_gb": allocated_gb,
                 "reserved_gb": reserved_gb,
                 "available_gb": available_gb,
-            })
+            }
             
+            logger.info(
+                f"GPU {gpu_id}: {props.name}, "
+                f"Total: {total_gb:.1f} GB, "
+                f"Available: {available_gb:.1f} GB, "
+                f"Allocated: {allocated_gb:.1f} GB"
+            )
+            
+            gpus.append(gpu_info)
             total_vram += total_gb
         
+        logger.info(f"Total VRAM across all GPUs: {total_vram:.1f} GB")
         return total_vram, gpus
     
     def estimate_memory_usage(
@@ -358,7 +374,7 @@ class TrainingOptimizer:
         # Use minimum VRAM across GPUs (bottleneck)
         min_vram = min(gpu["available_gb"] for gpu in gpus)
         
-        print({
+        logger.info({
             "optimization_started": True,
             "num_gpus": num_gpus,
             "total_vram_gb": round(total_vram, 2),
@@ -376,7 +392,7 @@ class TrainingOptimizer:
             max_context=max_context,
         )
         
-        print({
+        logger.info({
             "optimal_context_found": True,
             "context_length": optimal_context,
             "chunk_size": chunk_size,
@@ -393,7 +409,7 @@ class TrainingOptimizer:
             chunk_size=chunk_size,
         )
         
-        print({
+        logger.info({
             "optimal_batch_found": True,
             "batch_size": batch_size,
             "gradient_accumulation_steps": grad_accum,
@@ -470,8 +486,8 @@ def optimize_training_config(
             hidden_size=512,
             num_layers=16,
         )
-        print(f"Use context: {config.context_length}")
-        print(f"Use batch: {config.batch_size}")
+        logger.info(f"Use context: {config.context_length}")
+        logger.info(f"Use batch: {config.batch_size}")
     """
     optimizer = TrainingOptimizer()
     return optimizer.optimize(

@@ -1,0 +1,32 @@
+{
+  "timestamp": 1763107538.5543723,
+  "data": {
+    "cuda_available": true,
+    "cuda_devices": [
+      {
+        "id": 0,
+        "name": "NVIDIA GeForce RTX 2080 Ti",
+        "total_mem_mb": 11263
+      },
+      {
+        "id": 1,
+        "name": "NVIDIA GeForce RTX 2080 Ti",
+        "total_mem_mb": 11263
+      }
+    ],
+    "nvidia_smi_devices": [
+      {
+        "id": 0,
+        "name": "NVIDIA GeForce RTX 2080 Ti",
+        "total_mem_mb": 11263
+      },
+      {
+        "id": 1,
+        "name": "NVIDIA GeForce RTX 2080 Ti",
+        "total_mem_mb": 11263
+      }
+    ],
+    "detected_at": 1763107538.548531,
+    "source": "torch"
+  }
+}

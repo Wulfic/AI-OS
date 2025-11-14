@@ -29,6 +29,8 @@ class MCPClient:
         self.servers: List[Dict[str, Any]] = []
         self.available_tools: Dict[str, Dict[str, Any]] = {}
         self._loaded = False
+        
+        logger.info(f"Initializing MCP client: config_path={self.config_path}")
     
     @staticmethod
     def _default_config_path() -> str:
@@ -37,6 +39,7 @@ class MCPClient:
     
     def load_config(self) -> None:
         """Load MCP server configuration."""
+        logger.debug(f"Loading MCP config from: {self.config_path}")
         config_file = Path(self.config_path)
         if not config_file.exists():
             logger.warning(f"MCP config not found: {self.config_path}")
@@ -47,12 +50,14 @@ class MCPClient:
                 self.servers = json.load(f)
             
             # Filter enabled servers
+            enabled_before = len(self.servers)
             self.servers = [s for s in self.servers if s.get("enabled", False)]
             
-            logger.info(f"Loaded {len(self.servers)} enabled MCP servers")
+            logger.info(f"Loaded {len(self.servers)} enabled MCP servers (out of {enabled_before} total)")
+            logger.debug(f"Enabled servers: {[s.get('name', 'unknown') for s in self.servers]}")
             self._loaded = True
         except Exception as e:
-            logger.error(f"Failed to load MCP config: {e}")
+            logger.error(f"Failed to load MCP config: {e}", exc_info=True)
     
     async def discover_tools(self) -> Dict[str, Dict[str, Any]]:
         """Discover available tools from all enabled MCP servers.
@@ -60,6 +65,8 @@ class MCPClient:
         Returns:
             Dict mapping tool names to their schemas
         """
+        logger.info("Discovering MCP tools from enabled servers")
+        
         if not self._loaded:
             self.load_config()
         
@@ -69,6 +76,7 @@ class MCPClient:
         
         for server in self.servers:
             server_name = server.get("name", "")
+            logger.debug(f"Loading tools for MCP server: {server_name}")
             
             if server_name == "filesystem":
                 tools.update(self._get_filesystem_tools())
@@ -78,6 +86,7 @@ class MCPClient:
                 tools.update(self._get_duckduckgo_tools())
         
         self.available_tools = tools
+        logger.info(f"Discovered {len(tools)} MCP tools: {list(tools.keys())}")
         return tools
     
     def _get_filesystem_tools(self) -> Dict[str, Dict[str, Any]]:
@@ -206,7 +215,11 @@ class MCPClient:
         Returns:
             Tool execution result
         """
+        logger.info(f"Executing MCP tool: {tool_name}")
+        logger.debug(f"Tool parameters: {parameters}")
+        
         if tool_name not in self.available_tools:
+            logger.warning(f"Unknown MCP tool requested: {tool_name}")
             return {
                 "success": False,
                 "error": f"Unknown tool: {tool_name}"
@@ -228,7 +241,10 @@ class MCPClient:
         Returns:
             List of tool definitions suitable for model context
         """
+        logger.debug("Getting MCP tools for prompt context")
+        
         if not self.available_tools:
+            logger.info("No tools cached, discovering tools...")
             # Try to discover if not already done
             try:
                 asyncio.run(self.discover_tools())
@@ -236,4 +252,6 @@ class MCPClient:
                 logger.warning(f"Failed to discover tools: {e}")
                 return []
         
+        tool_count = len(self.available_tools)
+        logger.debug(f"Returning {tool_count} MCP tools for prompt")
         return list(self.available_tools.values())

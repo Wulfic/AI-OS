@@ -1,10 +1,13 @@
 """Search and indexing engine for documentation with improved relevance scoring."""
 
 import json
+import logging
 import os
 import re
 from pathlib import Path
 from typing import List, Tuple, Dict, Any
+
+logger = logging.getLogger(__name__)
 
 
 class SearchEngine:
@@ -41,7 +44,9 @@ class SearchEngine:
         prebuilt = self.docs_root / "search_index.json"
         if prebuilt.exists():
             try:
+                logger.info(f"[SearchEngine] Loading prebuilt index from: {prebuilt}")
                 data = json.loads(prebuilt.read_text(encoding="utf-8", errors="ignore"))
+                logger.info(f"[SearchEngine] Loaded {len(data)} items from prebuilt index")
                 index: List[Tuple[str, str, List[str], List[Tuple[int, str]]]] = []
                 for it in data:
                     rel = str(it.get("path", "")).replace("\\", "/").lstrip("/")
@@ -57,9 +62,11 @@ class SearchEngine:
                     ]
                     index.append((rel, content, tags, headings))
                 self.index = index
+                logger.info(f"[SearchEngine] Successfully loaded index with {len(self.index)} documents")
+                logger.info("[SearchEngine] About to return True from build_index()")
                 return True
             except Exception as e:
-                print(f"[SearchEngine] Failed to load prebuilt index: {e}")
+                logger.error(f"[SearchEngine] Failed to load prebuilt index: {e}", exc_info=True)
 
         # Build fresh index
         try:
@@ -108,7 +115,7 @@ class SearchEngine:
                     
                     index.append((rel, text, tags, headings))
                 except Exception as e:
-                    print(f"[SearchEngine] Failed to index {p}: {e}")
+                    logger.debug(f"Failed to index {p}: {e}")
             
             self.index = index
             
@@ -116,11 +123,11 @@ class SearchEngine:
             try:
                 self._save_prebuilt_index()
             except Exception as e:
-                print(f"[SearchEngine] Failed to save prebuilt index: {e}")
+                logger.debug(f"Failed to save prebuilt index: {e}")
             
             return True
         except Exception as e:
-            print(f"[SearchEngine] Failed to build index: {e}")
+            logger.error(f"Failed to build index: {e}", exc_info=True)
             return False
     
     def _save_prebuilt_index(self) -> None:

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aios.core.brains.hf_brain import HFHRMBrain
+
+logger = logging.getLogger(__name__)
 
 
 def load_hf_brain(brain: "HFHRMBrain") -> None:
@@ -28,7 +31,7 @@ def load_hf_brain(brain: "HFHRMBrain") -> None:
     # Use explicit max_seq_len if provided, otherwise read from config
     if brain.max_seq_len is not None:
         base_max_seq_len = max(1024, brain.max_seq_len)
-        print(f"[Brain] Using explicit context length: {base_max_seq_len} tokens")
+        logger.info(f"[Brain] Using explicit context length: {base_max_seq_len} tokens")
     else:
         base_max_seq_len = 2048  # Default to 2k tokens (matches config default)
         
@@ -42,7 +45,7 @@ def load_hf_brain(brain: "HFHRMBrain") -> None:
                 try:
                     config_max_seq = int(data.get("max_seq_len", 2048))
                     base_max_seq_len = max(1024, config_max_seq)  # Ensure at least 1k
-                    print(f"[Brain] Using context length from config: {base_max_seq_len} tokens")
+                    logger.info(f"[Brain] Using context length from config: {base_max_seq_len} tokens")
                 except Exception:
                     pass
         except Exception:
@@ -93,7 +96,7 @@ def load_hf_brain(brain: "HFHRMBrain") -> None:
                 brain.gen_max_new_tokens = default_gen_tokens
             # Update max_response_chars based on actual token limit
             brain.max_response_chars = brain.gen_max_new_tokens * 4
-            print(f"[Brain] Loaded with context window: {max_seq_len} tokens (max generation: {brain.gen_max_new_tokens} tokens, ~{brain.max_response_chars} chars)")
+            logger.info(f"[Brain] Loaded with context window: {max_seq_len} tokens (max generation: {brain.gen_max_new_tokens} tokens, ~{brain.max_response_chars} chars)")
             return
         except Exception as e:
             last_error = e

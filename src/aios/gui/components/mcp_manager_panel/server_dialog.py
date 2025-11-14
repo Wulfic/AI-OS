@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+# Import safe variable wrappers
+from ...utils import safe_variables
+
 from typing import Any, Optional, cast
 
 try:  # pragma: no cover - environment dependent
@@ -46,27 +49,27 @@ class MCPServerDialog(tk.Toplevel):  # type: ignore[misc]
         
         # Name
         ttk.Label(form, text="Name:").grid(row=row, column=0, sticky="w", pady=pady_val)
-        self.name_var = tk.StringVar(value=initial_data.get("name", "") if initial_data else "")
+        self.name_var = safe_variables.StringVar(value=initial_data.get("name", "") if initial_data else "")
         ttk.Entry(form, textvariable=self.name_var, width=40).grid(row=row, column=1, sticky="ew", pady=pady_val)
         row += 1
         
         # Type
         ttk.Label(form, text="Type:").grid(row=row, column=0, sticky="w", pady=pady_val)
-        self.type_var = tk.StringVar(value=initial_data.get("type", "stdio") if initial_data else "stdio")
+        self.type_var = safe_variables.StringVar(value=initial_data.get("type", "stdio") if initial_data else "stdio")
         type_combo = ttk.Combobox(form, textvariable=self.type_var, values=("stdio", "http", "https"), state="readonly", width=37)
         type_combo.grid(row=row, column=1, sticky="ew", pady=pady_val)
         row += 1
         
         # Command
         ttk.Label(form, text="Command:").grid(row=row, column=0, sticky="w", pady=pady_val)
-        self.command_var = tk.StringVar(value=initial_data.get("command", "") if initial_data else "")
+        self.command_var = safe_variables.StringVar(value=initial_data.get("command", "") if initial_data else "")
         ttk.Entry(form, textvariable=self.command_var, width=40).grid(row=row, column=1, sticky="ew", pady=pady_val)
         row += 1
         
         # Args
         ttk.Label(form, text="Arguments:").grid(row=row, column=0, sticky="w", pady=pady_val)
         args_text = " ".join(initial_data.get("args", [])) if initial_data else ""
-        self.args_var = tk.StringVar(value=args_text)
+        self.args_var = safe_variables.StringVar(value=args_text)
         ttk.Entry(form, textvariable=self.args_var, width=40).grid(row=row, column=1, sticky="ew", pady=pady_val)
         row += 1
         
@@ -79,7 +82,7 @@ class MCPServerDialog(tk.Toplevel):  # type: ignore[misc]
         row += 1
         
         # Enabled
-        self.enabled_var = tk.BooleanVar(value=initial_data.get("enabled", True) if initial_data else True)
+        self.enabled_var = safe_variables.BooleanVar(value=initial_data.get("enabled", True) if initial_data else True)
         ttk.Checkbutton(form, text="Enabled", variable=self.enabled_var).grid(row=row, column=1, sticky="w", pady=pady_val)
         row += 1
         

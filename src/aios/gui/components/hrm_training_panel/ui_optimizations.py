@@ -4,11 +4,14 @@ Builds the comprehensive optimizations section with memory options, PEFT, advanc
 """
 
 from __future__ import annotations
+import logging
 from tkinter import ttk
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .panel_main import HRMTrainingPanel
+
+logger = logging.getLogger(__name__)
 
 
 def build_optimizations_section(panel: HRMTrainingPanel, parent: any) -> None:  # type: ignore[valid-type]
@@ -153,6 +156,7 @@ def update_zero_label(panel: HRMTrainingPanel) -> None:
     """
     try:
         stage = panel.zero_stage_var.get()
+        logger.debug(f"ZeRO stage changed to: {stage}")
         if stage == "none":
             panel.zero_savings_lbl.config(text="")
         elif stage == "zero1":
@@ -161,7 +165,8 @@ def update_zero_label(panel: HRMTrainingPanel) -> None:
             panel.zero_savings_lbl.config(text="↓50% VRAM (recommended)")
         elif stage == "zero3":
             panel.zero_savings_lbl.config(text="↓75% VRAM")
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Failed to update ZeRO label: {e}")
         pass
 
 
@@ -174,8 +179,10 @@ def update_chunk_label(panel: HRMTrainingPanel) -> None:
     try:
         if panel.use_chunked_training_var.get():
             chunk_size = panel.chunk_size_var.get().strip() or "2048"
+            logger.debug(f"Context chunking enabled: {chunk_size} token chunks")
             panel.chunk_info_lbl.config(text=f"Active: {chunk_size} token chunks")
         else:
             panel.chunk_info_lbl.config(text="")
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Failed to update chunk label: {e}")
         pass

@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+import logging
 import os
 import json
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -79,20 +82,26 @@ class ACTv1Brain:
         if self._model is not None:
             return
         
+        logger.info(f"Loading ACTv1 brain: {self.name}")
+        
         try:
             import torch
             from transformers import AutoTokenizer
         except ImportError as e:
+            logger.error("PyTorch and transformers are required but not installed")
             raise RuntimeError(
                 "PyTorch and transformers are required for ACTv1 brains but not installed."
             ) from e
         
         # Validate checkpoint path
         if not self.checkpoint_path:
+            logger.error(f"Brain {self.name} has no checkpoint_path specified")
             raise ValueError(
                 f"ACTv1 brain {self.name} has no checkpoint_path. "
                 "Brain must be created with a valid checkpoint path."
             )
+        
+        logger.debug(f"Checkpoint path: {self.checkpoint_path}")
         
         # Load brain configuration
         config_path = self.brain_config_path
@@ -102,13 +111,18 @@ class ACTv1Brain:
             config_path = os.path.join(checkpoint_dir, "brain.json")
         
         if not os.path.exists(config_path):
+            logger.error(f"brain.json not found at {config_path}")
             raise FileNotFoundError(
                 f"brain.json not found at {config_path}. "
                 "ACTv1 brains require brain.json configuration."
             )
         
+        logger.info(f"Loading brain configuration from: {config_path}")
         with open(config_path, "r", encoding="utf-8") as f:
             self._config = json.load(f)
+        
+        # Log configuration details
+        logger.debug(f"Brain config: {json.dumps(self._config, indent=2)}")
         
         # Determine context length
         if self.max_seq_len is not None:
@@ -116,9 +130,12 @@ class ACTv1Brain:
         else:
             max_seq_len = self._config.get("max_seq_len", 2048)  # Default to 2048 if not specified
         
+        logger.info(f"Context length: {max_seq_len}")
+        
         # Load tokenizer
         tokenizer_path = self._config.get("tokenizer_model")
         if not tokenizer_path:
+            logger.error("brain.json missing 'tokenizer_model' field")
             raise ValueError(
                 f"brain.json must specify 'tokenizer_model' path for ACTv1 brain {self.name}"
             )
@@ -128,11 +145,13 @@ class ACTv1Brain:
             tokenizer_path = os.path.abspath(tokenizer_path)
         
         if not os.path.exists(tokenizer_path):
+            logger.error(f"Tokenizer path does not exist: {tokenizer_path}")
             raise FileNotFoundError(
                 f"Tokenizer path does not exist: {tokenizer_path}. "
                 f"Check that the tokenizer files are present."
             )
         
+        logger.info(f"Loading tokenizer from: {tokenizer_path}")
         print(f"[ACTv1Brain] Loading tokenizer from: {tokenizer_path}")
         try:
             # Try loading with fast tokenizer first (works with tokenizer.json)
@@ -141,7 +160,9 @@ class ACTv1Brain:
                 trust_remote_code=True,
                 use_fast=True,  # Use fast tokenizer which works with tokenizer.json
             )
+            logger.debug("Successfully loaded fast tokenizer")
         except Exception as e:
+            logger.warning(f"Fast tokenizer failed, falling back to slow tokenizer: {e}")
             # Fall back to slow tokenizer if fast fails
             try:
                 self._tokenizer = AutoTokenizer.from_pretrained(
@@ -149,16 +170,23 @@ class ACTv1Brain:
                     trust_remote_code=True,
                     use_fast=False,
                 )
+                logger.debug("Successfully loaded slow tokenizer")
             except Exception as e2:
+                logger.error(f"Both fast and slow tokenizer loading failed: {e}, {e2}")
                 raise RuntimeError(
                     f"Failed to load tokenizer from {tokenizer_path}: {e}. "
                     f"Also tried slow tokenizer: {e2}. "
                     f"Ensure the tokenizer files (tokenizer.json or tokenizer.model) are present."
                 ) from e
         
+        # Log tokenizer details
+        vocab_size = len(self._tokenizer)
+        logger.info(f"Tokenizer loaded: vocab_size={vocab_size}")
+        
         # Ensure tokenizer has pad token
         if self._tokenizer.pad_token is None:
             self._tokenizer.pad_token = self._tokenizer.eos_token
+            logger.debug("Set pad_token = eos_token")
         
         # Determine device
         if self.inference_device:
@@ -168,6 +196,7 @@ class ACTv1Brain:
         else:
             self._device = "cpu"
         
+        logger.info(f"Target device: {self._device}")
         print(f"[ACTv1Brain] Loading model from: {self.checkpoint_path}")
         print(f"[ACTv1Brain] Device: {self._device}, Context length: {max_seq_len}")
         
@@ -211,10 +240,30 @@ class ACTv1Brain:
             "forward_dtype": self._convert_dtype(self._config.get("dtype", "float32")),
         }
         
+        # Log model architecture details
+        logger.info(
+            f"Building model: H{model_config['H_layers']}/L{model_config['L_layers']} layers, "
+            f"hidden={model_config['hidden_size']}, heads={model_config['num_heads']}, "
+            f"vocab={model_config['vocab_size']}, dtype={model_config['forward_dtype']}"
+        )
+        
+        # Calculate approximate parameter count
+        hidden = model_config['hidden_size']
+        h_layers = model_config['H_layers']
+        l_layers = model_config['L_layers']
+        vocab = model_config['vocab_size']
+        approx_params = (
+            vocab * hidden +  # Embedding
+            (h_layers + l_layers) * (4 * hidden * hidden) +  # Transformer layers (approx)
+            vocab * hidden  # Output projection
+        )
+        logger.info(f"Estimated parameters: ~{approx_params / 1e6:.1f}M")
+        
         # Build the model (creates on CPU by default)
         self._model = build_model(model_config)
         
         # Move model to device BEFORE loading checkpoint for faster initialization
+        logger.info(f"Moving model to {self._device}...")
         print(f"[ACTv1Brain] Moving model to {self._device}...")
         self._model.to(self._device)
         self._model.eval()
@@ -224,10 +273,19 @@ class ACTv1Brain:
             from safetensors.torch import load_file as load_safetensors
             
             if not os.path.exists(self.checkpoint_path):
+                logger.error(f"Checkpoint not found: {self.checkpoint_path}")
                 raise FileNotFoundError(f"Checkpoint not found: {self.checkpoint_path}")
             
+            # Log checkpoint file size
+            checkpoint_size_mb = os.path.getsize(self.checkpoint_path) / (1024 * 1024)
+            logger.info(f"Loading checkpoint ({checkpoint_size_mb:.1f} MB)...")
             print(f"[ACTv1Brain] Loading checkpoint weights...")
+            
             state_dict = load_safetensors(self.checkpoint_path, device=str(self._device))
+            
+            # Log state dict info
+            num_tensors = len(state_dict)
+            logger.debug(f"Checkpoint contains {num_tensors} tensors")
             
             # Check for vocabulary size mismatch and resize embeddings if needed
             checkpoint_vocab_size = None
@@ -239,6 +297,10 @@ class ACTv1Brain:
                 checkpoint_vocab_size = state_dict["inner.embed_tokens.weight"].shape[0]
             
             if checkpoint_vocab_size is not None and checkpoint_vocab_size != model_vocab_size:
+                logger.warning(
+                    f"Vocab size mismatch: checkpoint={checkpoint_vocab_size}, "
+                    f"model={model_vocab_size}, resizing embeddings..."
+                )
                 print(f"[ACTv1Brain] WARNING: Vocab size mismatch detected!")
                 print(f"[ACTv1Brain]   Checkpoint vocab: {checkpoint_vocab_size}, Model vocab: {model_vocab_size}")
                 print(f"[ACTv1Brain]   Resizing embeddings to match model...")
@@ -297,13 +359,26 @@ class ACTv1Brain:
                         state_dict[key] = new_lm_head
             
             # Load state dict with resized embeddings
-            self._model.load_state_dict(state_dict, strict=False)
+            missing, unexpected = self._model.load_state_dict(state_dict, strict=False)
+            
+            # Log load results
+            if missing:
+                logger.warning(f"Missing keys in checkpoint: {missing}")
+            if unexpected:
+                logger.warning(f"Unexpected keys in checkpoint: {unexpected}")
+            
+            logger.info(f"Successfully loaded {self.name}")
+            logger.info(
+                f"Architecture: H{model_config['H_layers']}/L{model_config['L_layers']}, "
+                f"Vocab: {model_config['vocab_size']}, Hidden: {model_config['hidden_size']}"
+            )
             
             print(f"[ACTv1Brain] Loaded {self.name} successfully")
             print(f"[ACTv1Brain]   Architecture: H{model_config['H_layers']}/L{model_config['L_layers']}")
             print(f"[ACTv1Brain]   Vocab: {model_config['vocab_size']}, Hidden: {model_config['hidden_size']}")
             
         except Exception as e:
+            logger.error(f"Failed to load ACTv1 checkpoint: {e}")
             raise RuntimeError(f"Failed to load ACTv1 checkpoint: {e}") from e
 
     def run(self, task: Dict[str, Any]) -> Dict[str, Any]:

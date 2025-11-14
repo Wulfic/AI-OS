@@ -13,6 +13,9 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Any, Dict, Optional
 
+# Import safe variable wrappers
+from ....utils import safe_variables
+
 from .brain_creator import create_brain_directory, apply_preset_to_panel
 from .param_estimator import estimate_parameters
 
@@ -35,7 +38,7 @@ def show_create_dialog(parent_dialog: tk.Toplevel, panel: Any) -> None:
         # ===== PRESET SELECTION =====
         preset_label = ttk.Label(inner, text="Choose architecture preset:")
         preset_label.pack(anchor="w")
-        choice = tk.StringVar(value="5M")
+        choice = safe_variables.StringVar(value="5M")
         preset_buttons = {}
         for opt in ["1M", "5M", "10M", "20M", "50M", "Custom"]:
             rb = ttk.Radiobutton(inner, text=opt, variable=choice, value=opt)
@@ -47,7 +50,7 @@ def show_create_dialog(parent_dialog: tk.Toplevel, panel: Any) -> None:
         name_row.pack(fill="x", pady=(8,0))
         name_lbl = ttk.Label(name_row, text="Brain name:", width=18, anchor="e")
         name_lbl.pack(side="left")
-        name_var = tk.StringVar(value=panel.brain_name_var.get().strip() or "new_brain")
+        name_var = safe_variables.StringVar(value=panel.brain_name_var.get().strip() or "new_brain")
         name_entry = ttk.Entry(name_row, textvariable=name_var, width=24)
         name_entry.pack(side="left")
         
@@ -56,7 +59,7 @@ def show_create_dialog(parent_dialog: tk.Toplevel, panel: Any) -> None:
         goal_row.pack(fill="x", pady=(4,0))
         goal_lbl = ttk.Label(goal_row, text="Default goal:", width=18, anchor="e")
         goal_lbl.pack(side="left")
-        goal_var = tk.StringVar(value="")
+        goal_var = safe_variables.StringVar(value="")
         goal_entry = ttk.Entry(goal_row, textvariable=goal_var, width=60)
         goal_entry.pack(side="left", fill="x", expand=True)
         
@@ -194,7 +197,7 @@ def _create_tokenizer_selector(parent: ttk.Frame, panel: Any) -> tuple:
     tokenizer_lbl = ttk.Label(tokenizer_row, text="Tokenizer:", width=18, anchor="e")
     tokenizer_lbl.pack(side="left")
     
-    tokenizer_var = tk.StringVar()
+    tokenizer_var = safe_variables.StringVar()
     tokenizer_id_map = {}
     
     try:
@@ -292,7 +295,7 @@ def _create_custom_architecture_section(parent: ttk.Frame) -> tuple:
         row.pack(fill="x", pady=2)
         lbl = ttk.Label(row, text=label, width=18, anchor="e")
         lbl.pack(side="left")
-        var = tk.StringVar(value=default)
+        var = safe_variables.StringVar(value=default)
         custom_vars[var_name] = var
         entry = ttk.Entry(row, textvariable=var, width=width)
         entry.pack(side="left")
@@ -312,7 +315,7 @@ def _create_custom_architecture_section(parent: ttk.Frame) -> tuple:
     pos_row.pack(fill="x", pady=2)
     pos_lbl = ttk.Label(pos_row, text="Position encoding:", width=18, anchor="e")
     pos_lbl.pack(side="left")
-    pos_var = tk.StringVar(value="rope")
+    pos_var = safe_variables.StringVar(value="rope")
     custom_vars["pos"] = pos_var
     pos_combo = ttk.Combobox(pos_row, textvariable=pos_var, width=10, state="readonly")
     pos_combo['values'] = ('rope', 'learned', 'sincos')
@@ -323,7 +326,7 @@ def _create_custom_architecture_section(parent: ttk.Frame) -> tuple:
     dtype_row.pack(fill="x", pady=2)
     dtype_lbl = ttk.Label(dtype_row, text="Model dtype:", width=18, anchor="e")
     dtype_lbl.pack(side="left")
-    dtype_var = tk.StringVar(value="fp32")
+    dtype_var = safe_variables.StringVar(value="fp32")
     custom_vars["dtype"] = dtype_var
     dtype_combo = ttk.Combobox(dtype_row, textvariable=dtype_var, width=10, state="readonly")
     dtype_combo['values'] = ('fp32', 'fp16', 'bf16')
@@ -336,7 +339,7 @@ def _create_custom_architecture_section(parent: ttk.Frame) -> tuple:
     # Use MoE checkbox
     moe_check_row = ttk.Frame(right_col)
     moe_check_row.pack(fill="x", pady=2)
-    use_moe_var = tk.BooleanVar(value=True)
+    use_moe_var = safe_variables.BooleanVar(value=True)
     custom_vars["use_moe"] = use_moe_var
     moe_check = ttk.Checkbutton(moe_check_row, text="Enable sparse MoE\n(75% compute reduction)", variable=use_moe_var)
     moe_check.pack(anchor="w")
@@ -346,7 +349,7 @@ def _create_custom_architecture_section(parent: ttk.Frame) -> tuple:
     experts_row.pack(fill="x", pady=2)
     experts_lbl = ttk.Label(experts_row, text="Num experts:", width=18, anchor="e")
     experts_lbl.pack(side="left")
-    num_experts_var = tk.StringVar(value="8")
+    num_experts_var = safe_variables.StringVar(value="8")
     custom_vars["num_experts"] = num_experts_var
     experts_entry = ttk.Entry(experts_row, textvariable=num_experts_var, width=8)
     experts_entry.pack(side="left")
@@ -356,7 +359,7 @@ def _create_custom_architecture_section(parent: ttk.Frame) -> tuple:
     experts_active_row.pack(fill="x", pady=2)
     experts_active_lbl = ttk.Label(experts_active_row, text="Experts per token:", width=18, anchor="e")
     experts_active_lbl.pack(side="left")
-    experts_per_tok_var = tk.StringVar(value="2")
+    experts_per_tok_var = safe_variables.StringVar(value="2")
     custom_vars["num_experts_per_tok"] = experts_per_tok_var
     experts_per_tok_entry = ttk.Entry(experts_active_row, textvariable=experts_per_tok_var, width=8)
     experts_per_tok_entry.pack(side="left")

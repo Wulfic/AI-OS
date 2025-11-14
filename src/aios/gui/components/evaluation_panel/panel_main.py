@@ -1,11 +1,15 @@
 """Main evaluation panel class."""
 
 from __future__ import annotations
+import logging
 import os
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from typing import Any, Callable, Optional
 from pathlib import Path
+
+# Import safe variable wrappers
+from ...utils import safe_variables
 
 from aios.core.evaluation import EvaluationResult, HarnessWrapper, EvaluationHistory
 from aios.gui.dialogs import EvaluationResultsDialog
@@ -17,6 +21,8 @@ from .config_persistence import (
     merge_config_with_defaults,
     save_evaluation_to_config,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
@@ -41,13 +47,15 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         import time
         init_start = time.time()
         
+        logger.info("Initializing Evaluation Panel")
+        
         if tk is None or ttk is None:
             raise RuntimeError("Tkinter not available")
         super().__init__(parent, text=title)
         self.pack(fill="both", expand=True, padx=8, pady=8)
         
         step1 = time.time()
-        print(f"[EVAL INIT] Superclass init: {step1 - init_start:.3f}s")
+        logger.debug(f"Evaluation panel superclass init took {step1 - init_start:.3f}s")
 
         self._run_cli = run_cli
         self._append_out = append_out or (lambda s: None)
@@ -64,10 +72,13 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         except Exception:
             self._project_root = os.getcwd()
         
+        logger.debug(f"Project root: {self._project_root}")
+        
         step2 = time.time()
-        print(f"[EVAL INIT] Basic setup: {step2 - step1:.3f}s")
+        logger.debug(f"Evaluation panel basic setup took {step2 - step1:.3f}s")
         
         # Initialize HarnessWrapper
+        logger.debug("Initializing evaluation harness wrapper")
         self._harness = HarnessWrapper(
             log_callback=self._log_threadsafe,
             progress_callback=self._on_progress_update_threadsafe,
@@ -78,9 +89,10 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         # and set via _set_history() on main thread
         self._history: Optional[EvaluationHistory] = None
         self._history_db_path = str(Path(self._project_root) / "artifacts" / "evaluation" / "history.db")
+        logger.debug(f"Evaluation history database: {self._history_db_path}")
 
         step3 = time.time()
-        print(f"[EVAL INIT] Harness/history setup: {step3 - step2:.3f}s")
+        logger.debug(f"[EVAL INIT] Harness/history setup: {step3 - step2:.3f}s")
 
         # Schedule save helper
         def _schedule_save(delay_ms: int = 400) -> None:
@@ -101,15 +113,15 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         self._schedule_save = _schedule_save  # type: ignore[attr-defined]
 
         # State variables
-        self.model_source_var = tk.StringVar(value="huggingface")  # huggingface, local, brain
-        self.model_name_var = tk.StringVar(value="gpt2")
+        self.model_source_var = safe_variables.StringVar(value="huggingface")  # huggingface, local, brain
+        self.model_name_var = safe_variables.StringVar(value="gpt2")
         
         # Benchmark selection
-        self.selected_benchmarks_var = tk.StringVar(value="")
-        self.benchmark_preset_var = tk.StringVar(value="")
+        self.selected_benchmarks_var = safe_variables.StringVar(value="")
+        self.benchmark_preset_var = safe_variables.StringVar(value="")
         
         step4 = time.time()
-        print(f"[EVAL INIT] State variables: {step4 - step3:.3f}s")
+        logger.debug(f"[EVAL INIT] State variables: {step4 - step3:.3f}s")
         
         # Load configuration defaults from config file
         config_values = load_evaluation_from_config()
@@ -125,37 +137,42 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         merged = merge_config_with_defaults(config_values, defaults)
         
         step5 = time.time()
-        print(f"[EVAL INIT] Config loading: {step5 - step4:.3f}s")
+        logger.debug(f"[EVAL INIT] Config loading: {step5 - step4:.3f}s")
         
         # Configuration (from config file or defaults)
-        self.batch_size_var = tk.StringVar(value=merged['batch_size'])
-        self.limit_var = tk.StringVar(value=merged['limit'])
-        self.num_fewshot_var = tk.StringVar(value=merged['num_fewshot'])
-        self.output_path_var = tk.StringVar(value=merged['output_path'])
+        self.batch_size_var = safe_variables.StringVar(value=merged['batch_size'])
+        self.limit_var = safe_variables.StringVar(value=merged['limit'])
+        self.num_fewshot_var = safe_variables.StringVar(value=merged['num_fewshot'])
+        self.output_path_var = safe_variables.StringVar(value=merged['output_path'])
         
         # Advanced options (from config file or defaults)
-        self.log_samples_var = tk.BooleanVar(value=merged['log_samples'])
-        self.cache_requests_var = tk.BooleanVar(value=merged['cache_requests'])
-        self.check_integrity_var = tk.BooleanVar(value=merged['check_integrity'])
+        self.log_samples_var = safe_variables.BooleanVar(value=merged['log_samples'])
+        self.cache_requests_var = safe_variables.BooleanVar(value=merged['cache_requests'])
+        self.check_integrity_var = safe_variables.BooleanVar(value=merged['check_integrity'])
         
         # Available benchmarks by category
         self.benchmarks = BENCHMARKS
         
         step6 = time.time()
-        print(f"[EVAL INIT] More variables: {step6 - step5:.3f}s")
+        logger.debug(f"[EVAL INIT] More variables: {step6 - step5:.3f}s")
         
         # Build UI
         self._build_ui()
         
         step7 = time.time()
-        print(f"[EVAL INIT] UI building: {step7 - step6:.3f}s")
+        logger.debug(f"[EVAL INIT] UI building: {step7 - step6:.3f}s")
         
         # Auto-persist on changes
         self._setup_auto_persist()
         
         step8 = time.time()
-        print(f"[EVAL INIT] Auto-persist setup: {step8 - step7:.3f}s")
-        print(f"[EVAL INIT] TOTAL: {step8 - init_start:.3f}s")
+        logger.debug(f"Evaluation panel auto-persist setup took {step8 - step7:.3f}s")
+        logger.info(f"Evaluation Panel initialized successfully in {step8 - init_start:.3f}s")
+
+        try:
+            self.bind("<Map>", lambda e: logger.debug("Evaluation panel mapped (visible)"))
+        except Exception:
+            pass
 
     def _build_ui(self) -> None:
         """Build the evaluation panel UI."""
@@ -164,36 +181,36 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         t0 = time.time()
         ui_builders.create_model_selection(self)
         t1 = time.time()
-        print(f"[EVAL UI] Model selection: {t1 - t0:.3f}s")
+        logger.debug(f"[EVAL UI] Model selection: {t1 - t0:.3f}s")
         
         ui_builders.create_benchmark_selection(self)
         t2 = time.time()
-        print(f"[EVAL UI] Benchmark selection: {t2 - t1:.3f}s")
+        logger.debug(f"[EVAL UI] Benchmark selection: {t2 - t1:.3f}s")
         
         ui_builders.create_configuration_section(self)
         t3 = time.time()
-        print(f"[EVAL UI] Configuration section: {t3 - t2:.3f}s")
+        logger.debug(f"[EVAL UI] Configuration section: {t3 - t2:.3f}s")
         
         ui_builders.create_advanced_options(self)
         t4 = time.time()
-        print(f"[EVAL UI] Advanced options: {t4 - t3:.3f}s")
+        logger.debug(f"[EVAL UI] Advanced options: {t4 - t3:.3f}s")
         
         ui_builders.create_control_buttons(self)
         t5 = time.time()
-        print(f"[EVAL UI] Control buttons: {t5 - t4:.3f}s")
+        logger.debug(f"[EVAL UI] Control buttons: {t5 - t4:.3f}s")
         
         ui_builders.create_progress_section(self)
         t6 = time.time()
-        print(f"[EVAL UI] Progress section: {t6 - t5:.3f}s")
+        logger.debug(f"[EVAL UI] Progress section: {t6 - t5:.3f}s")
         
         ui_builders.create_output_section(self)
         t7 = time.time()
-        print(f"[EVAL UI] Output section: {t7 - t6:.3f}s")
+        logger.debug(f"[EVAL UI] Output section: {t7 - t6:.3f}s")
         
         ui_builders.create_results_section(self)
         t8 = time.time()
-        print(f"[EVAL UI] Results section: {t8 - t7:.3f}s")
-        print(f"[EVAL UI] TOTAL UI BUILD: {t8 - t0:.3f}s")
+        logger.debug(f"[EVAL UI] Results section: {t8 - t7:.3f}s")
+        logger.debug(f"[EVAL UI] TOTAL UI BUILD: {t8 - t0:.3f}s")
 
     def _populate_benchmark_tree(self) -> None:
         """Populate the benchmark tree with available benchmarks."""
@@ -257,6 +274,15 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
     def _set_history(self, history: EvaluationHistory) -> None:
         """Set history instance (called from main thread after async init)."""
         self._history = history
+
+        if hasattr(self, "_history_notice_shown"):
+            delattr(self, "_history_notice_shown")
+
+        try:
+            if hasattr(self, "recent_tree"):
+                ui_builders._refresh_recent_results(self)
+        except Exception as exc:
+            logger.error(f"[Evaluation] Failed to refresh recent results after history load: {exc}", exc_info=True)
 
     def _log_threadsafe(self, msg: str) -> None:
         """Thread-safe wrapper for logging (calls _append_out on GUI thread)."""
@@ -372,6 +398,29 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         except Exception:
             pass
 
+    def on_tab_activated(self) -> None:
+        """Handle notebook activation for the evaluation tab."""
+        logger.debug("Evaluation tab activation handler entered")
+
+        try:
+            pending_tree = bool(getattr(self, "_pending_tree_structure", None))
+            logger.debug(
+                "Evaluation tab state: tree_populated=%s pending_tree=%s history_loaded=%s",
+                getattr(self, "_tree_populated", False),
+                pending_tree,
+                isinstance(getattr(self, "_history", None), EvaluationHistory),
+            )
+        except Exception:
+            logger.debug("Unable to inspect evaluation panel state", exc_info=True)
+
+        def _activation_checkpoint() -> None:
+            logger.debug("Evaluation tab activation checkpoint (UI responsive)")
+
+        try:
+            self.after(150, _activation_checkpoint)
+        except Exception:
+            logger.debug("Failed to schedule evaluation activation checkpoint", exc_info=True)
+
     def _setup_auto_persist(self) -> None:
         """Setup auto-persistence for state variables."""
         try:
@@ -387,37 +436,67 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
                     save_evaluation_to_config(state)
                 except Exception as e:
                     # Don't show error to user, just log it
-                    print(f"[Evaluation] Failed to save to config: {e}")
+                    logger.error(f"[Evaluation] Failed to save to config: {e}")
+            
+            # Helper to create traced callbacks with logging for specific params
+            def make_logged_callback(param_name: str, var_obj):
+                """Create a traced callback that logs parameter changes."""
+                def callback(*args):
+                    try:
+                        new_val = var_obj.get()
+                        logger.debug(f"Evaluation parameter changed: {param_name}={new_val}")
+                    except Exception:
+                        pass
+                    on_config_change()
+                return callback
             
             # Watch configuration variables (not model/benchmark selections)
             config_vars = [
-                self.batch_size_var,
-                self.limit_var,
-                self.num_fewshot_var,
-                self.output_path_var,
-                self.log_samples_var,
-                self.cache_requests_var,
-                self.check_integrity_var,
+                ("batch_size", self.batch_size_var),
+                ("limit", self.limit_var),
+                ("num_fewshot", self.num_fewshot_var),
+                ("output_path", self.output_path_var),
+                ("log_samples", self.log_samples_var),
+                ("cache_requests", self.cache_requests_var),
+                ("check_integrity", self.check_integrity_var),
             ]
             
             # Watch model/benchmark vars for GUI state only
             gui_state_vars = [
-                self.model_source_var,
-                self.model_name_var,
-                self.selected_benchmarks_var,
+                ("model_source", self.model_source_var),
+                ("model_name", self.model_name_var),
+                ("selected_benchmarks", self.selected_benchmarks_var),
             ]
             
-            # Add traces for config vars (save to both)
-            for v in config_vars:
+            # Add traces for config vars (save to both) with logging
+            for param_name, var_obj in config_vars:
                 try:
-                    v.trace_add("write", on_config_change)  # type: ignore[attr-defined]
+                    var_obj.trace_add("write", make_logged_callback(param_name, var_obj))  # type: ignore[attr-defined]
                 except Exception:
                     pass
             
-            # Add traces for GUI state vars (save to GUI state only)
-            for v in gui_state_vars:
+            # Add traces for GUI state vars (save to GUI state only) with logging
+            for param_name, var_obj in gui_state_vars:
                 try:
-                    v.trace_add("write", lambda *args: self._schedule_save())  # type: ignore[attr-defined]
+                    def make_gui_callback(name, var):
+                        def callback(*args):
+                            try:
+                                new_val = var.get()
+                                if name == "model_name":
+                                    logger.info(f"Model selected for evaluation: {new_val}")
+                                elif name == "selected_benchmarks":
+                                    # Count number of benchmarks selected
+                                    benchmarks = new_val.split(',') if new_val else []
+                                    count = len([b for b in benchmarks if b.strip()])
+                                    logger.info(f"Benchmarks selected: {count} benchmark(s)")
+                                    logger.debug(f"Selected benchmarks: {new_val}")
+                                else:
+                                    logger.debug(f"Evaluation UI state changed: {name}={new_val}")
+                            except Exception:
+                                pass
+                            self._schedule_save()
+                        return callback
+                    var_obj.trace_add("write", make_gui_callback(param_name, var_obj))  # type: ignore[attr-defined]
                 except Exception:
                     pass
         except Exception:
@@ -463,3 +542,35 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
                 self._update_selected_benchmarks()
         except Exception as e:
             self._log(f"[eval] Error restoring state: {e}")
+
+    def cleanup(self) -> None:
+        """Clean up evaluation panel resources on shutdown."""
+        logger.info("Cleaning up Evaluation Panel")
+        
+        # Stop any running evaluation
+        if self._is_running:
+            logger.info("Stopping active evaluation during cleanup")
+            try:
+                event_handlers.stop_evaluation(self)
+            except Exception as e:
+                logger.warning(f"Error stopping evaluation during cleanup: {e}")
+        
+        # Cancel any scheduled saves
+        if self._save_after_id:
+            try:
+                self.after_cancel(self._save_after_id)
+                logger.debug("Cancelled scheduled state save")
+            except Exception as e:
+                logger.debug(f"Error cancelling state save: {e}")
+        
+        # Clean up evaluation process
+        if self._eval_process:
+            logger.info("Terminating evaluation process")
+            try:
+                if hasattr(self._eval_process, 'terminate'):
+                    self._eval_process.terminate()
+                logger.debug("Evaluation process terminated")
+            except Exception as e:
+                logger.error(f"Error terminating evaluation process: {e}")
+        
+        logger.info("Evaluation Panel cleanup complete")

@@ -13,9 +13,12 @@ from __future__ import annotations
 
 import os
 import threading
+import logging
 from pathlib import Path
 from typing import List, Optional, Tuple, Callable
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -70,6 +73,10 @@ class BlockManager:
             read_text_lines_sample_any: Function to read dataset lines
             enable_prefetch: Enable metadata prefetching for next block (lightweight, no data loaded)
         """
+        logger.info(f"Initializing BlockManager for dataset: {dataset_path}")
+        logger.debug(f"BlockManager config: samples_per_block={samples_per_block}, chunk_size={dataset_chunk_size}, "
+                    f"ascii_only={ascii_only}, prefetch={enable_prefetch}")
+        
         self.dataset_path = dataset_path
         self.samples_per_block = samples_per_block
         self.dataset_chunk_size = dataset_chunk_size
@@ -115,7 +122,10 @@ class BlockManager:
         self._prefetch_thread: Optional[threading.Thread] = None
         
         # Detect total blocks at initialization for local datasets
+        logger.debug("Detecting total blocks at initialization")
         self._detect_total_blocks_at_init()
+        
+        logger.info(f"BlockManager initialized successfully{f' ({self.total_blocks_detected} blocks detected)' if self.total_blocks_detected else ''}")
     
     def get_chunk(self, block_id: int, chunk_id: int, chunk_size: int) -> Optional[List[str]]:
         """Get a specific chunk from a block, loading only that chunk into memory.
@@ -131,6 +141,7 @@ class BlockManager:
         Returns:
             List of text samples for this chunk, or None if beyond dataset end
         """
+        logger.debug(f"Requesting chunk: block_id={block_id}, chunk_id={chunk_id}, chunk_size={chunk_size}")
         chunk_key = (block_id, chunk_id)
         
         # Check chunk cache first
@@ -139,6 +150,7 @@ class BlockManager:
                 try:
                     cached_chunk = self.chunk_cache[chunk_key]
                     print(f"[BlockManager] Using cached chunk for Block {block_id}, Chunk {chunk_id} ({len(cached_chunk)} samples)")
+                    logger.debug(f"Cache hit for chunk {chunk_key}: {len(cached_chunk)} samples")
                     return cached_chunk
                 except Exception:
                     return self.chunk_cache[chunk_key]
@@ -146,16 +158,20 @@ class BlockManager:
         # Get block metadata (lightweight)
         block = self.get_block(block_id)
         if block is None:
+            logger.debug(f"Block {block_id} not found or beyond dataset end")
             return None
         
         # Check if chunk_id is valid for this block
         if chunk_id >= block.chunk_count(chunk_size):
+            logger.debug(f"Chunk {chunk_id} is beyond block {block_id} (max chunks: {block.chunk_count(chunk_size)})")
             return None
         
         # Load this specific chunk from persistent cache or HF
+        logger.debug(f"Loading chunk {chunk_id} from block {block_id}")
         chunk_samples = self._load_chunk(block_id, chunk_id, chunk_size)
         
         if chunk_samples is not None:
+            logger.info(f"Loaded chunk {chunk_key}: {len(chunk_samples)} samples")
             # Cache this chunk in memory for potential reuse
             with self._chunk_cache_lock:
                 self.chunk_cache[chunk_key] = chunk_samples
@@ -165,6 +181,9 @@ class BlockManager:
                     # Remove oldest chunk (simple FIFO)
                     oldest_key = next(iter(self.chunk_cache))
                     del self.chunk_cache[oldest_key]
+                    logger.debug(f"Evicted oldest chunk from cache: {oldest_key}")
+        else:
+            logger.warning(f"Failed to load chunk {chunk_key}")
         
         return chunk_samples
     

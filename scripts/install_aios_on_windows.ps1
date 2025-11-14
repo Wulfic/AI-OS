@@ -262,7 +262,12 @@ function Install-Aios() {
 
   Write-Host "[i] Installing AI-OS with UI/HF extras (includes tkinterweb for Help rendering)..."
   & $pipPath install -e ".[ui,hf]"
+  Write-Host "[i] Ensuring httpx is available (dataset panel dependency)..."
+  & $pipPath install --upgrade "httpx>=0.27"
   
+  Write-Host "[i] Ensuring Ruff linter is available for developer tooling..."
+  & $pipPath install --upgrade "ruff>=0.4.0"
+
   # Install lm-evaluation-harness separately (for model evaluation)
   Write-Host "[i] Installing lm-evaluation-harness for model benchmarking..."
   try {

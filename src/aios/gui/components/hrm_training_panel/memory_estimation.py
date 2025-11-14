@@ -9,12 +9,41 @@ Type checker cannot see these attributes statically.
 # pyright: reportAttributeAccessIssue=false
 
 from __future__ import annotations
-import os
 import json
-from typing import TYPE_CHECKING
+import logging
+import os
+import threading
+import traceback
+from concurrent.futures import Future
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 if TYPE_CHECKING:
     from .panel_main import HRMTrainingPanel
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _VramInputs:
+    batch_size: int
+    seq_len: int
+    total_params: int
+    hidden_size: int
+    h_layers: int
+    l_layers: int
+    num_layers: int
+    num_heads: int
+    use_amp: bool
+    use_gradient_checkpointing: bool
+    use_lora: bool
+    lora_r: int
+    use_cpu_offload: bool
+    use_8bit_optimizer: bool
+    zero_stage: str
+    use_chunking: bool
+    num_gpus: int
+    chunk_size: int
 
 
 def estimate_model_params(panel: HRMTrainingPanel) -> int:  # pyright: ignore[reportAttributeAccessIssue]
@@ -157,106 +186,230 @@ def estimate_teacher_params(model_name: str) -> int:
 
 
 def update_vram_estimate(panel: HRMTrainingPanel) -> None:  # pyright: ignore[reportAttributeAccessIssue]
-    """Update memory estimates (VRAM and RAM) using accurate MemoryEstimator.
-    
-    Accounts for all optimizations: AMP, gradient checkpointing, LoRA/PEFT,
-    CPU offload, 8-bit optimizer, DeepSpeed ZeRO, chunked training.
-    
-    Args:
-        panel: The HRMTrainingPanel instance
-    """
-    from .helpers import log, mk_bool
-    
+    """Update memory estimates (VRAM and RAM) using background worker threads."""
+
+    if threading.current_thread() is not threading.main_thread():
+        if not _dispatch_to_ui(panel, lambda: update_vram_estimate(panel)):
+            logger.debug("Failed to dispatch VRAM estimate to UI thread")
+        return
+
+    if hasattr(panel, "_vram_update_after_id"):
+        panel._vram_update_after_id = None
+
+    inputs = _collect_vram_inputs(panel)
+    if inputs is None:
+        _set_vram_placeholders(panel)
+        return
+
+    if inputs.total_params <= 0:
+        logger.warning("Cannot estimate VRAM: total_params=0 (invalid configuration)")
+        _set_vram_placeholders(panel)
+        return
+
+    pool = getattr(panel, "_worker_pool", None)
+    panel._vram_task_id = getattr(panel, "_vram_task_id", 0) + 1
+    task_id = panel._vram_task_id
+
+    logger.debug(
+        "Submitting VRAM estimation task (batch=%s, seq_len=%s, params=%s, task_id=%s)",
+        inputs.batch_size,
+        inputs.seq_len,
+        f"{inputs.total_params/1e6:.1f}M",
+        task_id,
+    )
+
     try:
-        from ..hrm_training.memory_estimator import MemoryEstimator
-        
-        # Get parameters
-        batch_size = int(panel.batch_var.get() or 4)
-        seq_len = int(panel.max_seq_var.get() or 128)
-        total_params = estimate_model_params(panel)
-        hidden_size = int(panel.hidden_size_var.get() or 512)
-        h_layers = int(panel.h_layers_var.get() or 2)
-        l_layers = int(panel.l_layers_var.get() or 2)
-        num_layers = h_layers + l_layers
-        
-        if total_params == 0:
-            # Invalid params - show placeholder
-            panel.vram_model_lbl.config(text="-")
-            panel.vram_optimizer_lbl.config(text="-")
-            panel.vram_activations_lbl.config(text="-")
-            panel.vram_total_lbl.config(text="-")
-            panel.ram_dataset_lbl.config(text="-")
-            panel.ram_offload_lbl.config(text="-")
-            panel.ram_total_lbl.config(text="-")
-            return
-        
-        # Get optimization settings
-        use_amp = bool(getattr(panel, "use_amp_var", mk_bool(True)).get())
-        use_gradient_checkpointing = bool(getattr(panel, "gradient_checkpointing_var", mk_bool(True)).get())
-        use_lora = bool(getattr(panel, "use_peft_var", mk_bool(False)).get())
-        lora_r = int(panel.lora_r_var.get() or 16) if use_lora else 16
-        use_cpu_offload = bool(getattr(panel, "use_cpu_offload_var", mk_bool(False)).get())
-        use_8bit_optimizer = bool(getattr(panel, "use_8bit_optimizer_var", mk_bool(False)).get())
-        zero_stage = panel.zero_stage_var.get()
-        use_chunking = seq_len > 8192
-        
-        # Warn about long sequences without AMP
-        if seq_len > 2048 and not use_amp:
+        if pool is not None and not getattr(pool, "is_shutdown", False):
+            future = pool.submit(_compute_vram_summary, inputs)
+        else:
+            future = Future()
+
+            def _run_sync() -> None:
+                try:
+                    future.set_result(_compute_vram_summary(inputs))
+                except Exception as exc:  # pragma: no cover - defensive
+                    future.set_exception(exc)
+
+            threading.Thread(target=_run_sync, name="VRAMEstimate", daemon=True).start()
+    except Exception as submit_exc:  # pragma: no cover - defensive
+        logger.error("Failed to submit VRAM estimate task", exc_info=True)
+        trace = "".join(traceback.format_exception(type(submit_exc), submit_exc, submit_exc.__traceback__))
+        _set_vram_placeholders(panel)
+        _log_panel_error(panel, submit_exc, trace)
+        return
+
+    panel._vram_estimate_future = future
+
+    def _on_complete(done: Future) -> None:
+        try:
+            summary = done.result()
+            error: Optional[Exception] = None
+            trace_str: Optional[str] = None
+        except Exception as exc:  # pragma: no cover - defensive
+            summary = None
+            error = exc
+            trace_str = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+
+        def _apply_result() -> None:
+            if getattr(panel, "_vram_task_id", 0) != task_id:
+                logger.debug("Ignoring stale VRAM result (task_id=%s)", task_id)
+                return
+
+            if getattr(panel, "_vram_estimate_future", None) is done:
+                panel._vram_estimate_future = None
+
+            if error is not None or summary is None:
+                logger.warning("VRAM estimation failed for task_id=%s: %s", task_id, error)
+                _set_vram_placeholders(panel)
+                if error is not None:
+                    _log_panel_error(panel, error, trace_str)
+                return
+
+            _apply_vram_summary(panel, summary, inputs)
+
+        if not _dispatch_to_ui(panel, _apply_result):
+            logger.debug("Failed to dispatch VRAM result to UI thread")
+
+    future.add_done_callback(_on_complete)
+
+
+def _collect_vram_inputs(panel: HRMTrainingPanel) -> Optional[_VramInputs]:  # pyright: ignore[reportAttributeAccessIssue]
+    try:
+        def _parse_int(value: Any, default: int) -> int:
             try:
-                log(panel, f"[hrm] ⚠️  WARNING: Long sequence ({seq_len} tokens) without AMP will use massive memory!")
-                log(panel, f"[hrm] 💡 STRONGLY RECOMMENDED: Enable AMP to reduce memory by ~50%")
-                log(panel, f"[hrm] FP32 attention memory for seq_len={seq_len}: ~{(seq_len * seq_len * 4 * num_layers) / 1e9:.1f} GB per batch!")
-            except:
-                pass
-        
-        # Get number of GPUs
+                sval = str(value).strip()
+                return int(sval or default)
+            except Exception:
+                return default
+
+        batch_size = max(1, _parse_int(getattr(panel.batch_var, "get", lambda: 4)(), 4))
+        seq_len = max(1, _parse_int(getattr(panel.max_seq_var, "get", lambda: 128)(), 128))
+        total_params = estimate_model_params(panel)
+        hidden_size = max(1, _parse_int(getattr(panel.hidden_size_var, "get", lambda: 512)(), 512))
+        h_layers = max(0, _parse_int(getattr(panel.h_layers_var, "get", lambda: 2)(), 2))
+        l_layers = max(0, _parse_int(getattr(panel.l_layers_var, "get", lambda: 2)(), 2))
+        num_layers = max(1, h_layers + l_layers)
+        num_heads = max(1, _parse_int(getattr(panel.num_heads_var, "get", lambda: 8)(), 8))
+
+        def _get_bool(var_name: str, default: bool) -> bool:
+            var = getattr(panel, var_name, None)
+            if var is None or not hasattr(var, "get"):
+                return default
+            try:
+                return bool(var.get())
+            except Exception:
+                return default
+
+        use_amp = _get_bool("use_amp_var", True)
+        use_gradient_checkpointing = _get_bool("gradient_checkpointing_var", True)
+        use_lora = _get_bool("use_peft_var", False)
+        lora_r = max(1, _parse_int(getattr(panel.lora_r_var, "get", lambda: 16)(), 16)) if use_lora else 16
+        use_cpu_offload = _get_bool("use_cpu_offload_var", False)
+        use_8bit_optimizer = _get_bool("use_8bit_optimizer_var", False)
+        zero_stage = getattr(panel, "zero_stage_var", None)
+        zero_stage_val = zero_stage.get() if zero_stage is not None and hasattr(zero_stage, "get") else "none"
+
+        chunking_requested = _get_bool("use_chunked_training_var", False)
+        use_chunking = chunking_requested or seq_len > 8192
+        chunk_var = getattr(panel, "chunk_size_var", None)
+        chunk_var_value = chunk_var.get() if chunk_var is not None and hasattr(chunk_var, "get") else seq_len
+        chunk_size_candidate = _parse_int(chunk_var_value, seq_len)
+        if not use_chunking:
+            chunk_size = seq_len
+        else:
+            if chunk_size_candidate <= 0:
+                chunk_size = get_effective_chunk_size(total_params, seq_len)
+            else:
+                chunk_size = max(1, chunk_size_candidate)
+
         num_gpus = 1
         try:
-            rp = getattr(panel, "_resources_panel", None)
-            if rp is not None:
-                rvals = rp.get_values()
+            resources_panel = getattr(panel, "_resources_panel", None)
+            if resources_panel is not None and hasattr(resources_panel, "get_values"):
+                rvals = resources_panel.get_values()
                 sel_train = rvals.get("train_cuda_selected") or []
-                if isinstance(sel_train, list) and len(sel_train) > 0:
+                if isinstance(sel_train, list) and sel_train:
                     num_gpus = len(sel_train)
         except Exception:
-            pass
-        
-        # Get number of attention heads
-        num_heads = int(panel.num_heads_var.get() or 8)
-        
-        # Create memory estimator
-        estimator = MemoryEstimator(
-            total_params=total_params,
-            hidden_size=hidden_size,
-            num_layers=num_layers,
-            num_heads=num_heads,
+            logger.debug("Failed to read GPU selection for VRAM inputs", exc_info=True)
+
+        logger.debug(
+            "Collected VRAM inputs: batch=%s, seq_len=%s, params=%s, layers=%s, heads=%s, chunking=%s",
+            batch_size,
+            seq_len,
+            total_params,
+            num_layers,
+            num_heads,
+            use_chunking,
+        )
+
+        return _VramInputs(
             batch_size=batch_size,
             seq_len=seq_len,
+            total_params=total_params,
+            hidden_size=hidden_size,
+            h_layers=h_layers,
+            l_layers=l_layers,
+            num_layers=num_layers,
+            num_heads=num_heads,
             use_amp=use_amp,
             use_gradient_checkpointing=use_gradient_checkpointing,
             use_lora=use_lora,
             lora_r=lora_r,
-            offload_optimizer=use_cpu_offload,
+            use_cpu_offload=use_cpu_offload,
             use_8bit_optimizer=use_8bit_optimizer,
-            zero_stage=zero_stage,
-            num_gpus=num_gpus,
+            zero_stage=zero_stage_val,
             use_chunking=use_chunking,
+            num_gpus=num_gpus,
+            chunk_size=chunk_size,
         )
-        
-        # Get estimates
-        summary = estimator.get_summary()
-        vram = summary["vram"]
-        ram = summary["ram"]
-        
-        # Update VRAM display
-        panel.vram_model_lbl.config(text=f"{vram['model_gb']:.2f} GB")
-        panel.vram_optimizer_lbl.config(text=f"{vram['optimizer_gb']:.2f} GB")
-        
-        act_grad_total = vram['activations_gb'] + vram['gradients_gb']
+    except Exception:
+        logger.debug("Failed to collect VRAM inputs", exc_info=True)
+        return None
+
+
+def _compute_vram_summary(inputs: _VramInputs) -> Dict[str, Any]:
+    from ..hrm_training.memory_estimator import MemoryEstimator
+
+    estimator = MemoryEstimator(
+        total_params=inputs.total_params,
+        hidden_size=inputs.hidden_size,
+        num_layers=inputs.num_layers,
+        num_heads=inputs.num_heads,
+        batch_size=inputs.batch_size,
+        seq_len=inputs.seq_len,
+        num_gpus=inputs.num_gpus,
+        use_amp=inputs.use_amp,
+        use_gradient_checkpointing=inputs.use_gradient_checkpointing,
+        use_lora=inputs.use_lora,
+        lora_r=inputs.lora_r,
+        use_8bit_optimizer=inputs.use_8bit_optimizer,
+        offload_optimizer=inputs.use_cpu_offload,
+        zero_stage=inputs.zero_stage,
+        use_chunking=inputs.use_chunking,
+        chunk_size=inputs.chunk_size if inputs.use_chunking else None,
+    )
+
+    return estimator.get_summary()
+
+
+def _apply_vram_summary(panel: HRMTrainingPanel, summary: Dict[str, Any], inputs: _VramInputs) -> None:  # pyright: ignore[reportAttributeAccessIssue]
+    try:
+        vram = summary.get("vram", {})
+        ram = summary.get("ram", {})
+
+        model_gb = float(vram.get("model_gb", 0.0))
+        optimizer_gb = float(vram.get("optimizer_gb", 0.0))
+        gradients_gb = float(vram.get("gradients_gb", 0.0))
+        activations_gb = float(vram.get("activations_gb", 0.0))
+        overhead_gb = float(vram.get("overhead_gb", 0.0))
+        act_grad_total = gradients_gb + activations_gb
+        per_gpu_vram_gb = float(vram.get("total_gb", 0.0))
+
+        panel.vram_model_lbl.config(text=f"{model_gb:.2f} GB")
+        panel.vram_optimizer_lbl.config(text=f"{optimizer_gb:.2f} GB")
         panel.vram_activations_lbl.config(text=f"{act_grad_total:.2f} GB")
-        
-        # Color-code total
-        per_gpu_vram_gb = vram['total_gb']
+
         if per_gpu_vram_gb <= 8:
             color = "green"
             recommendation = "✓ Fits most GPUs"
@@ -272,122 +425,185 @@ def update_vram_estimate(panel: HRMTrainingPanel) -> None:  # pyright: ignore[re
         else:
             color = "red"
             recommendation = "❌ Needs 40GB+ GPU"
-        
-        gpu_text = f"{per_gpu_vram_gb:.2f} GB"
-        panel.vram_total_lbl.config(text=gpu_text, foreground=color)
-        
-        # Update RAM display
-        panel.ram_dataset_lbl.config(text=f"{ram['dataset_gb']:.2f} GB")
-        panel.ram_offload_lbl.config(text=f"{ram['optimizer_gb']:.2f} GB")
-        ram_total_text = f"{ram['total_gb']:.1f} GB"
-        panel.ram_total_lbl.config(text=ram_total_text)
-        
-        # Update MoE stats and tokenizer display
+
+        panel.vram_total_lbl.config(text=f"{per_gpu_vram_gb:.2f} GB", foreground=color)
+
+        dataset_ram_gb = float(ram.get("dataset_gb", 0.0))
+        optimizer_ram_gb = float(ram.get("optimizer_gb", 0.0))
+        total_ram_gb = float(ram.get("total_gb", 0.0))
+        panel.ram_dataset_lbl.config(text=f"{dataset_ram_gb:.2f} GB")
+        panel.ram_offload_lbl.config(text=f"{optimizer_ram_gb:.2f} GB")
+        panel.ram_total_lbl.config(text=f"{total_ram_gb:.1f} GB")
+
         update_moe_stats_display(panel)
-        
-        # Add tooltips with detailed breakdown
+
+        logger.info("VRAM estimate: %.2f GB per GPU (%s GPU(s))", per_gpu_vram_gb, inputs.num_gpus)
+        logger.debug(
+            "VRAM breakdown: model=%.2fGB, optimizer=%.2fGB, activations+grads=%.2fGB, overhead=%.2fGB",
+            model_gb,
+            optimizer_gb,
+            act_grad_total,
+            overhead_gb,
+        )
+
+        if per_gpu_vram_gb > 24:
+            logger.warning("Estimate exceeds available VRAM on most GPUs: %.2f GB", per_gpu_vram_gb)
+
+        _apply_tooltips(panel, summary, inputs, per_gpu_vram_gb, recommendation)
+        _log_long_seq_warning(panel, inputs)
+    except Exception:
+        logger.error("Failed to apply VRAM summary", exc_info=True)
+        _set_vram_placeholders(panel)
+
+
+def _apply_tooltips(
+    panel: HRMTrainingPanel,
+    summary: Dict[str, Any],
+    inputs: _VramInputs,
+    per_gpu_vram_gb: float,
+    recommendation: str,
+) -> None:
+    try:
+        from ..tooltips import add_tooltip
+    except Exception:
+        return
+
+    vram = summary.get("vram", {})
+    ram = summary.get("ram", {})
+    breakdown = vram.get("breakdown", {})
+    cfg = summary.get("config", {})
+
+    trainable_params = float(breakdown.get("trainable_params", inputs.total_params))
+    effective_seq = int(breakdown.get("effective_seq", inputs.chunk_size if inputs.use_chunking else inputs.seq_len))
+
+    gpu_mode = "Single GPU"
+    zero_stage = cfg.get("zero_stage", inputs.zero_stage)
+    if inputs.num_gpus > 1:
+        if isinstance(zero_stage, str) and zero_stage != "none":
+            gpu_mode = f"DDP mode with {zero_stage.upper()} (memory partitioned)"
+        else:
+            gpu_mode = f"Parallel mode ({inputs.num_gpus} independent instances)"
+
+    tooltip_lines = [
+        "══════ MEMORY ESTIMATE ══════",
+        "",
+        f"🎯 VRAM per GPU: {per_gpu_vram_gb:.2f} GB",
+        f"   • Model: {float(vram.get('model_gb', 0.0)):.2f} GB",
+        f"   • Optimizer: {float(vram.get('optimizer_gb', 0.0)):.2f} GB",
+        f"   • Gradients: {float(vram.get('gradients_gb', 0.0)):.2f} GB",
+        f"   • Activations: {float(vram.get('activations_gb', 0.0)):.2f} GB",
+        f"   • Overhead: {float(vram.get('overhead_gb', 0.0)):.2f} GB",
+        "",
+        f"💾 System RAM: {float(ram.get('total_gb', 0.0)):.1f} GB",
+        f"   • Dataset: {float(ram.get('dataset_gb', 0.0)):.2f} GB",
+        f"   • CPU Offload: {float(ram.get('optimizer_gb', 0.0)):.2f} GB",
+        f"   • PyTorch: {float(ram.get('pytorch_gb', 0.0)):.2f} GB",
+        "",
+        "⚙️  Active Optimizations:",
+        f"   • AMP (FP16): {'✓' if cfg.get('use_amp', inputs.use_amp) else '✗'}",
+        f"   • Gradient Checkpointing: {'✓' if cfg.get('use_gradient_checkpointing', inputs.use_gradient_checkpointing) else '✗'}",
+        f"   • LoRA/PEFT: {'✓' if cfg.get('use_lora', inputs.use_lora) else '✗'}",
+        f"   • CPU Offload: {'✓' if cfg.get('offload_optimizer', inputs.use_cpu_offload) else '✗'}",
+        f"   • 8-bit Optimizer: {'✓' if cfg.get('use_8bit_optimizer', inputs.use_8bit_optimizer) else '✗'}",
+        f"   • DeepSpeed ZeRO: {zero_stage}",
+        f"   • Chunked Training: {'✓' if cfg.get('use_chunking', inputs.use_chunking) else '✗'}",
+        "",
+        "📊 Configuration:",
+        f"   • Total params: {inputs.total_params/1e6:.1f}M",
+        f"   • Trainable params: {trainable_params/1e6:.1f}M",
+        f"   • Batch size: {inputs.batch_size}",
+        f"   • Sequence length: {inputs.seq_len}",
+        f"   • Effective chunk: {effective_seq}",
+        f"   • Multi-GPU: {gpu_mode}",
+        "",
+        f"💡 {recommendation}",
+    ]
+
+    if per_gpu_vram_gb > 12:
+        tooltip_lines.extend(["", "🔧 Suggestions to reduce VRAM:"])
+        if not cfg.get("use_amp", inputs.use_amp):
+            tooltip_lines.append("   • Enable AMP → Save ~40%")
+        if not cfg.get("use_gradient_checkpointing", inputs.use_gradient_checkpointing):
+            tooltip_lines.append("   • Enable Grad Checkpoint → Save ~60% activations")
+        if not cfg.get("use_lora", inputs.use_lora):
+            tooltip_lines.append("   • Enable LoRA → Save ~99% optimizer/gradients")
+        if not cfg.get("offload_optimizer", inputs.use_cpu_offload) and float(vram.get("optimizer_gb", 0.0)) > 0:
+            tooltip_lines.append(f"   • Enable CPU Offload → Move {float(vram.get('optimizer_gb', 0.0)):.1f} GB to RAM")
+        if inputs.batch_size > 1:
+            tooltip_lines.append("   • Reduce batch size → Direct VRAM savings")
+
+    add_tooltip(panel.vram_total_lbl, "\n".join(tooltip_lines))
+
+    ram_tooltip = [
+        "══════ SYSTEM RAM ══════",
+        "",
+        f"Total: {float(ram.get('total_gb', 0.0)):.1f} GB",
+        "",
+        "Breakdown:",
+        f"  • Dataset buffer: {float(ram.get('dataset_gb', 0.0)):.2f} GB",
+        f"  • CPU offloaded optimizer: {float(ram.get('optimizer_gb', 0.0)):.2f} GB",
+        f"  • PyTorch/Python: {float(ram.get('pytorch_gb', 0.0)):.2f} GB",
+        "",
+        "💡 Enable CPU Offload to move optimizer",
+        "   state from VRAM to RAM (slower but saves VRAM)",
+    ]
+    add_tooltip(panel.ram_total_lbl, "\n".join(ram_tooltip))
+
+
+def _set_vram_placeholders(panel: HRMTrainingPanel) -> None:  # pyright: ignore[reportAttributeAccessIssue]
+    try:
+        panel.vram_model_lbl.config(text="-")
+        panel.vram_optimizer_lbl.config(text="-")
+        panel.vram_activations_lbl.config(text="-")
+        panel.vram_total_lbl.config(text="-", foreground="black")
+        panel.ram_dataset_lbl.config(text="-")
+        panel.ram_offload_lbl.config(text="-")
+        panel.ram_total_lbl.config(text="-")
+    except Exception:
+        pass
+
+
+def _log_panel_error(panel: HRMTrainingPanel, error: Exception | str, trace: Optional[str]) -> None:  # pyright: ignore[reportAttributeAccessIssue]
+    try:
+        from .helpers import log
+
+        log(panel, f"[hrm] Memory estimation error: {error}")
+        if trace:
+            log(panel, f"[hrm] Traceback: {trace}")
+    except Exception:
+        pass
+
+
+def _log_long_seq_warning(panel: HRMTrainingPanel, inputs: _VramInputs) -> None:  # pyright: ignore[reportAttributeAccessIssue]
+    if inputs.seq_len <= 2048 or inputs.use_amp:
+        panel._vram_warned_long_seq = None
+        return
+
+    key = (inputs.seq_len, inputs.use_amp)
+    if getattr(panel, "_vram_warned_long_seq", None) == key:
+        return
+
+    panel._vram_warned_long_seq = key
+
+    try:
+        from .helpers import log
+
+        attention_gb = (inputs.seq_len * inputs.seq_len * 4 * inputs.num_layers) / 1e9
+        log(panel, f"[hrm] ⚠️  WARNING: Long sequence ({inputs.seq_len} tokens) without AMP will use massive memory!")
+        log(panel, "[hrm] 💡 STRONGLY RECOMMENDED: Enable AMP to reduce memory by ~50%")
+        log(panel, f"[hrm] FP32 attention memory for seq_len={inputs.seq_len}: ~{attention_gb:.1f} GB per batch!")
+    except Exception:
+        pass
+
+
+def _dispatch_to_ui(panel: HRMTrainingPanel, callback: Callable[[], None]) -> bool:  # pyright: ignore[reportAttributeAccessIssue]
+    dispatcher = getattr(panel, "dispatch_to_ui", None)
+    if callable(dispatcher):
         try:
-            from ..tooltips import add_tooltip
-            
-            cfg = summary["config"]
-            
-            # Build multi-GPU mode note
-            if num_gpus > 1:
-                if cfg.get('zero_stage', 'none') != 'none':
-                    gpu_mode = f"DDP mode with {cfg['zero_stage'].upper()} (memory partitioned)"
-                else:
-                    gpu_mode = f"Parallel mode ({num_gpus} independent instances)"
-            else:
-                gpu_mode = "Single GPU"
-            
-            tooltip_lines = [
-                "══════ MEMORY ESTIMATE ══════",
-                "",
-                f"🎯 VRAM per GPU: {per_gpu_vram_gb:.2f} GB",
-                f"   • Model: {vram['model_gb']:.2f} GB",
-                f"   • Optimizer: {vram['optimizer_gb']:.2f} GB",
-                f"   • Gradients: {vram['gradients_gb']:.2f} GB",
-                f"   • Activations: {vram['activations_gb']:.2f} GB",
-                f"   • Overhead: {vram['overhead_gb']:.2f} GB",
-                "",
-                f"💾 System RAM: {ram['total_gb']:.1f} GB",
-                f"   • Dataset: {ram['dataset_gb']:.2f} GB",
-                f"   • CPU Offload: {ram['optimizer_gb']:.2f} GB",
-                f"   • PyTorch: {ram['pytorch_gb']:.2f} GB",
-                "",
-                "⚙️  Active Optimizations:",
-                f"   • AMP (FP16): {'✓' if cfg['use_amp'] else '✗'}",
-                f"   • Gradient Checkpointing: {'✓' if cfg['use_gradient_checkpointing'] else '✗'}",
-                f"   • LoRA/PEFT: {'✓' if cfg['use_lora'] else '✗'}",
-                f"   • CPU Offload: {'✓' if cfg['offload_optimizer'] else '✗'}",
-                f"   • 8-bit Optimizer: {'✓' if cfg['use_8bit_optimizer'] else '✗'}",
-                f"   • DeepSpeed ZeRO: {cfg['zero_stage']}",
-                f"   • Chunked Training: {'✓' if cfg['use_chunking'] else '✗'}",
-                "",
-                f"📊 Configuration:",
-                f"   • Total params: {total_params/1e6:.1f}M",
-                f"   • Trainable params: {vram['breakdown']['trainable_params']/1e6:.1f}M",
-                f"   • Batch size: {batch_size}",
-                f"   • Sequence length: {seq_len}",
-                f"   • Effective chunk: {vram['breakdown']['effective_seq']}",
-                f"   • Multi-GPU: {gpu_mode}",
-                "",
-                f"💡 {recommendation}",
-            ]
-            
-            if per_gpu_vram_gb > 12:
-                tooltip_lines.extend(["", "🔧 Suggestions to reduce VRAM:"])
-                if not cfg['use_amp']:
-                    tooltip_lines.append("   • Enable AMP → Save ~40%")
-                if not cfg['use_gradient_checkpointing']:
-                    tooltip_lines.append("   • Enable Grad Checkpoint → Save ~60% activations")
-                if not cfg['use_lora']:
-                    tooltip_lines.append("   • Enable LoRA → Save ~99% optimizer/gradients")
-                if not cfg['offload_optimizer'] and vram['optimizer_gb'] > 0:
-                    tooltip_lines.append(f"   • Enable CPU Offload → Move {vram['optimizer_gb']:.1f} GB to RAM")
-                if batch_size > 1:
-                    tooltip_lines.append(f"   • Reduce batch size → Direct VRAM savings")
-            
-            add_tooltip(panel.vram_total_lbl, "\n".join(tooltip_lines))
-            
-            ram_tooltip = [
-                "══════ SYSTEM RAM ══════",
-                "",
-                f"Total: {ram['total_gb']:.1f} GB",
-                "",
-                "Breakdown:",
-                f"  • Dataset buffer: {ram['dataset_gb']:.2f} GB",
-                f"  • CPU offloaded optimizer: {ram['optimizer_gb']:.2f} GB",
-                f"  • PyTorch/Python: {ram['pytorch_gb']:.2f} GB",
-                "",
-                "💡 Enable CPU Offload to move optimizer",
-                "   state from VRAM to RAM (slower but saves VRAM)",
-            ]
-            add_tooltip(panel.ram_total_lbl, "\n".join(ram_tooltip))
-            
+            return bool(dispatcher(callback))
         except Exception:
-            pass
-            
-    except Exception as e:
-        # Log the actual error for debugging
-        try:
-            from .helpers import log
-            import traceback
-            log(panel, f"[hrm] Memory estimation error: {e}")
-            log(panel, f"[hrm] Traceback: {traceback.format_exc()}")
-        except Exception:
-            pass
-        
-        try:
-            panel.vram_model_lbl.config(text="-")
-            panel.vram_optimizer_lbl.config(text="-")
-            panel.vram_activations_lbl.config(text="-")
-            panel.vram_total_lbl.config(text="-")
-            panel.ram_dataset_lbl.config(text="-")
-            panel.ram_offload_lbl.config(text="-")
-            panel.ram_total_lbl.config(text="-")
-        except Exception:
-            pass
+            logger.debug("dispatch_to_ui failed", exc_info=True)
+    return False
 
 
 def update_moe_stats_display(panel: HRMTrainingPanel) -> None:  # pyright: ignore[reportAttributeAccessIssue]
@@ -396,6 +612,12 @@ def update_moe_stats_display(panel: HRMTrainingPanel) -> None:  # pyright: ignor
     Args:
         panel: The HRMTrainingPanel instance
     """
+    if threading.current_thread() is not threading.main_thread():
+        try:
+            panel.after(0, lambda: update_moe_stats_display(panel))
+        except Exception as schedule_err:
+            logger.warning("Failed to schedule MoE stats update on main thread: %s", schedule_err)
+        return
     try:
         from .helpers import log
         

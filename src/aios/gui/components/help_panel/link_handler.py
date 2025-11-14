@@ -1,5 +1,6 @@
 """Link handling and navigation for the Help Panel."""
 
+import logging
 import os
 import re
 import webbrowser
@@ -7,6 +8,8 @@ from pathlib import Path
 from typing import Any, Optional, Callable, List, Tuple
 from urllib.parse import urlparse, unquote
 from . import utils
+
+logger = logging.getLogger(__name__)
 
 
 class LinkHandler:
@@ -97,31 +100,32 @@ class LinkHandler:
         Args:
             url: The URL that was clicked
         """
-        print(f"[LinkHandler] Link clicked: {url}")
+        logger.info(f"User clicked link: {url}")
         
         # Handle anchor links
         if utils.is_anchor_link(url):
             anchor_id = url[1:]
-            print(f"[LinkHandler] Anchor link, scrolling to: {anchor_id}")
+            logger.debug(f"Link type: anchor, scrolling to: {anchor_id}")
             self._scroll_to_anchor(anchor_id)
             return
         
         # Handle internal doc URLs
         if url.startswith(self.INTERNAL_PROTOCOL):
             actual_href = url[len(self.INTERNAL_PROTOCOL):]
+            logger.debug(f"Link type: internal documentation")
             self._handle_internal_link(actual_href)
             return
         
         # Handle external links
         if utils.is_external_url(url):
-            print(f"[LinkHandler] External link, opening in browser: {url}")
+            logger.info(f"Link type: external, opening in browser: {url}")
             try:
                 webbrowser.open_new_tab(url)
             except Exception as e:
-                print(f"[LinkHandler] Failed to open external link: {e}")
+                logger.error(f"Failed to open external link: {e}")
             return
         
-        print(f"[LinkHandler] Unknown link type: {url}")
+        logger.debug(f"Unknown link type: {url}")
     
     def _handle_internal_link(self, href: str) -> None:
         """Handle an internal documentation link.
@@ -133,7 +137,7 @@ class LinkHandler:
         doc_path, anchor = utils.extract_anchor_from_url(href)
         
         if anchor:
-            print(f"[LinkHandler] Internal link with anchor: {doc_path} -> #{anchor}")
+            logger.debug(f"Internal link with anchor: {doc_path} -> #{anchor}")
             self._pending_anchor = anchor
         else:
             self._pending_anchor = None
@@ -148,12 +152,12 @@ class LinkHandler:
             base_dir = os.path.dirname(self._current_doc_rel or "")
             full_path = utils.resolve_relative_path(base_dir, doc_path)
         
-        print(f"[LinkHandler] Resolved internal link: {href} -> {full_path}")
+        logger.debug(f"Resolved internal link: {href} -> {full_path}")
         
         # Find in index
         found = self._find_in_index(full_path)
         if found:
-            print(f"[LinkHandler] Found document in index: {found}")
+            logger.debug(f"Found document in index: {found}")
             
             # If anchor is present, try to find the heading line
             heading_line = -1
@@ -162,7 +166,7 @@ class LinkHandler:
             
             self.open_doc_callback(found, heading_line)
         else:
-            print(f"[LinkHandler] Document not found in index: {full_path}")
+            logger.debug(f"Document not found in index: {full_path}")
     
     def _find_in_index(self, path: str) -> Optional[str]:
         """Find a document in the index (case-insensitive).
@@ -211,7 +215,7 @@ class LinkHandler:
                     element = self.html_view.document.getElementById(anchor_id)
                     if element:
                         element.scrollIntoView()
-                        print(f"[LinkHandler] Scrolled to anchor: {anchor_id}")
+                        logger.debug(f"Scrolled to anchor: {anchor_id}")
                         return
                 except Exception:
                     pass
@@ -223,14 +227,14 @@ class LinkHandler:
                         self.html_view.execute_script(js)  # type: ignore
                     elif hasattr(self.html_view, 'run_script'):
                         self.html_view.run_script(js)  # type: ignore
-                    print(f"[LinkHandler] Scrolled to anchor via JS: {anchor_id}")
+                    logger.debug(f"Scrolled to anchor via JS: {anchor_id}")
                     return
                 except Exception:
                     pass
                 
-                print(f"[LinkHandler] Could not scroll to anchor: {anchor_id}")
+                logger.debug(f"Could not scroll to anchor: {anchor_id}")
         except Exception as e:
-            print(f"[LinkHandler] Error scrolling to anchor: {e}")
+            logger.error(f"Error scrolling to anchor: {e}")
     
     def install_handler(self) -> bool:
         """Install the link click handler on the HTML view.
@@ -239,14 +243,14 @@ class LinkHandler:
             True if handler was installed successfully, False otherwise
         """
         if self._installed:
-            print("[LinkHandler] Handler already installed")
+            logger.debug("Handler already installed")
             return True
         
         if self.html_view is None:
-            print("[LinkHandler] HTML view is None, cannot install handler")
+            logger.debug("HTML view is None, cannot install handler")
             return False
         
-        print("[LinkHandler] Installing link handler")
+        logger.debug("Installing link handler")
         
         # The handler is set via the on_link_click parameter in the HtmlFrame constructor
         # So we don't need to do anything here if it's already set
@@ -268,11 +272,13 @@ class LinkHandler:
             url = gh_base + rel_path.replace("\\", "/")
             if anchor:
                 url += f"#{anchor}"
+            logger.info(f"Opening documentation in browser: {url}")
             webbrowser.open_new_tab(url)
         except Exception:
             # Fallback to local file
             try:
                 abs_path = str((self.docs_root / rel_path).resolve())
+                logger.info(f"Opening local documentation file: {abs_path}")
                 webbrowser.open_new_tab(abs_path)
             except Exception as e:
-                print(f"[LinkHandler] Failed to open externally: {e}")
+                logger.error(f"Failed to open externally: {e}")

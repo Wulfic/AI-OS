@@ -31,6 +31,7 @@ class IdleMonitor:
         self._stop = asyncio.Event()
         self._on_idle: Optional[Callable[[], Awaitable[None]]] = None
         self._on_active: Optional[Callable[[], Awaitable[None]]] = None
+        self._bg_tasks: set[asyncio.Task] = set()
 
     def is_idle(self) -> bool:
         return self._idle
@@ -43,14 +44,22 @@ class IdleMonitor:
 
     async def start(self):
         if self._task and not self._task.done():
+            logger.debug("Idle monitor already running")
             return
+        logger.info(f"Starting idle monitor (threshold={self.cfg.threshold_ms}ms, poll_interval={self.cfg.poll_interval_s}s)")
         self._stop.clear()
         self._task = asyncio.create_task(self._run())
 
     async def stop(self):
+        logger.info("Stopping idle monitor")
         self._stop.set()
         if self._task:
             await self._task
+            self._task = None
+        for task in list(self._bg_tasks):
+            task.cancel()
+        self._bg_tasks.clear()
+        logger.debug("Idle monitor stopped")
 
     async def _run(self):
         while not self._stop.is_set():
@@ -66,11 +75,11 @@ class IdleMonitor:
                 if self._idle:
                     logger.info("Idle state entered (idle_ms=%s)", idle_ms)
                     if self._on_idle:
-                        await self._on_idle()
+                        self._schedule_callback(self._on_idle)
                 else:
                     logger.info("Active state detected (idle_ms=%s)", idle_ms)
                     if self._on_active:
-                        await self._on_active()
+                        self._schedule_callback(self._on_active)
 
             try:
                 await asyncio.wait_for(
@@ -90,6 +99,24 @@ class IdleMonitor:
             if ms is not None:
                 return ms
         return 0
+
+    def _schedule_callback(self, cb: Callable[[], Awaitable[None]]):
+        async def _runner():
+            try:
+                await cb()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Idle callback raised an exception")
+
+        task = asyncio.create_task(_runner())
+        self._bg_tasks.add(task)
+
+        def _on_done(t: asyncio.Task) -> None:
+            self._bg_tasks.discard(t)
+            # Exception is already logged inside _runner
+
+        task.add_done_callback(_on_done)
 
 
 async def _mutter_idle_time_ms() -> Optional[int]:
@@ -116,29 +143,29 @@ async def _mutter_idle_time_ms() -> Optional[int]:
 async def _loginctl_idle_time_ms() -> Optional[int]:
     if shutil.which("loginctl") is None:
         return None
-    try:
-        # Determine current session id
-        # loginctl show-user $USER -p Display -p Sessions
-        user = os.environ.get("USER") or os.environ.get("LOGNAME")
-        sess = None
-        out = subprocess.check_output(
-            ["loginctl", "list-sessions", "--no-legend"], text=True
-        )
-        for line in out.splitlines():
-            parts = line.split()
-            if len(parts) >= 3 and (user in parts[2:] if user else True):
-                sess = parts[0]
-                break
-        if not sess:
+
+    def _collect() -> Optional[int]:
+        try:
+            user = os.environ.get("USER") or os.environ.get("LOGNAME")
+            sess = None
+            out = subprocess.check_output(
+                ["loginctl", "list-sessions", "--no-legend"], text=True
+            )
+            for line in out.splitlines():
+                parts = line.split()
+                if len(parts) >= 3 and (user in parts[2:] if user else True):
+                    sess = parts[0]
+                    break
+            if not sess:
+                return None
+            det = subprocess.check_output(["loginctl", "show-session", sess], text=True)
+            idle_hint = re.search(r"^IdleHint=(yes|no)$", det, re.M | re.I)
+            if not idle_hint:
+                return None
+            if idle_hint.group(1).lower() == "no":
+                return 0
+            return 60000
+        except Exception:
             return None
-        det = subprocess.check_output(["loginctl", "show-session", sess], text=True)
-        # IdleSinceHintUSec=, IdleHint=
-        idle_hint = re.search(r"^IdleHint=(yes|no)$", det, re.M | re.I)
-        if not idle_hint:
-            return None
-        if idle_hint.group(1).lower() == "no":
-            return 0
-        # If idle, we don't have exact ms; approximate as threshold
-        return 60000
-    except Exception:
-        return None
+
+    return await asyncio.to_thread(_collect)

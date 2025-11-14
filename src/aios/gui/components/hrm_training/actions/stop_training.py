@@ -4,9 +4,13 @@ This module handles graceful and forceful termination of training processes.
 """
 
 from __future__ import annotations
+import logging
 import time
-import threading
 from typing import Any
+
+from ....utils.resource_management import submit_background
+
+logger = logging.getLogger(__name__)
 
 
 def _thread_safe_log(panel: Any, msg: str) -> None:
@@ -19,8 +23,8 @@ def _thread_safe_log(panel: Any, msg: str) -> None:
         try:
             panel._log(msg)
         except Exception:
-            # Last resort: print to console
-            print(f"[log] {msg}")
+            # Last resort: log to console
+            logger.debug(msg)
 
 
 def on_stop(panel: Any) -> None:
@@ -71,11 +75,19 @@ def on_stop(panel: Any) -> None:
             _do_graceful_stop_request(panel)
     
     # Start background thread immediately and return
-    threading.Thread(target=_handle_stop, daemon=True).start()
+    try:
+        submit_background("hrm-stop", _handle_stop, pool=getattr(panel, "_worker_pool", None))
+    except RuntimeError as exc:
+        logger.error("Failed to queue HRM stop handler: %s", exc)
 
 
 def _do_immediate_stop(panel: Any, already_graceful_stopping: bool) -> None:
     """Handle immediate stop in background thread."""
+    if already_graceful_stopping:
+        logger.warning("EMERGENCY STOP: User requested immediate termination (graceful stop in progress)")
+    else:
+        logger.info("IMMEDIATE STOP: User requested forceful termination")
+    
     _thread_safe_log(panel, "[hrm] ========================================")
     _thread_safe_log(panel, "[hrm] IMMEDIATE STOP requested - forcing termination" if already_graceful_stopping else "[hrm] Stopping optimization...")
     _thread_safe_log(panel, "[hrm] ========================================")
@@ -95,26 +107,33 @@ def _do_immediate_stop(panel: Any, already_graceful_stopping: bool) -> None:
         pass
     
     # Stop active optimizer immediately if running
+    logger.debug("Stopping active optimizer processes")
     _stop_optimizer(panel)
     
     # Signal stop event
+    logger.debug("Signaling stop event to training process")
     _write_stop_file(panel)
     
     # Start forceful termination
+    logger.info("Initiating graceful shutdown with fallback to forced termination")
     _graceful_stop_then_terminate(panel)
     
     # Handle optimization background thread
+    logger.debug("Stopping background optimization thread")
     _stop_background_thread(panel)
 
 
 def _do_graceful_stop_request(panel: Any) -> None:
     """Handle graceful stop request in background thread."""
+    logger.info("GRACEFUL STOP: User requested stop after current chunk completion")
+    
     panel._graceful_stop_requested = True
     panel._stop_requested = True
     
     # Track when stop was requested
     try:
         panel._stop_request_time = time.time()
+        logger.debug(f"Graceful stop requested at {panel._stop_request_time}")
     except Exception:
         pass
     
@@ -134,24 +153,29 @@ def _do_graceful_stop_request(panel: Any) -> None:
                 panel.progress.configure(mode="indeterminate")
                 panel.progress.start(15)
             except Exception as e:
-                print(f"UI update error: {e}")
+                logger.error(f"UI update error during graceful stop: {e}")
         
         panel.after(0, _update_ui)
     except Exception as e:
-        print(f"UI schedule error: {e}")
+        logger.error(f"UI schedule error during graceful stop: {e}")
     
     # Log and signal
     _thread_safe_log(panel, "[hrm] GRACEFUL STOP requested - will finish current chunk then exit")
     _thread_safe_log(panel, "[hrm] Click STOP again for immediate termination")
+    
+    logger.debug("Signaling graceful stop event to training process")
     _write_graceful_stop_file(panel)
+    
+    logger.debug("Starting graceful stop monitor")
     _monitor_graceful_stop(panel)
     
     # Save state
     try:
         if callable(getattr(panel, "_save_state_fn", None)):
             panel._save_state_fn()
-    except Exception:
-        pass
+            logger.debug("Saved panel state after graceful stop request")
+    except Exception as e:
+        logger.warning(f"Failed to save state after graceful stop: {e}")
 
 
 def get_default_stop_file(panel: Any) -> str:
@@ -363,19 +387,45 @@ def _cleanup_stop_files(panel: Any) -> None:
 def _stop_background_thread(panel: Any) -> None:
     """Stop optimization background thread if running."""
     try:
-        bg_thread = getattr(panel, "_bg_thread", None)
-        if bg_thread is not None and bg_thread.is_alive():
-            _thread_safe_log(panel, "[hrm] Stop: signaling optimization thread to terminate")
-            
-            # Thread should check _stop_requested and exit; give it 2 seconds
-            def _join_bg():
+        bg_future = getattr(panel, "_bg_future", None)
+        if bg_future is not None and not getattr(bg_future, "done", lambda: True)():
+            _thread_safe_log(panel, "[hrm] Stop: waiting for background task to finish")
+
+            def _await_future() -> None:
                 try:
-                    bg_thread.join(timeout=2.0)
-                    if bg_thread.is_alive():
-                        _thread_safe_log(panel, "[hrm] Warning: optimization thread still running")
+                    bg_future.result(timeout=2.0)
                 except Exception:
                     pass
-            
-            threading.Thread(target=_join_bg, daemon=True).start()
+
+            try:
+                submit_background(
+                    "hrm-stop-wait",
+                    _await_future,
+                    pool=getattr(panel, "_worker_pool", None),
+                )
+            except RuntimeError:
+                _await_future()
+        else:
+            bg_thread = getattr(panel, "_bg_thread", None)
+            if bg_thread is not None and getattr(bg_thread, "is_alive", lambda: False)():
+                _thread_safe_log(panel, "[hrm] Stop: signaling optimization thread to terminate")
+
+                # Thread should check _stop_requested and exit; give it 2 seconds
+                def _join_bg() -> None:
+                    try:
+                        bg_thread.join(timeout=2.0)
+                        if bg_thread.is_alive():
+                            _thread_safe_log(panel, "[hrm] Warning: optimization thread still running")
+                    except Exception:
+                        pass
+
+                try:
+                    submit_background(
+                        "hrm-stop-wait-thread",
+                        _join_bg,
+                        pool=getattr(panel, "_worker_pool", None),
+                    )
+                except RuntimeError:
+                    _join_bg()
     except Exception as e:
         _thread_safe_log(panel, f"[hrm] Background thread handling error: {e}")

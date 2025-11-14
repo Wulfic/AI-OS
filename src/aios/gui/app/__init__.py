@@ -24,8 +24,9 @@ Public API:
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
-from typing import Any, cast, TYPE_CHECKING
+from typing import Any, Callable, cast, TYPE_CHECKING
 
 if TYPE_CHECKING:
     import tkinter as tk
@@ -39,6 +40,7 @@ except Exception:  # pragma: no cover - environment dependent
 # Mixins for CLI bridge and debug functionality
 from ..mixins.cli_bridge import CliBridgeMixin
 from ..mixins.debug import DebugMixin
+from ..utils.resource_management import set_worker_pool
 
 # Main orchestrator function
 from .app_main import run_app
@@ -95,6 +97,7 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
     _resource_monitor: Any
     _async_loop: Any
     _log_router: Any
+    _ui_dispatcher: Any
     _state_file: Any
     _state: Any
     _tray_manager: Any
@@ -124,12 +127,31 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
             RuntimeError: If Tkinter is not available in this environment
         """
         import time
+        import sys
+        import platform
+        from datetime import datetime
+        
         init_start = time.time()
-        print(f"[INIT] Starting __init__...")
+        
+        # Log clear session separator for distinguishing between runs
+        session_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        logger.info("=" * 80)
+        logger.info(f"NEW SESSION STARTED: {session_time}")
+        logger.info("=" * 80)
+        
+        logger.info("[INIT] Starting __init__...")
+        
+        # Log startup information
+        logger.info("=" * 60)
+        logger.info("AI-OS GUI Application Starting")
+        logger.info("=" * 60)
+        logger.info(f"Python version: {sys.version}")
+        logger.info(f"Platform: {platform.platform()}")
+        logger.info(f"Start minimized: {start_minimized}")
         
         # Initialize parent mixins (CliBridgeMixin, DebugMixin)
         super().__init__()
-        print(f"[INIT] Mixins initialized: {time.time() - init_start:.3f}s")
+        logger.info(f"[INIT] Mixins initialized: {time.time() - init_start:.3f}s")
         
         if tk is None:
             raise RuntimeError("Tkinter is not available in this environment")
@@ -140,13 +162,19 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
         else:
             self.root = root
         
-        print(f"[INIT] Root window created: {time.time() - init_start:.3f}s")
+        logger.info(f"[INIT] Root window created: {time.time() - init_start:.3f}s")
+
+        # Placeholder until resource setup wires the dispatcher
+        self._ui_dispatcher = None
         
         self.root.title("AI-OS Control Panel")
         self._start_minimized = start_minimized
         
         # Set default window size for better initial display
         self.root.geometry("1400x900")
+        
+        # CRITICAL: Withdraw window initially so we can set up loading screen before showing
+        self.root.withdraw()
         
         # Set window icon if available
         try:
@@ -160,8 +188,6 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
         try:
             from tkinter import ttk
             from PIL import Image, ImageTk
-            import logging
-            logger = logging.getLogger(__name__)
             
             # Configure background color
             self.root.configure(bg='#1e1e1e')  # Dark background
@@ -206,7 +232,7 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
                             # Center the image
                             canvas.create_image(w // 2, h // 2, image=bg_photo, anchor='center', tags='bg')
                         except Exception as e:
-                            print(f"[CANVAS] Failed to redraw background: {e}")
+                            logger.error(f"[CANVAS] Failed to redraw background: {e}")
                     
                     # Semi-transparent overlay
                     canvas.create_rectangle(0, 0, w, h, fill='black', stipple='gray50', tags='overlay')
@@ -222,7 +248,7 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
                             canvas.create_image(20 + logo_w // 2, h - 20 - logo_h // 2,
                                               image=logo_photo, anchor='center', tags='logo')
                         except Exception as e:
-                            print(f"[CANVAS] Failed to redraw logo: {e}")
+                            logger.error(f"[CANVAS] Failed to redraw logo: {e}")
                     
                     # Text elements at very bottom (don't overlap with brain image text)
                     # Position near bottom to avoid covering any image content
@@ -236,7 +262,7 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
                     canvas._status_text_id = status_id
                     
                 except Exception as e:
-                    print(f"[CANVAS] Error updating canvas: {e}")
+                    logger.error(f"[CANVAS] Error updating canvas: {e}")
             
             # Store image paths for reloading
             bg_image_path = Path(__file__).parent.parent.parent.parent.parent / "AI-OS.png"
@@ -245,58 +271,47 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
             canvas._bg_image_path = bg_image_path if bg_image_path.exists() else None
             canvas._logo_image_path = logo_image_path if logo_image_path.exists() else None
             
-            # Bind canvas resize - simple, no debouncing during loading
-            # Only skip updates if window is not viewable to prevent hangs
+            # Bind canvas resize with debouncing to prevent excessive redraws
+            _resize_scheduled = [False]  # Mutable flag for closure
+            
             def _safe_canvas_update(event=None):
-                """Canvas update that checks window state to prevent hangs."""
+                """Canvas update with debouncing to prevent UI hangs."""
                 try:
                     # Skip if loading is done
                     if hasattr(self, '_loading_active') and not self._loading_active:
                         return
                     
-                    # Only update if window is viewable (prevents hangs during window switching)
-                    if self.root.winfo_viewable():
-                        update_loading_canvas(event)
+                    # Debounce: only schedule one update at a time
+                    if _resize_scheduled[0]:
+                        return
+                    
+                    _resize_scheduled[0] = True
+                    
+                    def _do_update():
+                        _resize_scheduled[0] = False
+                        try:
+                            # Only update if window is viewable
+                            if self.root.winfo_viewable():
+                                update_loading_canvas(event)
+                        except Exception:
+                            pass
+                    
+                    # Debounce by 100ms to batch rapid resize events
+                    self.root.after(100, _do_update)
                 except Exception:
-                    # Silently skip if window state is invalid
-                    pass
+                    _resize_scheduled[0] = False
             
-            # Store the handler so we can disable it during heavy operations
+            # Store the handler and bind it
             self._canvas_update_handler = _safe_canvas_update
             canvas.bind('<Configure>', _safe_canvas_update)
-            
-            # Initial draw - schedule multiple times to ensure it appears
-            self.root.after(10, update_loading_canvas)
-            self.root.after(50, update_loading_canvas)
             
             # Store references for updating during initialization
             self._loading_frame = loading_frame
             self._loading_canvas = canvas
             self._loading_active = True  # Flag to track if loading screen is active
-            # Note: status text ID will be set by update_loading_canvas
-            
-            # Protect against hanging during window focus/visibility changes
-            def _on_loading_visibility(event=None):
-                """Handle visibility events during loading to prevent hanging."""
-                try:
-                    # Just log visibility changes, don't force updates
-                    if event and hasattr(event, 'state'):
-                        logger.debug(f"Loading screen visibility changed: {event.state}")
-                except Exception:
-                    pass
-            
-            # Bind visibility event (but don't do heavy work in handler)
-            try:
-                self.root.bind('<Visibility>', _on_loading_visibility)
-            except Exception:
-                pass
 
             
-            # CRITICAL: Update the window to render the loading screen BEFORE showing it
-            self.root.update_idletasks()
-            self.root.update()
-            
-            # Now show the window with the loading screen visible
+            # CRITICAL: Show window FIRST, then update to render the loading screen
             self.root.deiconify()
             if not start_minimized:
                 try:
@@ -307,22 +322,28 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
                     except Exception:
                         pass
             
-            # Force another update to ensure everything is rendered
+            # NOW update to render the loading screen (window must be visible first)
+            self.root.update_idletasks()
             self.root.update()
             
-            print(f"[INIT] Loading screen displayed: {time.time() - init_start:.3f}s")
+            # Trigger initial canvas draw NOW (not after() - those won't run until mainloop starts)
+            update_loading_canvas()
+            
+            # Force another update to ensure canvas is rendered
+            self.root.update()
+
+            logger.info(f"[INIT] Loading screen displayed: {time.time() - init_start:.3f}s")
             
         except Exception as e:
             # Log error but don't fall back - let it fail visibly so we can fix it
             logger.error(f"CRITICAL: Failed to create loading screen: {e}", exc_info=True)
-            print(f"[INIT] CRITICAL ERROR creating loading screen: {e}")
             raise  # Re-raise to make failures obvious
         
         # Determine project root
         # Navigate up from src/aios/gui/app/__init__.py to project root
         self._project_root = Path(__file__).parent.parent.parent.parent
         logger.info(f"Project root: {self._project_root}")
-        print(f"[INIT] About to call run_app: {time.time() - init_start:.3f}s")
+        logger.info(f"[INIT] About to call run_app: {time.time() - init_start:.3f}s")
         
         # Delegate all initialization to run_app orchestrator
         # This will:
@@ -347,6 +368,121 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
         if not hasattr(self, '_main_loop_started'):
             self.root.mainloop()
     
+    def _bring_to_front_windows(self) -> None:
+        """Best-effort Windows-specific foreground call using Win32 APIs."""
+
+        try:
+            import sys
+
+            if not sys.platform.startswith("win"):
+                return
+
+            import ctypes
+
+            hwnd = int(self.root.winfo_id())
+            user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+
+            SW_RESTORE = 9
+            user32.ShowWindow(hwnd, SW_RESTORE)
+            user32.SetForegroundWindow(hwnd)
+        except Exception:
+            logger.debug("Win32 foreground request failed", exc_info=True)
+
+    def _schedule_foreground_boost(self, initial_delay: int = 0, attempts: int = 3, interval: int = 400) -> None:
+        """Temporarily mark the window topmost to regain focus during startup."""
+
+        if getattr(self, "_start_minimized", False):
+            return
+
+        def _boost(attempt: int = 0) -> None:
+            max_attempts = max(0, attempts)
+            if attempt >= max_attempts:
+                return
+
+            try:
+                if not self.root.winfo_exists():
+                    return
+
+                # Skip until window is mapped to avoid raising a withdrawn window
+                if not self.root.winfo_viewable():
+                    self.root.after(interval, lambda: _boost(attempt))
+                    return
+
+                self.root.lift()
+                self.root.attributes('-topmost', True)
+                if attempt == 0:
+                    self._bring_to_front_windows()
+                try:
+                    self.root.focus_force()
+                except Exception:
+                    try:
+                        self.root.focus_set()
+                    except Exception:
+                        pass
+
+                def _release() -> None:
+                    try:
+                        self.root.attributes('-topmost', False)
+                    except Exception:
+                        pass
+
+                self.root.after(250, _release)
+            except Exception:
+                logger.debug("Foreground boost attempt failed", exc_info=True)
+
+            next_attempt = attempt + 1
+            if next_attempt < max_attempts:
+                self.root.after(interval, lambda: _boost(next_attempt))
+
+        self.root.after(max(0, initial_delay), _boost)
+
+    def post_to_ui(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
+        """Execute ``func`` on the Tk UI thread.
+
+        Background threads should use this helper instead of touching Tk widgets
+        directly. When already on the UI thread the callable executes
+        immediately to preserve ordering.
+        """
+
+        def _invoke() -> None:
+            start = time.perf_counter()
+            try:
+                func(*args, **kwargs)
+            except Exception:
+                logger.exception("UI callback failed")
+            finally:
+                duration = time.perf_counter() - start
+                threshold = getattr(self, "_ui_callback_warn_threshold", 0.2)
+                if duration > threshold:
+                    callback_name = getattr(func, "__qualname__", getattr(func, "__name__", repr(func)))
+                    logger.warning(
+                        "UI callback '%s' executed in %.1f ms (threshold %.0f ms)",
+                        callback_name,
+                        duration * 1000.0,
+                        threshold * 1000.0,
+                    )
+
+        dispatcher = getattr(self, '_ui_dispatcher', None)
+        if dispatcher is not None:
+            try:
+                is_thread_check = getattr(dispatcher, 'is_ui_thread', None)
+                if callable(is_thread_check) and is_thread_check():
+                    _invoke()
+                    return
+                dispatcher.dispatch(_invoke)
+                return
+            except Exception:
+                logger.exception("Failed to dispatch UI callback via dispatcher")
+
+        try:
+            if hasattr(self, 'root') and self.root:
+                self.root.after(0, _invoke)
+                return
+        except Exception:
+            pass
+
+        _invoke()
+
     def _emergency_cleanup(self) -> None:
         """
         Last-resort cleanup if normal shutdown fails.
@@ -358,11 +494,18 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
         logger.info("Emergency cleanup triggered")
         
         # Shutdown worker pool (critical for thread cleanup)
+        if hasattr(self, '_ui_dispatcher') and self._ui_dispatcher:
+            try:
+                self._ui_dispatcher.stop()
+            except Exception:
+                pass
+
         if hasattr(self, '_worker_pool') and self._worker_pool:
             try:
                 self._worker_pool.shutdown(wait=False)
             except Exception:
                 pass
+        set_worker_pool(None)
         
         # Stop async event loop
         if hasattr(self, '_async_loop') and self._async_loop:

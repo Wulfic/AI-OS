@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import configparser
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def save_app_state(
@@ -63,8 +66,9 @@ def save_app_state(
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(d, indent=2), encoding="utf-8")
-    except Exception:
-        pass
+        logger.info(f"App state saved to JSON: {path}")
+    except Exception as e:
+        logger.error(f"Failed to save app state to JSON {path}: {e}")
     
     # INI format (new - more user-friendly and cross-session persistent)
     try:
@@ -79,8 +83,9 @@ def save_app_state(
             evaluation_state=evaluation_state,
             settings_state=settings_state,
         )
-    except Exception:
-        pass
+        logger.info(f"App state saved to INI: {ini_path}")
+    except Exception as e:
+        logger.error(f"Failed to save app state to INI: {e}")
 
 
 def _save_settings_ini(
@@ -184,17 +189,22 @@ def load_app_state(path: Path) -> dict[str, Any]:
     ini_path = path.parent / "settings.ini"
     if ini_path.exists():
         try:
+            logger.debug(f"Loading app state from INI: {ini_path}")
             return _load_settings_ini(ini_path)
-        except Exception:
-            pass  # Fall back to JSON
+        except Exception as e:
+            logger.error(f"Failed to load app state from INI {ini_path}: {e}")
+            # Fall back to JSON
     
     # Fallback to JSON format
     try:
         if not path.exists():
+            logger.warning(f"State file not found, using defaults: {path}")
             return {}
+        logger.debug(f"Loading app state from JSON: {path}")
         data = json.loads(path.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except Exception as e:
+        logger.error(f"Failed to load app state from JSON {path}: {e}")
         return {}
 
 
@@ -240,43 +250,43 @@ def _load_settings_ini(path: Path) -> dict[str, Any]:
             train_cuda_str = config["Resources"].get("train_cuda_selected", fallback=None)
             if train_cuda_str:
                 result["train_cuda_selected"] = json.loads(train_cuda_str)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to parse train_cuda_selected from INI: {e}")
         
         try:
             train_mem_str = config["Resources"].get("train_cuda_mem_pct", fallback=None)
             if train_mem_str:
                 result["train_cuda_mem_pct"] = json.loads(train_mem_str)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to parse train_cuda_mem_pct from INI: {e}")
         
         try:
             train_util_str = config["Resources"].get("train_cuda_util_pct", fallback=None)
             if train_util_str:
                 result["train_cuda_util_pct"] = json.loads(train_util_str)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to parse train_cuda_util_pct from INI: {e}")
         
         try:
             run_cuda_str = config["Resources"].get("run_cuda_selected", fallback=None)
             if run_cuda_str:
                 result["run_cuda_selected"] = json.loads(run_cuda_str)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to parse run_cuda_selected from INI: {e}")
         
         try:
             run_mem_str = config["Resources"].get("run_cuda_mem_pct", fallback=None)
             if run_mem_str:
                 result["run_cuda_mem_pct"] = json.loads(run_mem_str)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to parse run_cuda_mem_pct from INI: {e}")
         
         try:
             run_util_str = config["Resources"].get("run_cuda_util_pct", fallback=None)
             if run_util_str:
                 result["run_cuda_util_pct"] = json.loads(run_util_str)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to parse run_cuda_util_pct from INI: {e}")
     
     # [HRMTraining] section
     if "HRMTraining" in config:

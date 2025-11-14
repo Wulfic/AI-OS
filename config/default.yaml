@@ -31,10 +31,13 @@ resources:
   run_device: cuda
   run_cuda_selected:
   - 0
+  - 1
   run_cuda_mem_pct:
-    0: 90
+    0: 100
+    1: 100
   run_cuda_util_pct:
     0: 0
+    1: 0
   system_mem_limit_gb: null
   dataset_cap: '300.0'
   model_cap: ''

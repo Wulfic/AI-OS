@@ -42,12 +42,13 @@ class ManagedThread:
             logger.warning(f"{self.__class__.__name__} already running")
             return
         
+        logger.debug(f"Starting background worker thread: {self.__class__.__name__}")
         self._stop_event.clear()
         self._running = True
         # Non-daemon thread for graceful shutdown
         self._thread = threading.Thread(target=self._run, daemon=False, name=self.__class__.__name__)
         self._thread.start()
-        logger.debug(f"{self.__class__.__name__} started")
+        logger.debug(f"Background worker thread started: {self._thread.name} (id={self._thread.ident})")
     
     def stop(self, timeout: float = 5.0):
         """Stop the thread gracefully.
@@ -58,7 +59,7 @@ class ManagedThread:
         if not self._running:
             return
         
-        logger.debug(f"{self.__class__.__name__} stopping...")
+        logger.debug(f"Stopping background worker: {self.__class__.__name__}")
         self._stop_event.set()
         
         if self._thread:
@@ -68,9 +69,11 @@ class ManagedThread:
                     f"{self.__class__.__name__} did not stop within {timeout}s. "
                     f"It will continue running but should exit soon."
                 )
+            else:
+                logger.debug(f"Background worker joined successfully: {self.__class__.__name__}")
         
         self._running = False
-        logger.debug(f"{self.__class__.__name__} stopped")
+        logger.debug(f"Background worker stopped: {self.__class__.__name__}")
     
     def is_running(self) -> bool:
         """Check if thread is currently running."""
@@ -78,7 +81,7 @@ class ManagedThread:
     
     def _run(self):
         """Internal run loop. Override _do_work() instead."""
-        logger.debug(f"{self.__class__.__name__} worker started")
+        logger.debug(f"Background worker thread {self.__class__.__name__} entering run loop")
         try:
             while not self._stop_event.is_set():
                 try:
@@ -91,7 +94,7 @@ class ManagedThread:
         except Exception as e:
             logger.exception(f"{self.__class__.__name__} fatal error: {e}")
         finally:
-            logger.debug(f"{self.__class__.__name__} worker exiting")
+            logger.debug(f"Background worker thread {self.__class__.__name__} exiting")
     
     def _do_work(self):
         """Override this method with your thread logic.

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any, Dict, List
+
+logger = logging.getLogger(__name__)
 
 
 def load_servers_config(config_path: str, default_callback: Any, error_callback: Any) -> List[Dict[str, Any]]:
@@ -19,12 +22,21 @@ def load_servers_config(config_path: str, default_callback: Any, error_callback:
         List of server configuration dictionaries
     """
     if not os.path.exists(config_path):
+        logger.info(f"MCP servers config not found at {config_path}, using defaults")
         return default_callback()
     
     try:
+        logger.debug(f"Loading MCP servers config from {config_path}")
         with open(config_path, "r") as f:
-            return json.load(f)
+            servers = json.load(f)
+        logger.info(f"Loaded {len(servers)} MCP server configurations")
+        return servers
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in MCP servers config at {config_path}: {e}", exc_info=True)
+        error_callback(f"[MCP] Error loading servers config: {e}")
+        return default_callback()
     except Exception as e:
+        logger.error(f"Failed to load MCP servers config from {config_path}: {e}", exc_info=True)
         error_callback(f"[MCP] Error loading servers config: {e}")
         return default_callback()
 
@@ -39,10 +51,16 @@ def save_servers_config(config_path: str, servers: List[Dict[str, Any]], save_st
         error_callback: Callback for logging errors
     """
     try:
+        logger.debug(f"Saving {len(servers)} MCP server configurations to {config_path}")
         with open(config_path, "w") as f:
             json.dump(servers, f, indent=2)
+        logger.info(f"Successfully saved MCP servers config to {config_path}")
         save_state_callback()
+    except PermissionError as e:
+        logger.error(f"Permission denied saving MCP servers config to {config_path}: {e}", exc_info=True)
+        error_callback(f"[MCP] Permission denied saving servers config: {e}")
     except Exception as e:
+        logger.error(f"Failed to save MCP servers config to {config_path}: {e}", exc_info=True)
         error_callback(f"[MCP] Error saving servers config: {e}")
 
 
@@ -107,12 +125,21 @@ def load_tools_config(config_path: str, default_callback: Any, error_callback: A
         Dictionary mapping tool names to their configuration
     """
     if not os.path.exists(config_path):
+        logger.info(f"Tool permissions config not found at {config_path}, using defaults")
         return default_callback()
     
     try:
+        logger.debug(f"Loading tool permissions config from {config_path}")
         with open(config_path, "r") as f:
-            return json.load(f)
+            tools = json.load(f)
+        logger.info(f"Loaded permissions for {len(tools)} tools")
+        return tools
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in tool permissions config at {config_path}: {e}", exc_info=True)
+        error_callback(f"[Tools] Error loading permissions config: {e}")
+        return default_callback()
     except Exception as e:
+        logger.error(f"Failed to load tool permissions config from {config_path}: {e}", exc_info=True)
         error_callback(f"[Tools] Error loading permissions config: {e}")
         return default_callback()
 
@@ -127,10 +154,16 @@ def save_tools_config(config_path: str, tools: Dict[str, Dict[str, Any]], save_s
         error_callback: Callback for logging errors
     """
     try:
+        logger.debug(f"Saving permissions for {len(tools)} tools to {config_path}")
         with open(config_path, "w") as f:
             json.dump(tools, f, indent=2)
+        logger.info(f"Successfully saved tool permissions config to {config_path}")
         save_state_callback()
+    except PermissionError as e:
+        logger.error(f"Permission denied saving tool permissions config to {config_path}: {e}", exc_info=True)
+        error_callback(f"[Tools] Permission denied saving permissions config: {e}")
     except Exception as e:
+        logger.error(f"Failed to save tool permissions config to {config_path}: {e}", exc_info=True)
         error_callback(f"[Tools] Error saving permissions config: {e}")
 
 

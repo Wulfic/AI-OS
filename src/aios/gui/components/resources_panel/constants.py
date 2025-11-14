@@ -16,6 +16,9 @@ except Exception:  # pragma: no cover - environment dependent
     tk = cast(Any, None)
     ttk = cast(Any, None)
 
+# Import safe variable wrappers
+from ...utils import safe_variables
+
 # psutil imports with fallback
 try:  # pragma: no cover - optional dependency
     import psutil  # type: ignore
@@ -40,6 +43,7 @@ except Exception:  # pragma: no cover - optional dependency
 __all__ = [
     "tk",
     "ttk",
+    "safe_variables",
     "psutil",
     "Figure",
     "FigureCanvasTkAgg",

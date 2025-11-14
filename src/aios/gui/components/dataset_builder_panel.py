@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import threading
 from typing import Any, Callable, cast
 
+# Import safe variable wrappers
+from ..utils import safe_variables
+
 from aios.python_exec import get_preferred_python_executable
+from ..utils.resource_management import submit_background
 
 try:  # pragma: no cover - environment dependent
     import tkinter as tk  # type: ignore
@@ -31,7 +36,8 @@ class DatasetBuilderPanel(ttk.LabelFrame):  # type: ignore[misc]
         super().__init__(parent, text="Dataset Builder (Images)")
         if tk is None or ttk is None:
             raise RuntimeError("Tkinter is not available in this environment")
-        self.pack(fill="both", expand=True)
+        # Mirror the shared output frame padding so both sides align vertically
+        self.pack(fill="both", expand=True, padx=5, pady=(5, 5))
         self._run_cli = run_cli
         self._append_out = append_out
         self._update_out = update_out
@@ -43,7 +49,7 @@ class DatasetBuilderPanel(ttk.LabelFrame):  # type: ignore[misc]
         r0 = ttk.Frame(self)
         r0.pack(fill="x", pady=(0, 4))
         ttk.Label(r0, text="Type:").pack(side="left")
-        self.type_var = tk.StringVar(value="images")
+        self.type_var = safe_variables.StringVar(value="images")
         self.type_combo = ttk.Combobox(r0, textvariable=self.type_var, values=[
             "images", "videos", "text", "websites", "raw"
         ], state="readonly", width=12)
@@ -57,7 +63,7 @@ class DatasetBuilderPanel(ttk.LabelFrame):  # type: ignore[misc]
         r1 = ttk.Frame(self)
         r1.pack(fill="x")
         ttk.Label(r1, text="Query:").pack(side="left")
-        self.query_var = tk.StringVar(value="boats")
+        self.query_var = safe_variables.StringVar(value="boats")
         q_entry = ttk.Entry(r1, textvariable=self.query_var, width=40)
         q_entry.pack(side="left", padx=(4, 8))
         try:
@@ -66,7 +72,7 @@ class DatasetBuilderPanel(ttk.LabelFrame):  # type: ignore[misc]
         except Exception:
             pass
         ttk.Label(r1, text="Max images:").pack(side="left")
-        self.max_images_var = tk.StringVar(value="200")
+        self.max_images_var = safe_variables.StringVar(value="200")
         max_entry = ttk.Entry(r1, textvariable=self.max_images_var, width=8)
         max_entry.pack(side="left", padx=(4, 8))
         try:
@@ -75,7 +81,7 @@ class DatasetBuilderPanel(ttk.LabelFrame):  # type: ignore[misc]
         except Exception:
             pass
         ttk.Label(r1, text="Per-site:").pack(side="left")
-        self.per_site_var = tk.StringVar(value="40")
+        self.per_site_var = safe_variables.StringVar(value="40")
         per_site_entry = ttk.Entry(r1, textvariable=self.per_site_var, width=6)
         per_site_entry.pack(side="left", padx=(4, 8))
         try:
@@ -84,7 +90,7 @@ class DatasetBuilderPanel(ttk.LabelFrame):  # type: ignore[misc]
         except Exception:
             pass
         ttk.Label(r1, text="Search results:").pack(side="left")
-        self.search_results_var = tk.StringVar(value="10")
+        self.search_results_var = safe_variables.StringVar(value="10")
         search_results_entry = ttk.Entry(r1, textvariable=self.search_results_var, width=6)
         search_results_entry.pack(side="left", padx=(4, 8))
         try:
@@ -96,7 +102,7 @@ class DatasetBuilderPanel(ttk.LabelFrame):  # type: ignore[misc]
         r2 = ttk.Frame(self)
         r2.pack(fill="x", pady=(4, 0))
         ttk.Label(r2, text="Dataset name:").pack(side="left")
-        self.ds_name_var = tk.StringVar(value="")
+        self.ds_name_var = safe_variables.StringVar(value="")
         name_entry = ttk.Entry(r2, textvariable=self.ds_name_var, width=30)
         name_entry.pack(side="left", padx=(4, 8))
         try:
@@ -104,7 +110,7 @@ class DatasetBuilderPanel(ttk.LabelFrame):  # type: ignore[misc]
             add_tooltip(name_entry, "Optional dataset name for persistent storage.")
         except Exception:
             pass
-        self.overwrite_var = tk.BooleanVar(value=False)
+        self.overwrite_var = safe_variables.BooleanVar(value=False)
         ow_cb = ttk.Checkbutton(r2, text="Overwrite", variable=self.overwrite_var)
         ow_cb.pack(side="left")
         try:
@@ -117,7 +123,7 @@ class DatasetBuilderPanel(ttk.LabelFrame):  # type: ignore[misc]
         r2b = ttk.Frame(self)
         r2b.pack(fill="x", pady=(2, 0))
         ttk.Label(r2b, text="Extensions filter (comma):").pack(side="left")
-        self.allow_ext_var = tk.StringVar(value="")
+        self.allow_ext_var = safe_variables.StringVar(value="")
         self.allow_ext_entry = ttk.Entry(r2b, textvariable=self.allow_ext_var, width=40)
         self.allow_ext_entry.pack(side="left", padx=(4, 8))
         self.allow_ext_hint = ttk.Label(r2b, text="e.g. jpg,png or pdf,txt")
@@ -168,6 +174,80 @@ class DatasetBuilderPanel(ttk.LabelFrame):  # type: ignore[misc]
             _on_type_change()
         except Exception:
             pass
+
+    # === Internal helpers ===
+
+    def _post_to_ui(self, callback: Callable[[], None]) -> None:
+        """Schedule *callback* on the Tk event loop (best effort)."""
+        try:
+            if self.winfo_exists():
+                self.after(0, callback)
+        except Exception:
+            pass
+
+    def _run_background(self, label: str, work: Callable[[], None]) -> None:
+        """Execute *work* using the shared worker pool or a fallback thread."""
+        try:
+            submit_background(label, work, pool=self._worker_pool)
+        except RuntimeError:
+            threading.Thread(target=work, name=label, daemon=True).start()
+
+    def _safe_append_out(self, message: str) -> None:
+        if not message:
+            return
+
+        def _apply() -> None:
+            try:
+                self._append_out(message)
+            except Exception:
+                pass
+
+        self._post_to_ui(_apply)
+
+    def _set_progress_label(self, text: str) -> None:
+        def _apply() -> None:
+            try:
+                self.progress_lbl.configure(text=text)
+            except Exception:
+                pass
+
+        self._post_to_ui(_apply)
+
+    def _set_progress_value(self, downloaded: float, target: float) -> None:
+        def _apply() -> None:
+            try:
+                self.progress.configure(mode="determinate", maximum=float(target))
+                self.progress["value"] = float(downloaded)
+            except Exception:
+                pass
+
+        self._post_to_ui(_apply)
+
+    def _set_dataset_path(self, path: str) -> None:
+        def _apply() -> None:
+            try:
+                self.dataset_path_var.set(path)
+            except Exception:
+                pass
+
+        self._post_to_ui(_apply)
+
+    def _on_build_complete(self, return_code: int) -> None:
+        def _apply() -> None:
+            try:
+                self.btn_build.configure(state="normal")
+            except Exception:
+                pass
+            try:
+                self.progress["value"] = self.progress["maximum"]
+            except Exception:
+                pass
+            try:
+                self.progress_lbl.configure(text=f"done (rc={return_code})")
+            except Exception:
+                pass
+
+        self._post_to_ui(_apply)
 
     def get_state(self) -> dict:
         return {
@@ -258,7 +338,6 @@ class DatasetBuilderPanel(ttk.LabelFrame):  # type: ignore[misc]
             return
 
         def _reader(pipe, label):
-            import threading
             def run():
                 if pipe is None:
                     return
@@ -271,53 +350,35 @@ class DatasetBuilderPanel(ttk.LabelFrame):  # type: ignore[misc]
                         data = json.loads(ln)
                         ev = data.get("event") if isinstance(data, dict) else None
                         if ev == "search":
-                            self.progress_lbl.configure(text=f"searching… {len(data.get('sites') or [])} sites")
+                            sites = len(data.get("sites") or [])
+                            self._set_progress_label(f"searching… {sites} sites")
+                            continue
                         elif ev == "page":
-                            self.progress_lbl.configure(text=f"{data.get('images_found', 0)} images on page")
+                            images_found = data.get("images_found", 0)
+                            self._set_progress_label(f"{images_found} images on page")
+                            continue
                         elif ev in ("image", "doc", "html", "video", "file"):
                             d = int(data.get("downloaded", 0))
                             t = int(data.get("target", 100))
-                            try:
-                                self.progress.configure(mode="determinate", maximum=float(t))
-                                self.progress['value'] = float(d)
-                            except Exception:
-                                pass
+                            self._set_progress_value(d, t)
+                            continue
                         else:
                             # final summary
                             if isinstance(data, dict) and data.get("stored"):
                                 dp = data.get("dataset_path") or ""
                                 if isinstance(dp, str) and dp:
-                                    try:
-                                        self.dataset_path_var.set(str(dp))
-                                    except Exception:
-                                        pass
-                                self._append_out(ln)
+                                    self._set_dataset_path(str(dp))
+                                self._safe_append_out(ln)
                                 continue
                     except Exception:
                         pass
-                    self._append_out(ln)
-            if self._worker_pool:
-                self._worker_pool.submit(run)
-            else:
-                import threading
-                threading.Thread(target=run, daemon=True).start()
+                    self._safe_append_out(ln)
+            self._run_background(f"dataset-builder-stream-{label}", run)
         _reader(proc.stdout, "out")
         _reader(proc.stderr, "err")
 
         def _waiter():
             rc = proc.wait()
-            try:
-                self.btn_build.configure(state="normal")
-                # if not filled, set progress complete
-                try:
-                    self.progress['value'] = self.progress['maximum']
-                except Exception:
-                    pass
-                self.progress_lbl.configure(text=f"done (rc={rc})")
-            except Exception:
-                pass
-        if self._worker_pool:
-            self._worker_pool.submit(_waiter)
-        else:
-            import threading
-            threading.Thread(target=_waiter, daemon=True).start()
+            self._on_build_complete(rc)
+
+        self._run_background("dataset-builder-wait", _waiter)

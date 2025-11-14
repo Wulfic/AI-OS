@@ -7,12 +7,18 @@ without downloading the actual dataset. Supports text, image, audio, and video d
 Uses a 3-tier detection approach:
 1. Dataset Viewer /size API (fastest, exact counts)
 2. Dataset Viewer /info API (exact counts + feature types)
-3. Hub API with type-aware estimation (fallback)
+3. Hub API with type-aware estimation (optional fallback, disabled by default)
 """
 
-import requests
-from typing import Optional, Dict, Any, Tuple, List
 import logging
+import os
+import threading
+import time
+from typing import Optional, Dict, Any, Tuple, List
+
+import httpx
+
+from ....data.hf_async_client import fetch_json_sync
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +30,35 @@ except ImportError:
     HfApi = None  # type: ignore
     HF_API_AVAILABLE = False
 
+_TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
+_FALSE_ENV_VALUES = {"0", "false", "no", "off"}
+
+_MANUAL_HUB_ENV = os.getenv("AIOS_ENABLE_HF_HUB_FALLBACK")
+if _MANUAL_HUB_ENV is not None:
+    _MANUAL_HUB_ENV = _MANUAL_HUB_ENV.strip().lower()
+    MANUAL_HUB_FALLBACK = _MANUAL_HUB_ENV in _TRUE_ENV_VALUES
+    AUTO_HUB_FALLBACK = False
+else:
+    MANUAL_HUB_FALLBACK = False
+    _AUTO_HUB_ENV = os.getenv("AIOS_AUTO_ENABLE_HF_HUB_FALLBACK", "1").strip().lower()
+    AUTO_HUB_FALLBACK = _AUTO_HUB_ENV not in _FALSE_ENV_VALUES
+
+ENABLE_HUB_FALLBACK = MANUAL_HUB_FALLBACK or AUTO_HUB_FALLBACK
+if MANUAL_HUB_FALLBACK:
+    HUB_FALLBACK_MODE = "manual"
+elif AUTO_HUB_FALLBACK:
+    HUB_FALLBACK_MODE = "auto"
+else:
+    HUB_FALLBACK_MODE = "disabled"
+
+_FAILURE_LOCK = threading.Lock()
+_FAILURE_CACHE: Dict[str, Tuple[int, float]] = {}
+_FAILURE_BACKOFF_BASE = 30.0
+_FAILURE_BACKOFF_MAX = 600.0
+
 # Constants
 SAMPLES_PER_BLOCK = 100000  # Standard block size for training
-API_TIMEOUT = 10  # seconds
+API_TIMEOUT = 3  # seconds - reduced to prevent hanging
 
 # Bytes per row estimates for different data types
 BYTES_PER_ROW_ESTIMATES = {
@@ -39,6 +71,31 @@ BYTES_PER_ROW_ESTIMATES = {
     "embedding": 3_000,      # Fixed-size vectors (e.g., 768 dims)
 }
 DEFAULT_BYTES_PER_ROW = BYTES_PER_ROW_ESTIMATES["text"]
+
+
+def _should_skip_dataset(dataset_name: str) -> bool:
+    now = time.monotonic()
+    with _FAILURE_LOCK:
+        entry = _FAILURE_CACHE.get(dataset_name)
+        if not entry:
+            return False
+        _, retry_at = entry
+        return retry_at > now
+
+
+def _record_failure(dataset_name: str) -> None:
+    now = time.monotonic()
+    with _FAILURE_LOCK:
+        count, _ = _FAILURE_CACHE.get(dataset_name, (0, 0.0))
+        count += 1
+        delay = min(_FAILURE_BACKOFF_BASE * (2 ** (count - 1)), _FAILURE_BACKOFF_MAX)
+        _FAILURE_CACHE[dataset_name] = (count, now + delay)
+
+
+def _record_success(dataset_name: str) -> None:
+    with _FAILURE_LOCK:
+        if dataset_name in _FAILURE_CACHE:
+            del _FAILURE_CACHE[dataset_name]
 
 
 def get_hf_dataset_size_api(
@@ -76,13 +133,7 @@ def get_hf_dataset_size_api(
     """
     try:
         url = f"https://datasets-server.huggingface.co/size?dataset={dataset_name}"
-        response = requests.get(url, timeout=API_TIMEOUT)
-        
-        if response.status_code != 200:
-            logger.debug(f"Dataset Viewer API returned status {response.status_code} for {dataset_name}")
-            return None
-        
-        data = response.json()
+        data = fetch_json_sync(url, timeout=API_TIMEOUT)
         
         # Check if partial (incomplete data)
         is_partial = data.get("partial", False)
@@ -133,7 +184,10 @@ def get_hf_dataset_size_api(
             "source": "dataset_viewer_api"
         }
         
-    except requests.RequestException as e:
+    except httpx.HTTPStatusError as e:
+        logger.debug(f"Dataset Viewer API returned status {e.response.status_code} for {dataset_name}")
+        return None
+    except httpx.HTTPError as e:
         logger.debug(f"Network error fetching dataset size via API for {dataset_name}: {e}")
         return None
     except Exception as e:
@@ -179,13 +233,7 @@ def get_hf_dataset_info_api(
     """
     try:
         url = f"https://datasets-server.huggingface.co/info?dataset={dataset_name}"
-        response = requests.get(url, timeout=API_TIMEOUT)
-        
-        if response.status_code != 200:
-            logger.debug(f"Dataset Info API returned status {response.status_code} for {dataset_name}")
-            return None
-        
-        data = response.json()
+        data = fetch_json_sync(url, timeout=API_TIMEOUT)
         dataset_info = data.get("dataset_info", {})
         
         # Find the right config
@@ -234,7 +282,10 @@ def get_hf_dataset_info_api(
             "source": "info_api"
         }
         
-    except requests.RequestException as e:
+    except httpx.HTTPStatusError as e:
+        logger.debug(f"Dataset Info API returned status {e.response.status_code} for {dataset_name}")
+        return None
+    except httpx.HTTPError as e:
         logger.debug(f"Network error fetching dataset info API for {dataset_name}: {e}")
         return None
     except Exception as e:
@@ -415,46 +466,69 @@ def get_hf_dataset_metadata(
         >>> print(f"CIFAR-10: {info['num_rows']:,} rows, has_images={info.get('has_images', False)}")
         CIFAR-10: 50,000 rows, has_images=True
     """
+    if _should_skip_dataset(dataset_name):
+        logger.debug("Skipping dataset %s due to recent failures", dataset_name)
+        return None
+
     # Try Dataset Viewer /size API first (fastest, exact row counts)
     info = get_hf_dataset_size_api(dataset_name, config, split)
     if info and not info.get("is_partial", False):
         info["num_rows_estimated"] = False
         info["estimation_quality"] = "exact"
+        _record_success(dataset_name)
         return info
     
     # Try Dataset Viewer /info API (exact rows + feature types)
     info = get_hf_dataset_info_api(dataset_name, config, split)
     if info:
         info["estimation_quality"] = "exact"
+        _record_success(dataset_name)
         return info
     
-    # Fallback to Hub API (file sizes only, need to estimate rows)
-    hub_info = get_hf_dataset_size_hub_api(dataset_name)
-    if hub_info:
-        # Default to text estimation (we don't have feature type info)
-        bytes_per_row = DEFAULT_BYTES_PER_ROW
-        estimated_rows = estimate_rows_from_size(hub_info["total_bytes"], bytes_per_row)
-        
-        # Calculate blocks
-        total_blocks = calculate_blocks(estimated_rows)
-        
-        return {
-            "num_rows": estimated_rows,
-            "num_rows_estimated": True,
-            "estimation_quality": "low",  # Unknown data type
-            "num_bytes": hub_info["total_bytes"],
-            "size_mb": hub_info["size_mb"],
-            "size_gb": hub_info["size_gb"],
-            "total_blocks": total_blocks,
-            "samples_per_block": SAMPLES_PER_BLOCK,
-            "source": "hub_api_estimated"
-        }
-    
+    allow_hub_fallback = ENABLE_HUB_FALLBACK and HF_API_AVAILABLE
+    if allow_hub_fallback:
+        logger.debug(
+            "Using HuggingFace Hub fallback (%s mode) for %s",
+            HUB_FALLBACK_MODE,
+            dataset_name,
+        )
+        hub_info = get_hf_dataset_size_hub_api(dataset_name)
+        if hub_info:
+            bytes_per_row = DEFAULT_BYTES_PER_ROW
+            estimated_rows = estimate_rows_from_size(hub_info["total_bytes"], bytes_per_row)
+
+            total_blocks = calculate_blocks(estimated_rows)
+
+            _record_success(dataset_name)
+            metadata = {
+                "num_rows": estimated_rows,
+                "num_rows_estimated": True,
+                "estimation_quality": "low",
+                "num_bytes": hub_info["total_bytes"],
+                "size_mb": hub_info["size_mb"],
+                "size_gb": hub_info["size_gb"],
+                "total_blocks": total_blocks,
+                "samples_per_block": SAMPLES_PER_BLOCK,
+                "source": "hub_api_estimated",
+            }
+            if HUB_FALLBACK_MODE != "disabled":
+                metadata["fallback_mode"] = HUB_FALLBACK_MODE
+            return metadata
+    else:
+        if ENABLE_HUB_FALLBACK and not HF_API_AVAILABLE:
+            logger.debug(
+                "Hub API fallback (%s mode) requested but huggingface_hub is not installed",
+                HUB_FALLBACK_MODE,
+            )
+        else:
+            logger.debug("Hub API fallback disabled; skipping dataset %s", dataset_name)
+
     logger.debug(f"All methods failed to get size info for {dataset_name}")
+    _record_failure(dataset_name)
     return None
 
 
-def enrich_dataset_with_size(dataset: Dict[str, Any]) -> Dict[str, Any]:
+def enrich_dataset_with_size(dataset: Dict[str, Any], timeout: float = 3.0) -> Dict[str, Any]:
     """
     Enrich a dataset dictionary with size and block information.
     
@@ -466,6 +540,7 @@ def enrich_dataset_with_size(dataset: Dict[str, Any]) -> Dict[str, Any]:
             - path or id: Dataset identifier
             - config (optional): Config/subset name
             - split (optional): Split name (default: "train")
+        timeout: Maximum time to wait for API response (default: 3.0 seconds)
     
     Returns:
         Updated dataset dictionary with additional fields:
@@ -490,8 +565,11 @@ def enrich_dataset_with_size(dataset: Dict[str, Any]) -> Dict[str, Any]:
         logger.debug("Cannot enrich dataset: no path or id found")
         return dataset
     
-    # Get metadata
+    # Get metadata with timeout protection
     try:
+        import signal
+        
+        # Use timeout for the metadata retrieval
         metadata = get_hf_dataset_metadata(dataset_name, config, split)
         
         if metadata:

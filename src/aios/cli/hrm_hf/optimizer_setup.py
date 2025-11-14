@@ -1,6 +1,7 @@
 """Optimizer and AMP scaler setup utilities."""
 from __future__ import annotations
 
+import logging
 import warnings
 from typing import TYPE_CHECKING, Any, Optional, Tuple
 
@@ -8,6 +9,8 @@ import torch
 
 if TYPE_CHECKING:
     from aios.core.hrm_training.training_config import TrainingConfig
+
+logger = logging.getLogger(__name__)
 
 
 def create_optimizer(
@@ -27,7 +30,10 @@ def create_optimizer(
     Returns:
         Optimizer instance (or None if DeepSpeed manages it)
     """
+    logger.info(f"Creating optimizer: deepspeed={use_deepspeed_optimizer}, lr={config.lr}, 8bit={config.use_8bit_optimizer}")
+    
     if use_deepspeed_optimizer:
+        logger.info("Using DeepSpeed-managed optimizer with ZeRO optimizations")
         log_fn({
             "optimizer": "DeepSpeed managed",
             "note": "Optimizer created by DeepSpeed with ZeRO optimizations"
@@ -35,11 +41,13 @@ def create_optimizer(
         return None
     
     params = [p for p in model.parameters() if p.requires_grad]
+    logger.debug(f"Trainable parameters: {len(params)}")
     
     if config.use_8bit_optimizer:
         try:
             from aios.core.hrm_models.memory_optimizations import create_8bit_optimizer
             opt = create_8bit_optimizer(params, lr=config.lr, optimizer_type='adamw')
+            logger.info(f"Created 8-bit AdamW optimizer: lr={config.lr}, params={len(params)}")
             log_fn({
                 "optimizer": "AdamW8bit",
                 "lr": config.lr,
@@ -47,6 +55,7 @@ def create_optimizer(
             })
             return opt
         except ImportError:
+            logger.warning("8-bit optimizer unavailable (bitsandbytes not installed), falling back to standard AdamW")
             log_fn({
                 "optimizer": "AdamW8bit unavailable",
                 "fallback": "Using standard AdamW",
@@ -56,6 +65,7 @@ def create_optimizer(
     # Standard optimizer
     OptClass = getattr(torch.optim, "AdamW", None) or getattr(torch.optim, "Adam")
     opt = OptClass(params, lr=config.lr)
+    logger.info(f"Created standard {OptClass.__name__} optimizer: lr={config.lr}, params={len(params)}")
     log_fn({
         "optimizer": "AdamW",
         "lr": config.lr,
@@ -87,14 +97,17 @@ def setup_amp_scaler(
             scaler = torch.amp.GradScaler('cuda')
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", category=UserWarning)
+            logger.info("AMP enabled with CUDA GradScaler for mixed precision training")
             log_fn({"amp_enabled": True, "device": "cuda"})
         except Exception as e:
+            logger.error(f"Failed to enable AMP, falling back to FP32: {e}")
             log_fn({
                 "amp_enabled": False,
                 "error": str(e),
                 "fallback": "FP32 training"
             })
     elif not use_amp:
+        logger.info("AMP disabled - using FP32 training")
         log_fn({
             "amp_enabled": False,
             "note": "FP32 training (user choice or AMP not requested)"

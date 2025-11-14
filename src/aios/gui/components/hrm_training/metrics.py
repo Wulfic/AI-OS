@@ -629,7 +629,7 @@ def _update_epoch_tracking(panel: Any, obj: dict) -> None:
             total_blocks = obj.get("total_blocks")
             if total_blocks is not None:
                 panel._total_blocks = total_blocks
-                print(f"[GUI] Detected {total_blocks} total blocks in dataset")
+                logger.info(f"Detected {total_blocks} total blocks in dataset")
                 
                 # Update block display with new total
                 if hasattr(panel, "epoch_blocks_lbl"):
@@ -868,18 +868,30 @@ def show_stopped_dialog(panel: Any) -> None:
                 s = panel.student_init_var.get().strip()
                 d = os.path.dirname(s) if s else os.path.dirname(panel.log_file_var.get().strip())
                 if d and os.path.isdir(d):
-                    import subprocess
-                    if os.name == "nt": subprocess.run(["explorer", d])
-                    else: subprocess.run(["xdg-open", d])
+                    if os.name == "nt":
+                        try:
+                            os.startfile(d)  # type: ignore[attr-defined]
+                        except Exception:
+                            import subprocess
+                            subprocess.Popen(["explorer", d])
+                    else:
+                        import subprocess
+                        subprocess.Popen(["xdg-open", d], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception:
                 pass
         def _open_log():
             try:
                 lf = panel.log_file_var.get().strip()
                 if lf and os.path.exists(lf):
-                    import subprocess
-                    if os.name == "nt": subprocess.run(["notepad", lf])
-                    else: subprocess.run(["xdg-open", lf])
+                    if os.name == "nt":
+                        try:
+                            os.startfile(lf)  # type: ignore[attr-defined]
+                        except Exception:
+                            import subprocess
+                            subprocess.Popen(["notepad", lf])
+                    else:
+                        import subprocess
+                        subprocess.Popen(["xdg-open", lf], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception:
                 pass
         def _clear_stop():

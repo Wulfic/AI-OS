@@ -1,4 +1,5 @@
 from typing import Dict, Tuple
+import logging
 import math
 
 import torch
@@ -6,6 +7,8 @@ from torch import nn
 import torch.nn.functional as F
 
 from .common import trunc_normal_init_
+
+logger = logging.getLogger(__name__)
 
 CosSin = Tuple[torch.Tensor, torch.Tensor]
 
@@ -339,7 +342,7 @@ class MoESwiGLU(nn.Module):
         """
         # Check input for NaN/Inf
         if torch.isnan(x).any() or torch.isinf(x).any():
-            print(f"[MoESwiGLU] WARNING: NaN/Inf detected in input, shape={x.shape}")
+            logger.warning(f"[MoESwiGLU] NaN/Inf detected in input, shape={x.shape}")
             # Replace NaN/Inf with zeros to prevent propagation
             x = torch.nan_to_num(x, nan=0.0, posinf=1e4, neginf=-1e4)
         
@@ -348,7 +351,7 @@ class MoESwiGLU(nn.Module):
         
         # Check output for NaN/Inf
         if torch.isnan(output).any() or torch.isinf(output).any():
-            print(f"[MoESwiGLU] WARNING: NaN/Inf detected in output, shape={output.shape}")
+            logger.warning(f"[MoESwiGLU] NaN/Inf detected in output, shape={output.shape}")
             output = torch.nan_to_num(output, nan=0.0, posinf=1e4, neginf=-1e4)
         
         # Store router logits for auxiliary load balancing loss (optional)

@@ -4,16 +4,18 @@ Dataset Download Core Logic
 Core functions for downloading datasets from HuggingFace Hub.
 """
 
+import logging
 import os
 import sys
-import time
 import threading
 from pathlib import Path
 from tkinter import messagebox
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from .progress_capture import RealTimeProgressCapture
 from .config_selector import show_config_selector
+
+logger = logging.getLogger(__name__)
 
 # Import stream manager for coordinating concurrent dataset access
 try:
@@ -35,6 +37,8 @@ def download_dataset(panel, dataset: Dict[str, Any]):
     dataset_name = dataset.get("full_name", dataset.get("name", "Unknown"))
     dataset_path = dataset.get("path")
     
+    logger.info(f"Starting download: dataset={dataset_name}, path={dataset_path}")
+    
     # Use the global HF cache directory
     cache_dir = Path(os.environ.get("HF_HOME", str(Path.cwd() / "training_data" / "hf_cache")))
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -42,6 +46,8 @@ def download_dataset(panel, dataset: Dict[str, Any]):
     # Output path
     output_name = dataset_name.replace("/", "_").replace(" ", "_").lower()
     output_path = Path(panel.download_location.get()) / output_name
+    
+    logger.info(f"Destination: {output_path}")
     
     panel.log(f"\n{'='*60}")
     panel.log(f"📥 Downloading: {dataset_name}")
@@ -63,29 +69,35 @@ def download_dataset(panel, dataset: Dict[str, Any]):
                     panel.log(f"   ℹ️ Dataset has {len(configs)} configs available")
                     
                     # Prompt user to select config in main thread
-                    selected_config = None
-                    def _select_config():
+                    selected_config: Optional[str] = None
+                    config_event = threading.Event()
+
+                    def _select_config() -> None:
                         nonlocal selected_config
-                        selected_config = show_config_selector(dataset_name, configs, panel.frame)
-                    
+                        try:
+                            selected_config = show_config_selector(dataset_name, configs, panel.frame)
+                        finally:
+                            config_event.set()
+
                     # Schedule with safety check
                     try:
                         if panel.frame.winfo_exists():
                             panel.frame.after(0, _select_config)
+                        else:
+                            panel.log("   ❌ Download cancelled: Widget destroyed")
+                            return
                     except Exception:
                         panel.log("   ❌ Download cancelled: Widget destroyed")
                         return
-                    
-                    # Wait for selection (simple polling)
-                    for _ in range(300):  # 30 second timeout
-                        if selected_config is not None:
-                            break
-                        time.sleep(0.1)
-                    
+
+                    if not config_event.wait(timeout=30):
+                        panel.log("   ❌ Download cancelled: No config selected")
+                        return
+
                     if not selected_config:
                         panel.log("   ❌ Download cancelled: No config selected")
                         return
-                    
+
                     config_name = selected_config
                     panel.log(f"   ✓ Using config: {config_name}")
             except Exception as e:
@@ -162,12 +174,8 @@ def download_dataset(panel, dataset: Dict[str, Any]):
                 if panel.download_pause_event.is_set():
                     panel.log("   ⏸️ Download paused: training started on same dataset")
                     panel.log("   ⏳ Waiting for training to complete...")
-                    # Wait until pause is cleared
-                    while panel.download_pause_event.is_set():
-                        if panel.cancel_download:
-                            break
-                        time.sleep(1)
-                    if not panel.cancel_download:
+                    resumed = panel.download_pause_event.wait_for_resume(lambda: panel.cancel_download)
+                    if resumed and not panel.cancel_download:
                         panel.log("   ▶️ Download resumed: training completed")
             
             samples.append(sample)
@@ -196,13 +204,17 @@ def download_dataset(panel, dataset: Dict[str, Any]):
         
         if not panel.cancel_download and samples:
             # Convert and save
-            panel.log(f"   💾 Saving {len(samples):,} samples...")
+            samples_count = len(samples)
+            logger.info(f"Download progress: {samples_count:,} samples collected")
+            panel.log(f"   💾 Saving {samples_count:,} samples...")
             ds = Dataset.from_dict({
                 key: [s[key] for s in samples]
                 for key in samples[0].keys()
             })
             ds.save_to_disk(str(output_path))
-            panel.log(f"   ✅ Success: {len(samples):,} samples saved to {output_path}")
+            file_size_mb = sum(f.stat().st_size for f in Path(output_path).rglob('*') if f.is_file()) / (1024 * 1024)
+            logger.info(f"Download completed: {dataset_name} ({samples_count:,} samples, {file_size_mb:.1f} MB)")
+            panel.log(f"   ✅ Success: {samples_count:,} samples saved to {output_path}")
             
             # Cache the downloaded chunk for future use
             if chunk_cache and samples:
@@ -227,25 +239,33 @@ def download_dataset(panel, dataset: Dict[str, Any]):
                                 chunk_index=chunk_index,
                                 lines=text_lines
                             )
+                            logger.debug(f"Cached chunk for future use: chunk {chunk_index}, {len(text_lines)} lines")
                             panel.log(f"   ✓ Cached chunk for future use (chunk {chunk_index}, {len(text_lines)} lines)")
-                except Exception:
+                except Exception as e:
                     # Non-critical failure
-                    pass
+                    logger.debug(f"Failed to cache chunk: {e}")
             
-            messagebox.showinfo(
-                "Download Complete",
-                f"Successfully downloaded:\n{dataset_name}\n\n"
-                f"Samples: {len(samples):,}\n"
-                f"Location: {output_path}"
-            )
+            try:
+                panel.frame.after(0, lambda: messagebox.showinfo(
+                    "Download Complete",
+                    f"Successfully downloaded:\n{dataset_name}\n\n"
+                    f"Samples: {samples_count:,}\n"
+                    f"Location: {output_path}"
+                ))
+            except Exception:
+                pass
         
     except Exception as e:
         error_msg = str(e)
+        logger.error(f"Download failed: {dataset_name} - {error_msg}")
         panel.log(f"   ❌ Download failed: {error_msg}")
-        messagebox.showerror(
-            "Download Failed",
-            f"Failed to download {dataset_name}:\n\n{error_msg[:200]}"
-        )
+        try:
+            panel.frame.after(0, lambda: messagebox.showerror(
+                "Download Failed",
+                f"Failed to download {dataset_name}:\n\n{error_msg[:200]}"
+            ))
+        except Exception:
+            pass
     
     finally:
         # Unregister download from stream manager
@@ -254,9 +274,22 @@ def download_dataset(panel, dataset: Dict[str, Any]):
                 stream_mgr = get_stream_manager()
                 stream_mgr.unregister_download(panel.current_download_dataset_id)
                 panel.current_download_dataset_id = None
-            except Exception:
-                pass
+                logger.debug(f"Unregistered download from stream manager: {dataset_name}")
+            except Exception as e:
+                logger.debug(f"Failed to unregister download: {e}")
         
         # Mark download complete
-        panel.cancel_btn.config(state="disabled")
-        panel.status_label.config(text="Ready")
+        def _finalize_ui() -> None:
+            try:
+                panel.cancel_btn.config(state="disabled")
+                panel.status_label.config(text="Ready")
+                panel._download_job = None
+            except Exception:
+                pass
+
+        try:
+            panel.frame.after(0, _finalize_ui)
+        except Exception:
+            _finalize_ui()
+
+        logger.debug("Download operation completed")
