@@ -25,9 +25,15 @@ Key features in v1.0.0:
 ## Quick start
 
 ## Minimum Recommended Specs!
-GPU - 6GB VRAM
-Memory - 16GB 
-CPU - 4 Core
+- GPU: 6GB VRAM **NOTE** (Nvidia:Full Support|AMD:UNTESTED|INTEL(ARC):UNTESTED)
+- System Memory: 16GB
+- CPU: 4 Core
+
+## Authors Note
+While the minimum specs listed above will allow you to train and run models, please bare in mind, that training could take weeks on smaller/older cards.
+The model that ships with this program was trained on 2x RTX 2080ti(11GB) cards. The model is a utilizing the qwen tokenizer, sMoE enabled 268M Params with 8 experts, context length of 1024 resulting in about 6000 characters for output. Trained 1/10th the Tiny Stories Dataset in ~8 hours.
+
+TLDR; Have a fast ass GPU with lots of VRAM if you're impatient.
 
 ### Prerequisites
 

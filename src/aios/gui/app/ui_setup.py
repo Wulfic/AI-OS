@@ -88,6 +88,15 @@ def create_ui_structure(app: Any, root: "tk.Tk") -> None:  # type: ignore[name-d
             logger.debug("Failed to resolve notebook tab selection", exc_info=True)
             return
 
+        # Flush pending geometry/drawing work before running heavier tab handlers.
+        try:
+            root.after_idle(root.update_idletasks)
+        except Exception:
+            try:
+                root.update_idletasks()
+            except Exception:
+                pass
+
         try:
             if tab_text == "Brains":
                 if hasattr(app, 'brains_panel') and app.brains_panel:
