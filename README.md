@@ -16,18 +16,11 @@ License: AI-OS Non‑Selling Attribution License (ANSL) v1.0. You may use, copy,
 - Tomorrow: Deeper OS integration and autonomous, idle‑time learning.
 
 Key features in v1.0.0:
-- Dynamic Subbrains (MoE) for specialized experts
 - Long-context training strategies and memory optimizations (experimental)
-- 8‑bit optimizers (bitsandbytes) to reduce memory footprint
-- Multi‑GPU training (DDP)
-- Modern GUI + robust CLI
-
-## Quick start
-
-## Minimum Recommended Specs!
-- GPU: 6GB VRAM **NOTE** (Nvidia:Full Support|AMD:UNTESTED|INTEL(ARC):UNTESTED)
-- System Memory: 16GB
-- CPU: 4 Core
+- Multi‑GPU training (DDP/Parallel)
+- GUI + CLI
+- End to End model creation, testing, and management.
+- Integration with huggingface
 
 ## Authors Note
 While the minimum specs listed above will allow you to train and run models, please bare in mind, that training could take weeks on smaller/older cards.
@@ -35,11 +28,17 @@ The model that ships with this program was trained on 2x RTX 2080ti(11GB) cards.
 
 TLDR; Have a fast ass GPU with lots of VRAM if you're impatient.
 
+## Minimum Recommended Specs!
+- GPU: 6GB VRAM **NOTE** (Nvidia:Full Support|AMD:UNTESTED|INTEL(ARC):UNTESTED)
+- System Memory: 16GB
+- CPU: 4 Core
+
 ### Prerequisites
 - ~8-10GB Storage for the program, however having at a least a 1 TB SSD/NVME is ideal!
+- Windows 10/11 or Ubuntu 24
 
 ## Quick Install Info
-## Installers
+### Installers
 Find the official installers also in the [Releases section](https://github.com/Wulfic/AI-OS/releases).
 See [installers/README.md](installers/README.md) for Windows (.exe) and Ubuntu (.deb) info.
 ### Windows (PowerShell)
@@ -56,11 +55,13 @@ See [installers/README.md](installers/README.md) for Windows (.exe) and Ubuntu (
 ## Usage
 Use the shortcut to start the program or via terminal.
 GUI (recommended):
-- aios gui
-
+```
+aios gui
+```
 Interactive CLI:
-- aios
-
+```
+aios
+```
 ## Documentation
 
 - Start here: [docs/INDEX.md](docs/INDEX.md)
