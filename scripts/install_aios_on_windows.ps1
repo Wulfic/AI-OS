@@ -201,23 +201,15 @@ function Test-NodeJS() {
     } catch {}
   }
   
-  Write-Host "[!] Node.js not found. Node.js is optional but recommended for MCP tool support." -ForegroundColor Yellow
-  Write-Host "    MCP enables AI to use tools like file operations, web search, and knowledge graphs." -ForegroundColor Yellow
-  
-  if (Confirm-Choice "Install Node.js LTS via winget now?" -DefaultYes:$true) {
-    try {
-      winget install -e --id OpenJS.NodeJS.LTS -h
-      Write-Host "[+] Node.js installed." -ForegroundColor Green
-      Write-Host "    Note: You may need to restart your terminal for 'node' to be available in PATH." -ForegroundColor Yellow
-      return
-    } catch {
-      Write-Host "[!] winget install failed. Node.js is optional - continuing anyway." -ForegroundColor Yellow
-      Write-Host "    You can install it later from: https://nodejs.org/" -ForegroundColor Yellow
-      return
-    }
-  } else {
-    Write-Host "[i] Skipping Node.js installation. You can install it later for MCP tool support." -ForegroundColor Yellow
-    Write-Host "    Install manually: winget install OpenJS.NodeJS.LTS" -ForegroundColor Yellow
+  Write-Host "[!] Node.js not found. Installing Node.js LTS via winget..." -ForegroundColor Yellow
+  try {
+    winget install -e --id OpenJS.NodeJS.LTS -h
+    Write-Host "[+] Node.js installed." -ForegroundColor Green
+    Write-Host "    Note: You may need to restart your terminal for 'node' to be available in PATH." -ForegroundColor Yellow
+  } catch {
+    Write-Host "[!] winget install failed. Node.js is required for MCP tool support." -ForegroundColor Red
+    Write-Host "    Install manually: winget install OpenJS.NodeJS.LTS" -ForegroundColor Red
+    throw "Node.js installation failed."
   }
 }
 
