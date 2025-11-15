@@ -740,6 +740,24 @@ def run_parallel_training_v3(
     else:
         cuda_ids = list(cuda_ids) if cuda_ids else [0]
     
+    # Validate requested GPU IDs against what PyTorch can actually see
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA is not available. Detected no visible CUDA devices; install a compatible GPU or rerun with --device cpu."
+        )
+
+    visible_device_count = torch.cuda.device_count()
+    if visible_device_count <= 0:
+        raise RuntimeError(
+            "No CUDA devices are visible to PyTorch. Ensure GPU drivers are installed or adjust --cuda-ids/--device options."
+        )
+
+    invalid_ids = [gpu for gpu in cuda_ids if gpu < 0 or gpu >= visible_device_count]
+    if invalid_ids:
+        raise RuntimeError(
+            f"Requested CUDA device IDs {invalid_ids} but only {visible_device_count} device(s) are visible. Set --cuda-ids accordingly."
+        )
+
     num_gpus = len(cuda_ids)
     
     print(f"[PLAN] Training Plan:")

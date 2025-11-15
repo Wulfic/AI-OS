@@ -153,6 +153,14 @@ class DatasetBuilderPanel(ttk.LabelFrame):  # type: ignore[misc]
         except Exception:
             pass
 
+        # Footnote to highlight the panel's experimental status
+        self._footnote = ttk.Label(self, text="Dataset Builder is experimental (WIP).")
+        try:
+            self._footnote.configure(font=("TkDefaultFont", 8, "italic"))
+        except Exception:
+            pass
+        self._footnote.pack(fill="x", padx=4, pady=(6, 0))
+
         # internal proc state
         self._proc = None  # type: ignore[assignment]
         # update filter visibility with type

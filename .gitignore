@@ -115,3 +115,4 @@ flash_attn-*.whl
 *.whl
 artifacts/diagnostics/device_info_cache.json
 artifacts/diagnostics/device_info_cache.json
+artifacts/diagnostics/device_info_cache.json

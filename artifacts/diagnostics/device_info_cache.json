@@ -1,5 +1,5 @@
 {
-  "timestamp": 1763185552.540918,
+  "timestamp": 1763228260.007598,
   "data": {
     "cuda_available": true,
     "cuda_devices": [
@@ -26,7 +26,7 @@
         "total_mem_mb": 11264
       }
     ],
-    "detected_at": 1763185552.4537244,
+    "detected_at": 1763228259.9300315,
     "source": "nvidia-smi"
   }
 }

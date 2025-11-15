@@ -53,14 +53,27 @@ def launch_training_process(panel: Any, args: list[str], config: Any, stop_event
             panel._log(f"[hrm] Setting CUDA devices for training process: {cuda_ids_str}")
             logger.info(f"Setting CUDA devices for training process: {cuda_ids_str}")
         
+        # Ensure CUDA environment variables propagate to spawned process (Windows uses spawn)
+        original_env: dict[str, str | None] = {}
+        for key, value in cuda_ids_env.items():
+            original_env[key] = os.environ.get(key)
+            os.environ[key] = value
+
         # Create and start multiprocessing.Process
         logger.debug("Creating multiprocessing.Process for training")
-        proc = Process(
-            target=_training_process_wrapper,
-            args=(run_training_multiprocessing_entry, config, stop_event, graceful_stop_event, output_queue, cuda_ids_env),
-            daemon=False
-        )
-        proc.start()
+        try:
+            proc = Process(
+                target=_training_process_wrapper,
+                args=(run_training_multiprocessing_entry, config, stop_event, graceful_stop_event, output_queue, cuda_ids_env),
+                daemon=False
+            )
+            proc.start()
+        finally:
+            for key, previous in original_env.items():
+                if previous is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = previous
         panel._proc = proc
         panel._log(f"[hrm] Training process started (PID={proc.pid})")
         logger.info(f"Training process started successfully (PID={proc.pid})")
@@ -213,7 +226,7 @@ def _start_queue_monitoring(panel: Any, output_queue: Queue) -> None:
         panel.after(0, _pump)
     except Exception:
         _pump()
-    panel._queue_monitor_thread = monitor_thread
+    panel._queue_monitor_thread = None
 
 
 def _wait_for_process(panel: Any, proc: Process) -> None:
