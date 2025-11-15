@@ -8,6 +8,7 @@ from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from aios.core.evaluation import EvaluationResult
 
+from aios.gui.utils.model_display import get_model_display_name
 from aios.gui.utils.theme_utils import apply_theme_to_toplevel
 
 from .ui_builder import build_dialog_ui, add_dialog_buttons
@@ -35,10 +36,11 @@ class EvaluationResultsDialog(tk.Toplevel):  # type: ignore[misc]
         super().__init__(parent)
         
         self.result = result
-        self.model_name = model_name
+        self._raw_model_name = model_name
+        self.model_name = get_model_display_name(model_name)
         
         # Configure window
-        self.title(f"Evaluation Results: {model_name or 'Unknown Model'}")
+        self.title(f"Evaluation Results: {self.model_name or 'Unknown Model'}")
         self.geometry("1000x700")
         
         # Make dialog modal
@@ -71,7 +73,7 @@ class EvaluationResultsDialog(tk.Toplevel):  # type: ignore[misc]
         # Populate data
         populate_summary(
             result,
-            model_name,
+            self.model_name,
             self.model_label,
             self.status_label,
             self.score_label,
@@ -92,12 +94,12 @@ class EvaluationResultsDialog(tk.Toplevel):  # type: ignore[misc]
     
     def _export_csv(self) -> None:
         """Export results to CSV."""
-        export_to_csv(self.result, self.model_name)
+        export_to_csv(self.result, self._raw_model_name or self.model_name)
     
     def _export_json(self) -> None:
         """Export results to JSON."""
-        export_to_json(self.result, self.model_name)
+        export_to_json(self.result, self._raw_model_name or self.model_name)
     
     def _export_html(self) -> None:
         """Export results to HTML report."""
-        export_to_html(self.result, self.model_name)
+        export_to_html(self.result, self._raw_model_name or self.model_name)

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from ..tooltips import add_tooltip
 from .benchmark_data import PRESET_CATEGORIES
 from . import tree_management
+from aios.gui.utils.model_display import get_model_display_name
 
 if TYPE_CHECKING:
     from .panel_main import EvaluationPanel
@@ -495,6 +496,7 @@ def _refresh_recent_results(panel: "EvaluationPanel") -> None:
         for eval_data in recent:
             eval_id = eval_data["id"]
             model_name = eval_data.get("model_name", "Unknown")
+            model_display = get_model_display_name(model_name)
             timestamp = eval_data.get("timestamp", "")
             overall_score = eval_data.get("overall_score", 0.0)
             
@@ -524,7 +526,7 @@ def _refresh_recent_results(panel: "EvaluationPanel") -> None:
             panel.recent_tree.insert(
                 "",
                 "end",
-                values=(model_name, date_str, score_str, benchmarks_str),
+                values=(model_display, date_str, score_str, benchmarks_str),
                 tags=(str(eval_id),)
             )
     

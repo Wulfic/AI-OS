@@ -6,6 +6,7 @@ from __future__ import annotations
 from ...utils import safe_variables
 
 import logging
+import platform
 import threading
 import time
 from concurrent.futures import CancelledError, TimeoutError, Future
@@ -97,10 +98,12 @@ class ResourcesPanel(ttk.LabelFrame):  # type: ignore[misc]
         self.run_device_var = safe_variables.StringVar(value="auto")    # auto|cpu|cuda
         
         # Training mode: "ddp" or "parallel" (Windows locked to parallel)
-        import platform
         default_mode = "parallel" if platform.system() == "Windows" else "ddp"
         self.training_mode_var = safe_variables.StringVar(value=default_mode)
         self.is_windows = platform.system() == "Windows"
+        self._active_os_label = platform.system().strip().lower()
+        self._last_loaded_os: str | None = self._active_os_label
+        self._last_selection_warning: str | None = None
         
         # Max Performance mode
         self.max_performance_var = safe_variables.BooleanVar(value=False)
@@ -621,6 +624,9 @@ class ResourcesPanel(ttk.LabelFrame):  # type: ignore[misc]
         if gp != 90:  # 90 is default
             logger.info(f"GPU memory cap set to: {gp}%")
                 
+        current_os = platform.system().strip().lower()
+        self._active_os_label = current_os
+
         vals: dict[str, Any] = {
             "cpu_threads": th,
             "gpu_mem_pct": gp,
@@ -640,6 +646,8 @@ class ResourcesPanel(ttk.LabelFrame):  # type: ignore[misc]
             "training_mode": self.training_mode_var.get(),
             # Storage caps
             "dataset_cap": self.dataset_cap_var.get(),
+            # Persist OS so we can warn when selections migrate across platforms
+            "os_name": current_os,
         }
         return vals
 
@@ -659,6 +667,8 @@ class ResourcesPanel(ttk.LabelFrame):  # type: ignore[misc]
         """
         logger.info("Setting resources panel values from config")
         logger.debug(f"Values to apply: {vals}")
+        previous_os = str(vals.get("os_name") or "").strip().lower()
+        self._last_loaded_os = previous_os or self._active_os_label
         with self.suspend_auto_apply():
             try:
                 v = int(vals.get("cpu_threads", 0))

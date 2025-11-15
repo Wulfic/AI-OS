@@ -102,6 +102,7 @@ class HarnessWrapper:
         cache_requests: bool = True,
         check_integrity: bool = False,
         model_type: str = "hf",
+        env_overrides: Optional[dict[str, str]] = None,
     ) -> EvaluationResult:
         """Run an evaluation synchronously.
         
@@ -118,6 +119,7 @@ class HarnessWrapper:
             cache_requests: Whether to cache requests
             check_integrity: Whether to check data integrity
             model_type: Model type (hf, vllm, local-completions, etc.)
+            env_overrides: Environment variables to apply for the subprocess
             
         Returns:
             EvaluationResult with scores and metadata
@@ -221,6 +223,8 @@ cli_evaluate()
             
             # Set up environment with UTF-8 support for Windows
             env = os.environ.copy()
+            if env_overrides:
+                env.update({k: v for k, v in env_overrides.items()})
             env['PYTHONIOENCODING'] = 'utf-8'
             # Allow code-eval metrics (HumanEval/MBPP) to execute sandboxed code
             env.setdefault('HF_ALLOW_CODE_EVAL', '1')

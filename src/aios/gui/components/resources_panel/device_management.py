@@ -450,21 +450,83 @@ def refresh_detected(panel: "ResourcesPanel", info: dict) -> None:
         panel: ResourcesPanel instance
         info: Detection dict (same format as set_detected)
     """
-    snapshot = _snapshot_devices(info if isinstance(info, dict) else {})
+    payload = info if isinstance(info, dict) else {}
+    snapshot = _snapshot_devices(payload)
+    last_snapshot = getattr(panel, "_last_detected_snapshot", None)
+
+    devs = payload.get("cuda_devices") or payload.get("nvidia_smi_devices") or []
+    device_count = len(devs) if isinstance(devs, list) else 0
+    current_train = len(getattr(panel, "_cuda_train_rows", []) or [])
+    current_run = len(getattr(panel, "_cuda_run_rows", []) or [])
+
+    rebuild_needed = (
+        snapshot != last_snapshot
+        or device_count != current_train
+        or device_count != current_run
+        or (device_count > 0 and current_train == 0 and current_run == 0)
+    )
+
+    if rebuild_needed:
+        try:
+            values = panel.get_values()
+        except Exception:
+            values = {}
+
+        def _stash(prefix: str, selected_key: str, mem_key: str, util_key: str) -> None:
+            sel_raw = values.get(selected_key)
+            mem_raw = values.get(mem_key)
+            util_raw = values.get(util_key)
+
+            selected = set()
+            if isinstance(sel_raw, (list, tuple, set)):
+                for item in sel_raw:
+                    try:
+                        selected.add(int(item))
+                    except Exception:
+                        continue
+
+            mem: dict[int, int] = {}
+            if isinstance(mem_raw, dict):
+                for key, value in mem_raw.items():
+                    try:
+                        mem[int(key)] = int(value)
+                    except Exception:
+                        continue
+
+            util: dict[int, int] = {}
+            if isinstance(util_raw, dict):
+                for key, value in util_raw.items():
+                    try:
+                        util[int(key)] = int(value)
+                    except Exception:
+                        continue
+
+            target_prefix = f"{prefix}_cuda_"
+            panel._pending_gpu_settings[f"{target_prefix}selected"] = selected
+            panel._pending_gpu_settings[f"{target_prefix}mem_pct"] = mem
+            panel._pending_gpu_settings[f"{target_prefix}util_pct"] = util
+
+        _stash("train", "train_cuda_selected", "train_cuda_mem_pct", "train_cuda_util_pct")
+        _stash("run", "run_cuda_selected", "run_cuda_mem_pct", "run_cuda_util_pct")
+
+        try:
+            panel._last_detected_snapshot = None
+        except Exception:
+            pass
+
+        set_detected(panel, payload)
+        return
+
     try:
         panel._last_detected_snapshot = snapshot
     except Exception:
         pass
 
-    # For now, just update the status without rebuilding rows
-    # Future: smart refresh that updates device info without destroying rows
     try:
-        devs = info.get("cuda_devices") or info.get("nvidia_smi_devices") or []
-        device_count = len(devs) if isinstance(devs, list) else 0
         if device_count > 0:
             panel._status_label.config(
                 text=f"✓ {device_count} GPU(s) detected (refreshed)",
-                foreground="green"
+                foreground="green",
             )
     except Exception:
         pass

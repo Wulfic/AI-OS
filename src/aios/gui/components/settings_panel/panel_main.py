@@ -131,7 +131,7 @@ class SettingsPanel:
         def rebuild() -> None:
             status_text = "✗ Failed to rebuild"
             try:
-                from ...gui.components.help_panel import utils
+                from ..help_panel import utils
                 project_root = utils.find_project_root(Path(__file__))
                 docs_root = utils.resolve_docs_root(project_root)
 
@@ -140,7 +140,7 @@ class SettingsPanel:
                     index_file.unlink()
                     logger.info("Deleted old search index")
 
-                from ...gui.components.help_panel.search_engine import SearchEngine
+                from ..help_panel.search_engine import SearchEngine
                 engine = SearchEngine(docs_root)
                 success = engine.build_index()
                 if success:

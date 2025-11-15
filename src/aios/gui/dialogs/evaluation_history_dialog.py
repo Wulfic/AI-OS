@@ -12,6 +12,7 @@ from tkinter import messagebox, ttk
 from typing import Any, Callable, Optional
 
 from aios.core.evaluation import EvaluationHistory
+from aios.gui.utils.model_display import get_model_display_name
 from aios.gui.utils.theme_utils import apply_theme_to_toplevel, get_spacing_multiplier
 
 logger = logging.getLogger(__name__)
@@ -232,6 +233,7 @@ class EvaluationHistoryDialog(tk.Toplevel):  # type: ignore[misc]
                 # Format data
                 eval_id = eval_data["id"]
                 model = eval_data["model_name"]
+                model_display = get_model_display_name(model)
                 
                 score = eval_data.get("overall_score", 0.0)
                 score_str = f"{score:.2%}" if score else "N/A"
@@ -265,7 +267,7 @@ class EvaluationHistoryDialog(tk.Toplevel):  # type: ignore[misc]
                     "",
                     "end",
                     text=str(eval_id),
-                    values=(model, score_str, status, tasks_str, duration_str, date_str),
+                    values=(model_display, score_str, status, tasks_str, duration_str, date_str),
                 )
             
             # Update statistics

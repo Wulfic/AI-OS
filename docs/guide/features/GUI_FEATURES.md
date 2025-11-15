@@ -21,6 +21,7 @@ See also:
 - Dynamic Subbrains (MoE): `DYNAMIC_SUBBRAINS_MOE.md`
 - Memory optimization: `MEMORY_OPTIMIZATION.md`
 - Multi-GPU and parallel chunk system: `MULTI_GPU_DISTRIBUTED.md`, `PARALLEL_TRAINING_BLOCK_CHUNK_SYSTEM.md`
+- GUI-specific multi-GPU behaviour: `MULTIGPU_GUI_GUIDE.md`
 
 ## Panels and flows
 
@@ -55,6 +56,7 @@ Tips (Windows):
 - CPU/GPU utilization targets, throttle modes, real-time stats for training.
 - Where: `src/aios/gui/components/resources_panel/`
 - Screenshot: `../../Screenshots/resources_tab.png`
+- Multi-GPU usage caveats and troubleshooting: see `MULTIGPU_GUI_GUIDE.md`
 
 ### Subbrains Manager (WIP)
 - View expert registry with counts (total/active/frozen), hierarchy, average routing weight, activations.

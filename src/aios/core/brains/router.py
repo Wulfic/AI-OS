@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Set
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set
 from pathlib import Path
 import hashlib
 import json
@@ -30,6 +30,7 @@ class Router:
     expert_registry: Optional[Any] = field(default=None, init=False, repr=False)
     _active_goal_ids: Set[str] = field(default_factory=set, init=False, repr=False)
     _loaded_expert_ids: Set[str] = field(default_factory=set, init=False, repr=False)
+    inference_device_getter: Optional[Callable[[], Optional[str]]] = field(default=None, repr=False)
 
     def __post_init__(self):
         """Load expert registry if path provided."""
@@ -118,6 +119,7 @@ class Router:
                                 checkpoint_path=checkpoint_path,
                                 brain_config_path=brain_json_path,
                                 max_seq_len=trained_max_seq_len,
+                                inference_device=self._resolve_inference_device(),
                             )
                 except Exception as e:
                     logger.error(f"[Router] Failed to load master {master_name}: {e}")
@@ -151,6 +153,18 @@ class Router:
             return res
         except Exception as e:
             return {"ok": False, "error": str(e)}
+
+    def _resolve_inference_device(self) -> Optional[str]:
+        """Return preferred inference device for brain loading."""
+
+        if callable(self.inference_device_getter):
+            try:
+                device = self.inference_device_getter()
+                if device:
+                    return str(device)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.debug("Inference device getter failed: %s", exc)
+        return None
 
     def update_active_goals(self, goal_ids: List[str]) -> Dict[str, Any]:
         """Update active goals and manage expert loading/unloading.

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 
@@ -37,74 +37,89 @@ def create_evaluation_charts(result: "EvaluationResult", container: Any) -> None
     if not MATPLOTLIB_AVAILABLE or Figure is None or np is None or FigureCanvasTkAgg is None:
         logger.debug("Matplotlib not available, skipping chart creation")
         return
-    
+
     logger.debug("Creating evaluation result charts")
-    
-    # Create figure with subplots
+
     fig = Figure(figsize=(10, 8), dpi=100)
-    
-    # Extract data
-    task_names = []
-    task_scores = []
-    
+
+    # Extract benchmark data
+    score_pairs: list[tuple[str, float]] = []
     for task_name, task_data in sorted(result.benchmark_scores.items()):
         scores_dict = task_data.get("scores", {})
-        if scores_dict:
-            # Use first score as primary metric
-            primary_score = list(scores_dict.values())[0]
-            task_names.append(task_name)
-            task_scores.append(float(primary_score) * 100)  # Convert to percentage
-    
-    if not task_names:
+        if not scores_dict:
+            continue
+        primary_score = list(scores_dict.values())[0]
+        score_pairs.append((task_name, float(primary_score) * 100))
+
+    if not score_pairs:
         logger.debug("No task data available for charting")
         return
-    
-    logger.debug(f"Creating charts for {len(task_names)} tasks")
-    
-    # Chart 1: Bar chart (top half)
+
+    logger.debug("Creating charts for %d tasks", len(score_pairs))
+
+    score_pairs.sort(key=lambda item: item[1], reverse=True)
+    total_tasks = len(score_pairs)
+
+    # Top benchmarks bar chart -------------------------------------------------
+    top_limit = 12
+    top_slice = score_pairs[:top_limit]
     ax1 = fig.add_subplot(2, 1, 1)
-    bars = ax1.bar(range(len(task_names)), task_scores, color='steelblue', alpha=0.8)
-    ax1.set_xlabel('Benchmark', fontsize=10)
-    ax1.set_ylabel('Score (%)', fontsize=10)
-    ax1.set_title('Benchmark Scores Comparison', fontsize=12, fontweight='bold')
-    ax1.set_xticks(range(len(task_names)))
-    ax1.set_xticklabels(task_names, rotation=45, ha='right', fontsize=8)
-    ax1.grid(axis='y', alpha=0.3)
-    ax1.set_ylim(0, 100)
-    
-    # Add value labels on bars
+
+    display_pairs = list(reversed(top_slice))
+    labels = [name for name, _ in display_pairs]
+    values = [score for _, score in display_pairs]
+    y_positions = np.arange(len(display_pairs))
+
+    axis_max = max(100.0, max(values) + 5.0)
+    bars = ax1.barh(y_positions, values, color='steelblue', alpha=0.85)
+    ax1.set_yticks(y_positions)
+    ax1.set_yticklabels(labels, fontsize=9)
+    ax1.invert_yaxis()
+    ax1.set_xlim(0, axis_max)
+    ax1.set_xlabel('Score (%)', fontsize=10)
+    ax1.set_title(
+        f"Top {len(display_pairs)} Benchmarks by Score", fontsize=12, fontweight='bold'
+    )
+    ax1.grid(axis='x', alpha=0.3)
+
     for bar in bars:
-        height = bar.get_height()
+        width = bar.get_width()
         ax1.text(
-            bar.get_x() + bar.get_width() / 2.,
-            height + 1,
-            f'{height:.1f}%',
-            ha='center',
+            min(width + 1.0, axis_max - 1.0),
+            bar.get_y() + bar.get_height() / 2,
+            f"{width:.1f}%",
+            va='center',
+            ha='left',
+            fontsize=9,
+        )
+
+    if total_tasks > len(display_pairs):
+        ax1.text(
+            0.98,
+            0.02,
+            f"Showing top {len(display_pairs)} of {total_tasks} benchmarks",
+            transform=ax1.transAxes,
+            ha='right',
             va='bottom',
             fontsize=8,
+            color='dimgray',
         )
-    
-    # Chart 2: Radar chart (bottom half) - only if 3+ benchmarks
-    if len(task_names) >= 3:
-        logger.debug(f"Adding radar chart for {len(task_names)} benchmarks")
-        ax2 = fig.add_subplot(2, 1, 2, projection='polar')
-        
-        # Prepare data for radar chart
-        angles = np.linspace(0, 2 * np.pi, len(task_names), endpoint=False).tolist()
-        scores_radar = task_scores + [task_scores[0]]  # Close the circle
-        angles_radar = angles + [angles[0]]
-        
-        # Plot
-        ax2.plot(angles_radar, scores_radar, 'o-', linewidth=2, color='steelblue')
-        ax2.fill(angles_radar, scores_radar, alpha=0.25, color='steelblue')
-        ax2.set_xticks(angles)
-        ax2.set_xticklabels(task_names, fontsize=8)
-        ax2.set_ylim(0, 100)
-        ax2.set_ylabel('Score (%)', fontsize=10)
-        ax2.set_title('Performance Radar Chart', fontsize=12, fontweight='bold', pad=20)
-        ax2.grid(True)
-    
-    fig.tight_layout()
+
+    # Score distribution histogram --------------------------------------------
+    ax2 = fig.add_subplot(2, 1, 2)
+    scores_array = np.array([score for _, score in score_pairs])
+    bins = min(12, max(5, int(len(scores_array) / 2)))
+    ax2.hist(scores_array, bins=bins, color='steelblue', alpha=0.75, edgecolor='white')
+    ax2.axvline(scores_array.mean(), color='darkorange', linestyle='--', linewidth=1.5, label='Mean')
+    ax2.axvline(np.median(scores_array), color='seagreen', linestyle='-.', linewidth=1.5, label='Median')
+    ax2.set_xlim(0, 100)
+    ax2.set_xlabel('Score (%)', fontsize=10)
+    ax2.set_ylabel('Benchmarks', fontsize=10)
+    ax2.set_title('Score Distribution', fontsize=12, fontweight='bold')
+    ax2.grid(alpha=0.25)
+    ax2.legend(loc='upper left', fontsize=9)
+
+    fig.tight_layout(pad=2.0)
     
     # Embed in tkinter
     logger.debug("Embedding charts in tkinter container")

@@ -19,13 +19,25 @@ resources:
   gpu_mem_pct: 90
   gpu_util_pct: 0
   train_device: cuda
-  train_cuda_selected: []
-  train_cuda_mem_pct: 90
-  train_cuda_util_pct: {}
+  train_cuda_selected:
+  - 0
+  - 1
+  train_cuda_mem_pct:
+    0: 100
+    1: 100
+  train_cuda_util_pct:
+    0: 0
+    1: 0
   run_device: cuda
-  run_cuda_selected: []
-  run_cuda_mem_pct: 90
-  run_cuda_util_pct: {}
+  run_cuda_selected:
+  - 0
+  - 1
+  run_cuda_mem_pct:
+    0: 100
+    1: 100
+  run_cuda_util_pct:
+    0: 0
+    1: 0
   system_mem_limit_gb: null
   dataset_cap: '300.0'
   model_cap: ''

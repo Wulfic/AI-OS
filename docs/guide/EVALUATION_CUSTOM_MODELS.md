@@ -56,6 +56,14 @@ The system will automatically:
 - Run the evaluation
 - Display results
 
+### Device Selection & Multi-GPU
+
+- The evaluation tab now honours the **Resources** panel selection when choosing inference devices.
+- On Linux, selecting multiple GPUs fans out lm-eval shards across the requested devices. Progress updates show per-device activity.
+- On Windows, multi-GPU selections automatically fall back to the first GPU; the log panel surfaces a clear warning so you know the run stayed single-GPU.
+- When no CUDA device is available the evaluation falls back to CPU execution and records the reason in both the log panel and analytics metadata.
+- Environment overrides (`CUDA_VISIBLE_DEVICES`, `AIOS_VISIBLE_DEVICES`, `AIOS_INFERENCE_PRIMARY_DEVICE`) are applied only for the spawned lm-eval processes so subsequent operations are unaffected.
+
 ### Supported Benchmarks
 
 All standard benchmarks work with native brains:

@@ -91,6 +91,7 @@ Documents which features work together and known incompatibilities.
 ### Advanced Features and Notes
 See advanced flags, platform notes, and troubleshooting:
 - [Advanced Training Features](features/ADVANCED_FEATURES.md)
+- [Multi-GPU GUI Guide](features/MULTIGPU_GUI_GUIDE.md)
 
 ---
 

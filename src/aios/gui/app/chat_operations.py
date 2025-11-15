@@ -15,11 +15,19 @@ import os
 import threading
 import time
 from pathlib import Path
+import platform
 
 if TYPE_CHECKING:
     pass
 
-from ..services import LogCategory
+from ..services import (
+    LogCategory,
+    DeviceSelectionResult,
+    build_device_message,
+    resolve_inference_devices,
+    resolve_inference_devices_from_state,
+    warning_message,
+)
 from ..utils.resource_management import submit_background
 from ..services.brain_registry_service import list_brains as list_available_brains
 
@@ -33,6 +41,24 @@ _router_warmup_started = False
 
 # Global MCP tool executor for handling tool calls
 _tool_executor: Optional[Any] = None
+
+# Shared device selection state for chat routing (guarded by _router_init_lock)
+_chat_device_selection: DeviceSelectionResult | None = None
+_chat_device_signature: tuple[str, tuple[str, ...]] | None = None
+_chat_warning_tokens: set[str] = set()
+_chat_env_snapshot: dict[str, str] = {}
+
+
+def prepare_tensor_parallel(devices: list[str]) -> None:
+    """Placeholder hook for future tensor-parallel inference plumbing."""
+
+    if len(devices) < 2:
+        return
+
+    if platform.system().lower() != "linux":
+        return
+
+    logger.debug("Tensor-parallel preparation stub invoked for devices: %s", devices)
 
 
 def setup_chat_operations(app: Any) -> None:
@@ -122,6 +148,80 @@ def setup_chat_operations(app: Any) -> None:
 
     _brain_store_dir = _resolve_brain_store_dir()
 
+    resources_panel = getattr(app, "resources_panel", None)
+
+    def _apply_env_overrides(selection: DeviceSelectionResult) -> None:
+        global _chat_env_snapshot
+        overrides = dict(selection.env_overrides)
+        if selection.requested_devices:
+            overrides.setdefault("AIOS_REQUESTED_DEVICES", ",".join(selection.requested_devices))
+        metadata = selection.metadata if isinstance(selection.metadata, dict) else {}
+        physical_devices = []
+        if isinstance(metadata, dict):
+            maybe_phys = metadata.get("physical_visible_devices")
+            if isinstance(maybe_phys, list):
+                physical_devices = [str(item) for item in maybe_phys]
+
+        if selection.visible_devices:
+            overrides.setdefault("AIOS_VISIBLE_ALIAS_DEVICES", ",".join(selection.visible_devices))
+        if physical_devices:
+            overrides.setdefault("AIOS_VISIBLE_DEVICES", ",".join(physical_devices))
+        elif selection.visible_devices:
+            overrides.setdefault("AIOS_VISIBLE_DEVICES", ",".join(selection.visible_devices))
+
+        primary_physical = metadata.get("primary_physical_device") if isinstance(metadata, dict) else None
+        if isinstance(primary_physical, str) and primary_physical:
+            overrides.setdefault("AIOS_CHAT_PRIMARY_PHYSICAL_DEVICE", primary_physical)
+            if selection.device_kind == "cuda" and len(physical_devices) == 1:
+                overrides.setdefault("AIOS_CHAT_PINNED_DEVICE", primary_physical)
+
+        updated: dict[str, str] = {}
+        for key, value in overrides.items():
+            current = os.environ.get(key)
+            if current != value:
+                os.environ[key] = value
+            updated[key] = value
+
+        # Remove environment keys no longer present
+        for stale_key in list(_chat_env_snapshot.keys()):
+            if stale_key not in overrides and stale_key.startswith("AIOS"):
+                os.environ.pop(stale_key, None)
+
+        _chat_env_snapshot = updated
+
+    def _refresh_chat_device_selection() -> DeviceSelectionResult:
+        global _chat_device_selection, _chat_device_signature, _chat_warning_tokens
+        selection: DeviceSelectionResult
+        try:
+            selection = resolve_inference_devices(resources_panel)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.error("Chat device resolution failed: %s", exc, exc_info=True)
+            selection = resolve_inference_devices_from_state({}, platform.system())
+
+        _chat_device_selection = selection
+        app._chat_device_selection = selection  # type: ignore[attr-defined]
+
+        signature = (selection.primary_device, tuple(selection.visible_devices))
+        if signature != _chat_device_signature:
+            message = f"Chat device selection: {build_device_message(selection)}"
+            logger.info(message)
+            if hasattr(app, "_log_router") and app._log_router:  # type: ignore[attr-defined]
+                app._log_router.log(message, LogCategory.CHAT, "INFO")
+            _chat_device_signature = signature
+
+        for token in selection.warnings:
+            if token not in _chat_warning_tokens:
+                warning_text = warning_message(token)
+                logger.warning(warning_text)
+                if hasattr(app, "_log_router") and app._log_router:  # type: ignore[attr-defined]
+                    app._log_router.log(warning_text, LogCategory.CHAT, "WARNING")
+                _chat_warning_tokens.add(token)
+
+        _apply_env_overrides(selection)
+        if selection.device_kind == "cuda" and len(selection.visible_devices) > 1:
+            prepare_tensor_parallel(selection.visible_devices)
+        return selection
+
     def _ensure_persistent_router() -> tuple[Any, Any]:
         """Ensure persistent registry and router are initialized.
         
@@ -132,6 +232,8 @@ def setup_chat_operations(app: Any) -> None:
 
         # Prevent concurrent initialisation when multiple callers race on startup
         with _router_init_lock:
+            selection = _refresh_chat_device_selection()
+
             # Initialize MCP tool executor if not done yet
             if _tool_executor is None:
                 try:
@@ -193,6 +295,17 @@ def setup_chat_operations(app: Any) -> None:
                     _persistent_registry.load_masters()
                 except Exception:
                     pass
+
+            if _persistent_router is not None:
+                _persistent_router.inference_device_getter = (
+                    lambda: _chat_device_selection.primary_device if _chat_device_selection else None
+                )
+                if selection and selection.device_kind == "cuda":
+                    logger.debug(
+                        "Chat router primary device set to %s (visible=%s)",
+                        selection.primary_device,
+                        selection.visible_devices,
+                    )
 
             return _persistent_registry, _persistent_router
     

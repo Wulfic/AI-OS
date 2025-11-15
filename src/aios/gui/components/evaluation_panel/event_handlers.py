@@ -1,10 +1,21 @@
 """Event handlers for evaluation operations."""
 
 from __future__ import annotations
+
 import logging
+import platform
+from pathlib import Path
 from tkinter import filedialog, messagebox
 from typing import TYPE_CHECKING
-from pathlib import Path
+
+from aios.gui.services import (
+    build_device_message,
+    emit_analytics_event,
+    resolve_inference_devices,
+    resolve_inference_devices_from_state,
+    warning_message,
+)
+from .multi_gpu import MultiGpuEvaluationRunner
 
 if TYPE_CHECKING:
     from aios.core.evaluation import EvaluationResult
@@ -82,6 +93,68 @@ def start_evaluation(panel: "EvaluationPanel") -> None:
         panel._log("[eval] First run will download datasets - this may take several minutes")
         panel._log("[eval] Subsequent runs will be faster (cached datasets)")
     
+    # Resolve device selection prior to launching the evaluation so downstream
+    # runners can honour the same configuration.
+    resources_panel = getattr(panel, "_resources_panel", None)
+    try:
+        selection = resolve_inference_devices(resources_panel)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.error("Failed to resolve evaluation device selection: %s", exc, exc_info=True)
+        selection = resolve_inference_devices_from_state({}, platform.system())
+
+    panel._last_device_selection = selection
+    env_overrides = dict(selection.env_overrides)
+    if selection.requested_devices:
+        env_overrides["AIOS_REQUESTED_DEVICES"] = ",".join(selection.requested_devices)
+    physical_visible_devices: list[str] = []
+    alias_map: dict[str, str] = {}
+    if isinstance(selection.metadata, dict):
+        maybe_physical = selection.metadata.get("physical_visible_devices")
+        if isinstance(maybe_physical, list):
+            physical_visible_devices = [str(dev) for dev in maybe_physical]
+        maybe_alias_map = selection.metadata.get("alias_physical_map")
+        if isinstance(maybe_alias_map, dict):
+            alias_map = {str(k): str(v) for k, v in maybe_alias_map.items()}
+
+    visible_descriptors = physical_visible_devices or selection.visible_devices
+    visible_aliases = ",".join(visible_descriptors) if visible_descriptors else selection.primary_device
+    env_overrides["AIOS_VISIBLE_DEVICES"] = visible_aliases
+    if selection.visible_devices:
+        env_overrides.setdefault("AIOS_VISIBLE_ALIAS_DEVICES", ",".join(selection.visible_devices))
+    if physical_visible_devices:
+        env_overrides.setdefault("AIOS_VISIBLE_PHYSICAL_DEVICES", ",".join(physical_visible_devices))
+    env_overrides["AIOS_DEVICE_KIND"] = selection.device_kind
+    if selection.warnings:
+        env_overrides["AIOS_DEVICE_WARNINGS"] = ",".join(selection.warnings)
+
+    selection_message = build_device_message(selection)
+    logger.info("Evaluation device selection resolved: %s", selection.to_log_payload())
+    panel._log(f"[eval] Device selection: {selection_message}")
+
+    for token in selection.warnings:
+        panel._log(f"[eval] {warning_message(token)}")
+
+    platform_name = selection.metadata.get("os") if isinstance(selection.metadata, dict) else None
+    platform_name = platform_name or platform.system().lower()
+    try:
+        emit_analytics_event(
+            "eval.device_selection",
+            {
+                "platform": platform_name,
+                "device_kind": selection.device_kind,
+                "requested": ",".join(selection.requested_devices) or "none",
+                "effective": visible_aliases or selection.primary_device,
+                "warnings": ",".join(selection.warnings) or "none",
+                "multi_gpu": 1 if selection.device_kind == "cuda" and len(selection.visible_devices) > 1 else 0,
+            },
+            context={
+                "requested_count": len(selection.requested_devices),
+                "effective_count": len(selection.visible_devices),
+            },
+        )
+    except Exception:
+        logger.debug("Failed to emit eval.device_selection analytics event", exc_info=True)
+
     # Update UI state
     if hasattr(panel, "_reset_progress_tracker"):
         try:
@@ -96,6 +169,7 @@ def start_evaluation(panel: "EvaluationPanel") -> None:
     panel.progress.start(10)
     panel.progress_label.config(text="initializing...")
     panel.results_label.config(text="")
+    panel._active_eval_runner = None
     
     # Get configuration
     model_args = "dtype=auto"  # Default model args
@@ -122,23 +196,53 @@ def start_evaluation(panel: "EvaluationPanel") -> None:
             logger.debug(f"Evaluation limit set to {limit_pct}% ({limit} fraction)")
     
     num_fewshot = int(panel.num_fewshot_var.get() or "5")
-    
-    # Get device from resources panel (run/inference device)
-    device = "cuda:0"  # default
+
+    def _deduplicate(items):
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for item in items:
+            if not item or item in seen:
+                continue
+            seen.add(item)
+            ordered.append(item)
+        return ordered
+
+    shard_devices: list[str] = []
+    if selection.device_kind == "cuda":
+        phys_candidates = [dev for dev in physical_visible_devices if isinstance(dev, str) and dev.startswith("cuda")]
+        shard_devices = _deduplicate(phys_candidates)
+        if not shard_devices:
+            shard_devices = _deduplicate([dev for dev in selection.requested_devices if dev.startswith("cuda")])
+        if not shard_devices and alias_map:
+            mapped = [alias_map.get(dev) for dev in selection.visible_devices if dev.startswith("cuda")]
+            shard_devices = _deduplicate([dev for dev in mapped if isinstance(dev, str)])
+        if not shard_devices and selection.primary_device.startswith("cuda"):
+            shard_devices = [alias_map.get(selection.primary_device, selection.primary_device)]
+    else:
+        shard_devices = [selection.primary_device]
+
+    requested_summary = selection.requested_devices or shard_devices or [selection.primary_device]
     try:
-        rp = getattr(panel, "_resources_panel", None)
-        if rp is not None:
-            rvals = rp.get_values()
-            run_device = str(rvals.get("run_device") or "cuda:0").lower()
-            if run_device in {"cpu", "cuda", "xpu", "mps", "dml"} or run_device.startswith("cuda:"):
-                device = run_device
-                logger.debug(f"Using device from resources panel: {device}")
-    except Exception as e:
-        logger.warning(f"Failed to get device from resources panel, using default: {e}")
-        pass
-    
-    logger.info(f"Evaluation config: batch_size={batch_size}, limit={limit}, num_fewshot={num_fewshot}, device={device}")
-    
+        if selection.device_kind == "cuda":
+            panel.progress_label.config(
+                text=f"initializing... GPU: {', '.join(shard_devices or [visible_descriptors[0] if visible_descriptors else selection.primary_device])} (requested {', '.join(requested_summary)})"
+            )
+        else:
+            panel.progress_label.config(text=f"initializing... device {selection.primary_device}")
+    except Exception:
+        panel.progress_label.config(text="initializing...")
+
+    device = selection.primary_device if selection.device_kind == "cuda" else selection.primary_device
+    multi_gpu_enabled = selection.device_kind == "cuda" and len(shard_devices) > 1
+
+    logger.info(
+        "Evaluation config: batch_size=%s, limit=%s, num_fewshot=%s, devices=%s",
+        batch_size,
+        limit,
+        num_fewshot,
+        shard_devices,
+    )
+
     output_path = panel.output_path_var.get() or "artifacts/evaluation"
     log_samples = panel.log_samples_var.get()
     cache_requests = panel.cache_requests_var.get()
@@ -207,27 +311,69 @@ def start_evaluation(panel: "EvaluationPanel") -> None:
         else:
             # Assume it's a HuggingFace model identifier
             panel._log(f"[eval] Treating as HuggingFace model identifier: {model}")
-            model_type = "hf"    # Run evaluation asynchronously
+            model_type = "hf"
+
+    model_kwargs = {
+        "model_name": model,
+        "model_args": model_args,
+        "batch_size": batch_size,
+        "limit": limit,
+        "num_fewshot": num_fewshot,
+        "device": device,
+        "output_path": output_path,
+        "log_samples": log_samples,
+        "cache_requests": cache_requests,
+        "check_integrity": check_integrity,
+        "model_type": model_type,
+    }
+
     def on_complete(result: "EvaluationResult") -> None:
         panel._current_result = result
+        panel._active_eval_runner = None
         on_evaluation_complete(panel, result)
-    
+
+    if multi_gpu_enabled:
+        requested_str = ", ".join(requested_summary)
+        shard_str = ", ".join(shard_devices)
+        panel._log(f"[eval] Requested CUDA devices: {requested_str}")
+        panel._log(f"[eval] Launching shard workers on devices {shard_str} (mode=fanout)")
+        logger.info(
+            "Launching multi-GPU evaluation: devices=%s, tasks=%d, env_overrides=%s",
+            shard_devices,
+            len(tasks),
+            env_overrides,
+        )
+        try:
+            runner = MultiGpuEvaluationRunner(
+                panel=panel,
+                tasks=tasks,
+                devices=shard_devices,
+                base_env=env_overrides,
+                model_kwargs=model_kwargs,
+                on_complete=on_complete,
+            )
+            panel._active_eval_runner = runner
+            runner.start()
+            return
+        except Exception as exc:
+            panel._log(f"[eval] Multi-GPU fan-out failed: {exc}; falling back to single GPU")
+            logger.error("Failed to launch multi-GPU evaluation", exc_info=True)
+            panel._active_eval_runner = None
+            # Fall through to single-device execution
+
+    panel._active_eval_runner = None
     try:
-        logger.info(f"Launching async evaluation: {len(tasks)} tasks, model_type={model_type}")
+        logger.info(
+            "Launching async evaluation: %d tasks, model_type=%s, env_overrides=%s",
+            len(tasks),
+            model_type,
+            env_overrides,
+        )
         panel._harness.run_evaluation_async(
-            model_name=model,
             tasks=tasks,
-            model_args=model_args,
-            batch_size=batch_size,
-            limit=limit,
-            num_fewshot=num_fewshot,
-            device=device,
-            output_path=output_path,
-            log_samples=log_samples,
-            cache_requests=cache_requests,
-            check_integrity=check_integrity,
-            model_type=model_type,
             callback=on_complete,
+            env_overrides=env_overrides,
+            **model_kwargs,
         )
     except Exception as e:
         logger.error(f"Failed to start evaluation: {e}", exc_info=True)
@@ -331,15 +477,19 @@ def on_evaluation_complete(panel: "EvaluationPanel", result: "EvaluationResult")
             tasks = [t.strip() for t in selected_benchmarks.split(",") if t.strip()]
             
             # Get device from resources panel for history
-            history_device = "cuda:0"
-            try:
-                rp = getattr(panel, "_resources_panel", None)
-                if rp is not None:
-                    rvals = rp.get_values()
-                    run_device = str(rvals.get("run_device") or "cuda:0")
-                    history_device = run_device
-            except Exception:
-                pass
+            selection = getattr(panel, "_last_device_selection", None)
+            if selection is not None:
+                history_device = selection.primary_device
+            else:
+                history_device = "cuda:0"
+                try:
+                    rp = getattr(panel, "_resources_panel", None)
+                    if rp is not None:
+                        rvals = rp.get_values()
+                        run_device = str(rvals.get("run_device") or "cuda:0")
+                        history_device = run_device
+                except Exception:
+                    pass
             
             config = {
                 "model_source": panel.model_source_var.get(),
@@ -352,6 +502,11 @@ def on_evaluation_complete(panel: "EvaluationPanel", result: "EvaluationResult")
                 "cache_requests": panel.cache_requests_var.get(),
                 "check_integrity": panel.check_integrity_var.get(),
             }
+
+            if selection is not None:
+                config["device_visible"] = selection.visible_devices
+                config["device_requested"] = selection.requested_devices
+                config["device_warnings"] = selection.warnings
             
             # Find samples files if log_samples was enabled
             samples_path = ""
@@ -446,12 +601,36 @@ def on_stop_evaluation(panel: "EvaluationPanel") -> None:
     Args:
         panel: The evaluation panel instance
     """
-    if not panel._is_running:
+    if not panel._is_running and not getattr(panel, "_active_eval_runner", None):
         logger.debug("Stop evaluation called but no evaluation running")
         return
-    
+
     logger.info("User requested evaluation cancellation")
     panel._log("[eval] Stopping evaluation...")
-    panel._harness.cancel()
-    
-    # UI will be updated by on_evaluation_complete callback
+
+    # Update UI immediately so shutdown paths aren't blocked waiting on callbacks
+    panel._is_running = False
+    try:
+        panel.start_btn.config(state="normal")
+        panel.stop_btn.config(state="disabled")
+    except Exception:
+        pass
+
+    runner = getattr(panel, "_active_eval_runner", None)
+    if runner is not None:
+        try:
+            runner.cancel(wait=False)
+        except Exception as exc:
+            logger.debug("Failed to cancel multi-GPU runner: %s", exc, exc_info=True)
+        else:
+            if not runner.wait_for_exit(timeout=10.0):
+                logger.warning("Multi-GPU evaluation runner did not terminate within timeout during stop")
+        panel._active_eval_runner = None
+    else:
+        try:
+            panel._harness.cancel()
+        except Exception as exc:
+            logger.debug("Failed to cancel evaluation harness: %s", exc, exc_info=True)
+        panel._harness.wait_for_completion(timeout=10.0)
+
+    # UI will be finalised by on_evaluation_complete if it runs later

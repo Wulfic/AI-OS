@@ -346,6 +346,7 @@ def initialize_panels(app: Any) -> None:
             save_state_fn=general_save_cb,
             worker_pool=app._worker_pool,
             on_list_brains=app._on_list_brains if hasattr(app, '_on_list_brains') else None,
+            resources_panel=getattr(app, 'resources_panel', None),
         )
         panel_create_time = time.time() - panel_start
         logger.info(f"[EVAL TIMING] Panel creation time: {panel_create_time:.3f}s")
@@ -779,6 +780,7 @@ def create_evaluation_panel_on_demand(app: Any) -> None:
             save_state_fn=app._save_state,
             worker_pool=app._worker_pool,
             on_list_brains=app._on_list_brains if hasattr(app, '_on_list_brains') else None,
+            resources_panel=getattr(app, 'resources_panel', None),
         )
         logger.info("Evaluation panel created successfully")
     except Exception as e:
@@ -807,6 +809,8 @@ def _initialize_resources_panel(app: Any, save_state_cb: Callable[[], None] | No
 
     def _perform_device_detection() -> dict:
         import time as _time
+        import subprocess
+        import shutil
 
         detection_result: dict[str, Any] = {
             "cuda_available": False,
@@ -816,12 +820,14 @@ def _initialize_resources_panel(app: Any, save_state_cb: Callable[[], None] | No
             "source": "torch",
         }
 
+        cuda_devices: list[dict[str, Any]] = []
+        torch_reported_devices = False
+
         try:
             import torch
 
             cuda_available = torch.cuda.is_available() if hasattr(torch, "cuda") else False
             detection_result["cuda_available"] = bool(cuda_available)
-            cuda_devices: list[dict[str, Any]] = []
 
             if cuda_available:
                 logger.debug("CUDA is available, enumerating devices")
@@ -849,8 +855,62 @@ def _initialize_resources_panel(app: Any, save_state_cb: Callable[[], None] | No
 
             detection_result["cuda_devices"] = cuda_devices
             detection_result["nvidia_smi_devices"] = list(cuda_devices)
+            torch_reported_devices = bool(cuda_devices)
         except Exception as exc:
             logger.error(f"Device detection failed: {exc}", exc_info=True)
+
+        nvidia_devices: list[dict[str, Any]] = []
+        try:
+            nvidia_smi_path = shutil.which("nvidia-smi")
+            if nvidia_smi_path:
+                cmd = [
+                    nvidia_smi_path,
+                    "--query-gpu=index,name,memory.total",
+                    "--format=csv,noheader,nounits",
+                ]
+                env = os.environ.copy()
+                for key in ("CUDA_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES"):
+                    env.pop(key, None)
+
+                result = subprocess.run(
+                    cmd,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=2.0,
+                    env=env,
+                )
+                if result.stdout:
+                    for line in result.stdout.strip().splitlines():
+                        parts = [piece.strip() for piece in line.split(",")]
+                        if len(parts) >= 3:
+                            try:
+                                idx = int(parts[0])
+                            except Exception:
+                                continue
+                            name = parts[1]
+                            try:
+                                total_mem_mb = int(float(parts[2]))
+                            except Exception:
+                                total_mem_mb = 0
+                            nvidia_devices.append({
+                                "id": idx,
+                                "name": name,
+                                "total_mem_mb": total_mem_mb,
+                            })
+        except subprocess.TimeoutExpired:
+            logger.warning("nvidia-smi query timed out during device detection")
+        except Exception as exc:
+            logger.debug("nvidia-smi detection failed: %s", exc, exc_info=True)
+
+        if nvidia_devices:
+            detection_result["nvidia_smi_devices"] = nvidia_devices
+            if not detection_result.get("cuda_devices"):
+                detection_result["cuda_devices"] = list(nvidia_devices)
+            detection_result["cuda_available"] = True
+            detection_result["source"] = "torch+nvidia-smi" if torch_reported_devices else "nvidia-smi"
+        else:
+            detection_result.setdefault("nvidia_smi_devices", [])
 
         return detection_result
 
@@ -865,13 +925,16 @@ def _initialize_resources_panel(app: Any, save_state_cb: Callable[[], None] | No
         if not force_refresh:
             cached = _load_cached_devices()
             if cached:
-                age = cached.get("_cache_age_seconds")
-                if isinstance(age, (int, float)):
-                    logger.info("Using cached CUDA device info (age %.1fs)", age)
-                else:
-                    logger.info("Using cached CUDA device info")
-                cached.setdefault("source", "cache")
-                return cached
+                devices = cached.get("cuda_devices") or cached.get("nvidia_smi_devices") or []
+                if devices:
+                    age = cached.get("_cache_age_seconds")
+                    if isinstance(age, (int, float)):
+                        logger.info("Using cached CUDA device info (age %.1fs)", age)
+                    else:
+                        logger.info("Using cached CUDA device info")
+                    cached.setdefault("source", "cache")
+                    return cached
+                logger.info("Cached CUDA device info empty; forcing fresh detection")
 
         fresh_info = _perform_device_detection()
         fresh_info["_from_cache"] = False

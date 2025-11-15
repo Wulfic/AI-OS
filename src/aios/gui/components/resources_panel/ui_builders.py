@@ -289,7 +289,7 @@ def build_devices_ui(panel: "ResourcesPanel") -> Any:
         add_tooltip(run_cuda_radio, "Use CUDA GPU(s) for inference (faster responses)")
     except Exception:
         pass
-    
+
     # CUDA Run selection list - now with scrollable canvas and grid layout
     run_scroll_frame = ttk.Frame(run_box)
     run_scroll_frame.pack(fill="both", expand=True, padx=(8, 0), pady=(4, 0))

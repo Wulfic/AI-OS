@@ -13,6 +13,7 @@ from pathlib import Path
 from ...utils import safe_variables
 
 from aios.core.evaluation import EvaluationResult, HarnessWrapper, EvaluationHistory
+from aios.gui.services import DeviceSelectionResult
 from aios.gui.dialogs import EvaluationResultsDialog
 
 from . import ui_builders, event_handlers, tree_management, history_management, export_utils
@@ -44,6 +45,7 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         title: str = "Model Evaluation",
         worker_pool: Any = None,
         on_list_brains: Optional[Callable[[], list[str]]] = None,
+        resources_panel: Any | None = None,
     ) -> None:
         init_start = time.time()
         
@@ -65,11 +67,13 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         self._eval_process: Any = None
         self._is_running = False
         self._on_list_brains = on_list_brains
+        self._resources_panel = resources_panel
         self._progress_tracker: dict[str, Any] = {
             "last_status": "",
             "last_progress": -1.0,
             "last_log_time": 0.0,
         }
+        self._last_device_selection: DeviceSelectionResult | None = None
         
         # Get project root first
         try:
@@ -95,6 +99,8 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         self._history: Optional[EvaluationHistory] = None
         self._history_db_path = str(Path(self._project_root) / "artifacts" / "evaluation" / "history.db")
         logger.debug(f"Evaluation history database: {self._history_db_path}")
+
+        self._active_eval_runner = None  # Multi-GPU orchestration handle
 
         step3 = time.time()
         logger.debug(f"[EVAL INIT] Harness/history setup: {step3 - step2:.3f}s")
@@ -634,5 +640,6 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
             except Exception as e:
                 logger.error(f"Error terminating evaluation process: {e}")
         
+        self._active_eval_runner = None
         self._reset_progress_tracker()
         logger.info("Evaluation Panel cleanup complete")

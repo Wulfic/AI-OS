@@ -36,3 +36,8 @@ aios hrm-hf train-actv1 `
 ```
 
 Trouble? See docs/README.md for guides and maintenance notes.
+
+### Multi-GPU quick facts
+
+- Set preferred inference GPUs from the **Resources** panel. Linux builds honour multi-GPU selections for evaluation fan-out; Windows keeps chat/eval on the first GPU and shows a warning badge automatically.
+- You can always verify the active selection from the evaluation log lines that start with `[eval] Device selection:`.
