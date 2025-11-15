@@ -54,6 +54,7 @@ See [installers/README.md](installers/README.md) for Windows (.exe) and Ubuntu (
 
 ## Usage
 Use the shortcut to start the program or via terminal.
+
 GUI (recommended):
 ```
 aios gui
