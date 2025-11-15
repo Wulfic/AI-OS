@@ -44,7 +44,7 @@ def eval_run(
         "-b",
         help="Batch size or 'auto'",
     ),
-    limit: Optional[int] = typer.Option(
+    limit: Optional[float] = typer.Option(
         None,
         "--limit",
         "-l",

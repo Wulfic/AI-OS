@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 import logging
 import os
 import json
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ class ACTv1Brain:
     _tokenizer: Optional[Any] = field(default=None, repr=False)
     _config: Optional[Dict[str, Any]] = field(default=None, repr=False)
     _device: Optional[str] = field(default=None, repr=False)
+    _oom_warning_printed: bool = field(default=False, repr=False)
     
     def set_sampling_params(
         self, 
@@ -408,33 +410,125 @@ class ACTv1Brain:
                 prompt = str(payload)
                 max_new_tokens = 100
             
-            # Tokenize input
+            # Tokenize input on CPU first to avoid carrying stale CUDA state
             inputs = self._tokenizer(
                 prompt,
                 return_tensors="pt",
                 truncation=True,
                 max_length=self._config.get("max_seq_len", 2048),
-            ).to(self._device)
+            )
+
+            input_ids = inputs["input_ids"]
+
+            requested_device = torch.device(self._device or "cpu")
+            runtime_device = requested_device
+
+            def _move_to_device(tensor: torch.Tensor) -> torch.Tensor:
+                nonlocal runtime_device
+
+                if tensor.device == runtime_device:
+                    return tensor
+
+                attempts = 0
+                while True:
+                    try:
+                        return tensor.to(runtime_device)
+                    except RuntimeError as err:  # pragma: no cover - defensive path
+                        err_msg = str(err).lower()
+                        if (
+                            "out of memory" in err_msg
+                            and runtime_device.type == "cuda"
+                            and torch.cuda.is_available()
+                            and attempts == 0
+                        ):
+                            logger.warning(
+                                "[ACTv1Brain] CUDA OOM while moving tensors; clearing cache and retrying once."
+                            )
+                            attempts += 1
+                            try:
+                                torch.cuda.empty_cache()
+                            except RuntimeError:  # pragma: no cover - defensive path
+                                logger.warning(
+                                    "[ACTv1Brain] Failed to clear CUDA cache; falling back to CPU."
+                                )
+                                runtime_device = torch.device("cpu")
+                                self._device = "cpu"
+                                if hasattr(self._model, "to"):
+                                    self._model.to(runtime_device)
+                                return tensor.to(runtime_device)
+                            time.sleep(0.1)
+                            continue
+
+                        if (
+                            "out of memory" in err_msg
+                            and runtime_device.type == "cuda"
+                            and torch.cuda.is_available()
+                        ):
+                            logger.warning(
+                                "[ACTv1Brain] Falling back to CPU after repeated CUDA OOM during tensor staging."
+                            )
+                            runtime_device = torch.device("cpu")
+                            self._device = "cpu"
+                            if hasattr(self._model, "to"):
+                                self._model.to(runtime_device)
+                            return tensor.to(runtime_device)
+
+                        raise
+
+            input_ids = _move_to_device(input_ids)
             
             # Generate response using autoregressive decoding
             # ACTv1 processes full sequences, so we'll give it the growing context each time
             with torch.no_grad():
-                input_ids = inputs["input_ids"]
-                
                 for _ in range(max_new_tokens):
-                    # Prepare batch with current sequence
-                    batch = {
-                        "input_ids": input_ids,
-                        "inputs": input_ids,
-                        "puzzle_identifiers": torch.zeros(input_ids.shape[0], dtype=torch.long, device=self._device)
-                    }
-                    
-                    # Fresh carry state for each forward pass
-                    # This allows the model to process the full context including previous generations
-                    carry = self._model.initial_carry(batch)
-                    
-                    # Forward pass - model sees full context
-                    carry, outputs = self._model(carry, batch)
+                    forward_attempts = 0
+                    while True:
+                        if input_ids.device != runtime_device:
+                            input_ids = input_ids.to(runtime_device)
+
+                        target_device = runtime_device
+
+                        # Prepare batch with current sequence
+                        batch = {
+                            "input_ids": input_ids,
+                            "inputs": input_ids,
+                            "puzzle_identifiers": torch.zeros(
+                                input_ids.shape[0], dtype=torch.long, device=input_ids.device
+                            ),
+                        }
+
+                        # Fresh carry state for each forward pass
+                        # This allows the model to process the full context including previous generations
+                        try:
+                            carry = self._model.initial_carry(batch)
+
+                            # Forward pass - model sees full context
+                            carry, outputs = self._model(carry, batch)
+                            break
+                        except RuntimeError as err:  # pragma: no cover - GPU error path
+                            err_msg = str(err).lower()
+                            if (
+                                "out of memory" in err_msg
+                                and target_device.type == "cuda"
+                                and torch.cuda.is_available()
+                                and forward_attempts == 0
+                            ):
+                                logger.warning(
+                                    "[ACTv1Brain] CUDA OOM during forward pass; clearing cache and falling back to CPU."
+                                )
+                                forward_attempts += 1
+                                try:
+                                    torch.cuda.empty_cache()
+                                except RuntimeError:
+                                    logger.warning(
+                                        "[ACTv1Brain] Failed to clear CUDA cache after forward OOM; forcing CPU fallback."
+                                    )
+                                runtime_device = torch.device("cpu")
+                                self._device = "cpu"
+                                if hasattr(self._model, "to"):
+                                    self._model.to(runtime_device)
+                                continue
+                            raise
                     
                     # Get logits for next token prediction
                     logits = outputs.get("logits")
@@ -490,6 +584,25 @@ class ACTv1Brain:
                 }
                 
         except Exception as e:
+            err_msg = str(e).lower()
+            if "out of memory" in err_msg:
+                if not self._oom_warning_printed:
+                    logger.warning(
+                        "[ACTv1Brain] Returning empty response after CUDA OOM; consider using smaller batch or CPU device."
+                    )
+                    self._oom_warning_printed = True
+                else:
+                    logger.debug(
+                        "[ACTv1Brain] Suppressing repeated CUDA OOM warning; returning empty response."
+                    )
+                return {
+                    "ok": True,
+                    "response": "",
+                    "text": "",
+                    "model": self.name,
+                    "warning": "cuda_oom_fallback",
+                }
+
             import traceback
             error_trace = traceback.format_exc()
             print(f"[ACTv1Brain] Error during inference: {e}")

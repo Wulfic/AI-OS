@@ -86,6 +86,7 @@ def cleanup(app: Any) -> None:
         for panel_attr, label in (
             ("resources_panel", "resources"),
             ("dataset_download_panel", "dataset download"),
+            ("evaluation_panel", "evaluation"),
         ):
             panel = getattr(app, panel_attr, None)
             if panel and hasattr(panel, "cleanup"):
@@ -202,6 +203,15 @@ def cleanup(app: Any) -> None:
                     logger.debug("Resources panel cleanup: success")
                 except Exception as e:
                     logger.debug(f"Resources panel cleanup: failed - {e}")
+
+        if hasattr(app, 'evaluation_panel') and app.evaluation_panel:
+            if hasattr(app.evaluation_panel, 'cleanup'):
+                logger.debug("Cleaning up evaluation panel...")
+                try:
+                    app.evaluation_panel.cleanup()
+                    logger.debug("Evaluation panel cleanup: success")
+                except Exception as e:
+                    logger.debug(f"Evaluation panel cleanup: failed - {e}")
 
         if hasattr(app, 'dataset_download_panel') and app.dataset_download_panel:
             if hasattr(app.dataset_download_panel, 'cleanup'):

@@ -113,3 +113,5 @@ Thumbs.db
 # Note: .whl files can be large but not tracking in LFS for now
 flash_attn-*.whl
 *.whl
+artifacts/diagnostics/device_info_cache.json
+artifacts/diagnostics/device_info_cache.json

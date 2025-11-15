@@ -19,25 +19,13 @@ resources:
   gpu_mem_pct: 90
   gpu_util_pct: 0
   train_device: cuda
-  train_cuda_selected:
-  - 0
-  - 1
-  train_cuda_mem_pct:
-    0: 100
-    1: 100
-  train_cuda_util_pct:
-    0: 0
-    1: 0
+  train_cuda_selected: []
+  train_cuda_mem_pct: 90
+  train_cuda_util_pct: {}
   run_device: cuda
-  run_cuda_selected:
-  - 0
-  - 1
-  run_cuda_mem_pct:
-    0: 100
-    1: 100
-  run_cuda_util_pct:
-    0: 0
-    1: 0
+  run_cuda_selected: []
+  run_cuda_mem_pct: 90
+  run_cuda_util_pct: {}
   system_mem_limit_gb: null
   dataset_cap: '300.0'
   model_cap: ''
@@ -105,7 +93,7 @@ web:
   user_agent_suffix: ; locale=en-US
 evaluation:
   batch_size: auto
-  limit: '1'
+  limit: '0.01'
   num_fewshot: '0'
   output_path: artifacts/evaluation
   log_samples: true
@@ -114,4 +102,4 @@ evaluation:
   last_used:
     model_source: huggingface
     model_name: English-v1
-    selected_benchmarks: boolq
+    selected_benchmarks: mmlu,hellaswag,truthfulqa_mc1,winogrande,drop,boolq,humaneval,mbpp,gsm8k,minerva_math,arc_challenge,arc_easy,sciq,bbh

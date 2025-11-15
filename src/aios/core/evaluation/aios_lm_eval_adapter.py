@@ -10,6 +10,7 @@ from typing import Any, Optional, Union
 import torch
 from pathlib import Path
 import json
+import time
 
 try:
     from lm_eval.api.model import LM
@@ -195,62 +196,84 @@ class AIOSBrainModel(LM):
                 context_tokens = context_tokens[overflow:]
                 full_tokens = context_tokens + continuation_tokens
             
-            # Convert to tensor
-            input_ids = torch.tensor([full_tokens], device=self.device)
-            
-            # Get model output
-            with torch.no_grad():
+            base_input_ids = torch.tensor([full_tokens], dtype=torch.long)
+
+            attempts = 0
+            while True:
                 try:
-                    # For ACTv1 models, use the carry-state architecture
-                    if hasattr(self.brain._model, 'initial_carry'):
-                        batch = {
-                            "input_ids": input_ids,
-                            "inputs": input_ids,
-                            "puzzle_identifiers": torch.zeros(input_ids.shape[0], dtype=torch.long, device=self.device)
-                        }
-                        carry = self.brain._model.initial_carry(batch)
-                        carry, outputs = self.brain._model(carry, batch)
-                        logits = outputs.get("logits")
-                    elif hasattr(self.brain._model, 'forward'):
-                        outputs = self.brain._model(input_ids)
-                        logits = outputs if isinstance(outputs, torch.Tensor) else outputs[0]
-                    else:
-                        # Fallback - use approximation
-                        results.append((0.0, False))
+                    input_ids = base_input_ids.to(self.device) if self.device else base_input_ids
+                    with torch.no_grad():
+                        # For ACTv1 models, use the carry-state architecture
+                        if hasattr(self.brain._model, 'initial_carry'):
+                            batch = {
+                                "input_ids": input_ids,
+                                "inputs": input_ids,
+                                "puzzle_identifiers": torch.zeros(input_ids.shape[0], dtype=torch.long, device=self.device)
+                            }
+                            carry = self.brain._model.initial_carry(batch)
+                            carry, outputs = self.brain._model(carry, batch)
+                            logits = outputs.get("logits")
+                        elif hasattr(self.brain._model, 'forward'):
+                            outputs = self.brain._model(input_ids)
+                            logits = outputs if isinstance(outputs, torch.Tensor) else outputs[0]
+                        else:
+                            # Fallback - use approximation
+                            results.append((0.0, False))
+                            break
+
+                        if logits is None:
+                            results.append((0.0, False))
+                            break
+
+                        # Move logits to CPU to keep GPU memory pressure low
+                        if logits.is_cuda:
+                            logits = logits.detach().cpu()
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
+                        else:
+                            logits = logits.detach()
+
+                        # Get log likelihood of continuation
+                        context_len = len(context_tokens)
+                        continuation_len = len(continuation_tokens)
+
+                        total_log_prob = 0.0
+                        is_greedy = True
+
+                        for i in range(continuation_len):
+                            pos = context_len + i - 1  # -1 because logits are shifted
+                            if pos >= 0 and pos < logits.shape[1]:
+                                token_id = continuation_tokens[i]
+                                token_slice = logits[0, pos]
+                                token_log_prob = torch.nn.functional.log_softmax(token_slice, dim=-1)[token_id].item()
+                                total_log_prob += token_log_prob
+
+                                # Check if this was the greedy choice
+                                greedy_token = token_slice.argmax().item()
+                                if greedy_token != token_id:
+                                    is_greedy = False
+
+                        results.append((total_log_prob, is_greedy))
+                    break
+
+                except RuntimeError as err:
+                    err_msg = str(err).lower()
+                    if (
+                        "out of memory" in err_msg
+                        and torch.cuda.is_available()
+                        and isinstance(self.device, str)
+                        and self.device.startswith("cuda")
+                        and attempts == 0
+                    ):
+                        print("Warning: CUDA OOM detected; clearing cache and retrying request once.", flush=True)
+                        torch.cuda.empty_cache()
+                        time.sleep(0.1)
+                        attempts += 1
                         continue
-                    
-                    if logits is None:
-                        results.append((0.0, False))
-                        continue
-                    
-                    # Calculate log probabilities
-                    log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
-                    
-                    # Get log likelihood of continuation
-                    context_len = len(context_tokens)
-                    continuation_len = len(continuation_tokens)
-                    
-                    total_log_prob = 0.0
-                    is_greedy = True
-                    
-                    for i in range(continuation_len):
-                        pos = context_len + i - 1  # -1 because logits are shifted
-                        if pos >= 0 and pos < log_probs.shape[1]:
-                            token_id = continuation_tokens[i]
-                            token_log_prob = log_probs[0, pos, token_id].item()
-                            total_log_prob += token_log_prob
-                            
-                            # Check if this was the greedy choice
-                            greedy_token = log_probs[0, pos].argmax().item()
-                            if greedy_token != token_id:
-                                is_greedy = False
-                    
-                    results.append((total_log_prob, is_greedy))
-                    
-                except Exception as e:
-                    # If there's an error, return conservative estimate
-                    print(f"Warning: Error computing log likelihood: {e}")
+
+                    print(f"Warning: Error computing log likelihood: {err}")
                     results.append((0.0, False))
+                    break
         
         print(f"[AIOS Adapter] Completed {len(results)} loglikelihood requests")
         return results
@@ -286,44 +309,71 @@ class AIOSBrainModel(LM):
             if len(tokens) > max_len:
                 tokens = tokens[-max_len:]  # Take the last max_len tokens
             
-            input_ids = torch.tensor([tokens], device=self.device)
-            
-            with torch.no_grad():
+            base_input_ids = torch.tensor([tokens], dtype=torch.long)
+
+            attempts = 0
+            while True:
                 try:
-                    # For ACTv1 models, use the carry-state architecture
-                    if hasattr(self.brain._model, 'initial_carry'):
-                        batch = {
-                            "input_ids": input_ids,
-                            "inputs": input_ids,
-                            "puzzle_identifiers": torch.zeros(input_ids.shape[0], dtype=torch.long, device=self.device)
-                        }
-                        carry = self.brain._model.initial_carry(batch)
-                        carry, outputs = self.brain._model(carry, batch)
-                        logits = outputs.get("logits")
-                    elif hasattr(self.brain._model, 'forward'):
-                        outputs = self.brain._model(input_ids)
-                        logits = outputs if isinstance(outputs, torch.Tensor) else outputs[0]
-                    else:
-                        results.append(0.0)
+                    input_ids = base_input_ids.to(self.device) if self.device else base_input_ids
+
+                    with torch.no_grad():
+                        # For ACTv1 models, use the carry-state architecture
+                        if hasattr(self.brain._model, 'initial_carry'):
+                            batch = {
+                                "input_ids": input_ids,
+                                "inputs": input_ids,
+                                "puzzle_identifiers": torch.zeros(input_ids.shape[0], dtype=torch.long, device=self.device)
+                            }
+                            carry = self.brain._model.initial_carry(batch)
+                            carry, outputs = self.brain._model(carry, batch)
+                            logits = outputs.get("logits")
+                        elif hasattr(self.brain._model, 'forward'):
+                            outputs = self.brain._model(input_ids)
+                            logits = outputs if isinstance(outputs, torch.Tensor) else outputs[0]
+                        else:
+                            results.append(0.0)
+                            break
+
+                        if logits is None:
+                            results.append(0.0)
+                            break
+
+                        if logits.is_cuda:
+                            logits = logits.detach().cpu()
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
+                        else:
+                            logits = logits.detach()
+
+                        total_log_prob = 0.0
+                        for i in range(len(tokens) - 1):
+                            next_token = tokens[i + 1]
+                            token_slice = logits[0, i]
+                            token_log_prob = torch.nn.functional.log_softmax(token_slice, dim=-1)[next_token].item()
+                            total_log_prob += token_log_prob
+
+                        results.append(total_log_prob)
+
+                    break
+
+                except RuntimeError as err:
+                    err_msg = str(err).lower()
+                    if (
+                        "out of memory" in err_msg
+                        and torch.cuda.is_available()
+                        and isinstance(self.device, str)
+                        and self.device.startswith("cuda")
+                        and attempts == 0
+                    ):
+                        print("Warning: CUDA OOM detected while computing rolling log likelihood; retrying.", flush=True)
+                        torch.cuda.empty_cache()
+                        time.sleep(0.1)
+                        attempts += 1
                         continue
-                    
-                    if logits is None:
-                        results.append(0.0)
-                        continue
-                    
-                    log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
-                    
-                    total_log_prob = 0.0
-                    for i in range(len(tokens) - 1):
-                        next_token = tokens[i + 1]
-                        token_log_prob = log_probs[0, i, next_token].item()
-                        total_log_prob += token_log_prob
-                    
-                    results.append(total_log_prob)
-                    
-                except Exception as e:
-                    print(f"Warning: Error computing rolling log likelihood: {e}")
+
+                    print(f"Warning: Error computing rolling log likelihood: {err}")
                     results.append(0.0)
+                    break
         
         return results
     

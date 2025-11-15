@@ -3,6 +3,7 @@
 from __future__ import annotations
 import logging
 import os
+import time
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from typing import Any, Callable, Optional
@@ -44,7 +45,6 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         worker_pool: Any = None,
         on_list_brains: Optional[Callable[[], list[str]]] = None,
     ) -> None:
-        import time
         init_start = time.time()
         
         logger.info("Initializing Evaluation Panel")
@@ -65,6 +65,11 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         self._eval_process: Any = None
         self._is_running = False
         self._on_list_brains = on_list_brains
+        self._progress_tracker: dict[str, Any] = {
+            "last_status": "",
+            "last_progress": -1.0,
+            "last_log_time": 0.0,
+        }
         
         # Get project root first
         try:
@@ -173,6 +178,8 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
             self.bind("<Map>", lambda e: logger.debug("Evaluation panel mapped (visible)"))
         except Exception:
             pass
+
+        self._reset_progress_tracker()
 
     def _build_ui(self) -> None:
         """Build the evaluation panel UI."""
@@ -287,10 +294,10 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
     def _log_threadsafe(self, msg: str) -> None:
         """Thread-safe wrapper for logging (calls _append_out on GUI thread)."""
         try:
-            self.after(0, lambda: self._append_out(msg))
+            self.after(0, lambda: self._log(msg))
         except Exception:
             # Fallback to direct call if after() fails
-            self._append_out(msg)
+            self._log(msg)
     
     def _on_progress_update_threadsafe(self, progress: float, status_msg: str) -> None:
         """Thread-safe wrapper for progress updates (calls on GUI thread)."""
@@ -397,6 +404,44 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
                 self._append_out(message)
         except Exception:
             pass
+
+    def _reset_progress_tracker(self) -> None:
+        """Reset progress tracking state used for logging."""
+        self._progress_tracker["last_status"] = ""
+        self._progress_tracker["last_progress"] = -1.0
+        self._progress_tracker["last_log_time"] = time.monotonic()
+
+    def _record_progress_update(self, progress: float, status_msg: str) -> None:
+        """Log significant progress changes without spamming the output."""
+        try:
+            now = time.monotonic()
+            last_status = str(self._progress_tracker.get("last_status", ""))
+            last_progress = float(self._progress_tracker.get("last_progress", -1.0))
+            last_log_time = float(self._progress_tracker.get("last_log_time", 0.0))
+
+            status_changed = bool(status_msg) and status_msg != last_status
+            progress_jump = (
+                0.0 <= progress <= 1.0
+                and 0.0 <= last_progress <= 1.0
+                and abs(progress - last_progress) >= 0.1
+            )
+            time_elapsed = now - last_log_time >= 5.0
+            long_silence = now - last_log_time >= 30.0
+
+            should_log = status_changed or (progress_jump and time_elapsed) or long_silence
+
+            if should_log:
+                pct_str = f" ({progress * 100:.1f}%)" if 0.0 <= progress <= 1.0 else ""
+                if status_msg:
+                    self._log(f"[eval] {status_msg}{pct_str}")
+                    self._progress_tracker["last_status"] = status_msg
+                elif pct_str:
+                    self._log(f"[eval] Progress update{pct_str}")
+                self._progress_tracker["last_log_time"] = now
+
+            self._progress_tracker["last_progress"] = progress
+        except Exception:
+            logger.debug("Failed to record progress update", exc_info=True)
 
     def on_tab_activated(self) -> None:
         """Handle notebook activation for the evaluation tab."""
@@ -548,10 +593,26 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         logger.info("Cleaning up Evaluation Panel")
         
         # Stop any running evaluation
-        if self._is_running:
+        harness_running = False
+        try:
+            if hasattr(self, "_harness") and self._harness:
+                harness_running = self._harness.is_running()
+        except Exception:
+            harness_running = False
+
+        if self._is_running or harness_running:
             logger.info("Stopping active evaluation during cleanup")
             try:
-                event_handlers.stop_evaluation(self)
+                if self._is_running:
+                    event_handlers.on_stop_evaluation(self)
+                elif harness_running and hasattr(self, "_harness") and self._harness:
+                    self._log("[eval] Stopping evaluation during shutdown...")
+                    self._harness.cancel()
+                try:
+                    if hasattr(self, "_harness") and self._harness:
+                        self._harness.wait_for_completion(timeout=10.0)
+                except Exception:
+                    logger.debug("Error waiting for evaluation thread during cleanup", exc_info=True)
             except Exception as e:
                 logger.warning(f"Error stopping evaluation during cleanup: {e}")
         
@@ -573,4 +634,5 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
             except Exception as e:
                 logger.error(f"Error terminating evaluation process: {e}")
         
+        self._reset_progress_tracker()
         logger.info("Evaluation Panel cleanup complete")

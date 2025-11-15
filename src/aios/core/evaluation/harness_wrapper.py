@@ -94,7 +94,7 @@ class HarnessWrapper:
         *,
         model_args: str = "",
         batch_size: str = "auto",
-        limit: Optional[int] = None,
+        limit: Optional[float] = None,
         num_fewshot: int = 5,
         device: str = "cuda:0",
         output_path: str = "artifacts/evaluation",
@@ -132,13 +132,31 @@ class HarnessWrapper:
         self._last_progress_time = time.time()
         
         try:
+            # Platform-specific task filtering
+            filtered_tasks = self._filter_tasks(tasks)
+            if not filtered_tasks:
+                raise RuntimeError("All selected tasks are unsupported in the current environment")
+
+            effective_limit = limit
+            if limit is not None:
+                try:
+                    limit_value = float(limit)
+                except (TypeError, ValueError):
+                    limit_value = None
+
+                if limit_value is not None and limit_value >= 1 and limit_value < num_fewshot:
+                    effective_limit = float(num_fewshot)
+                    self.log_callback(
+                        f"[eval] Adjusting limit from {limit} to {effective_limit} to satisfy num_fewshot={num_fewshot}"
+                    )
+
             # Build command
             cmd = self._build_command(
                 model_name=model_name,
-                tasks=tasks,
+                tasks=filtered_tasks,
                 model_args=model_args,
                 batch_size=batch_size,
-                limit=limit,
+                limit=effective_limit,
                 num_fewshot=num_fewshot,
                 device=device,
                 output_path=output_path,
@@ -150,9 +168,21 @@ class HarnessWrapper:
             
             self.log_callback(f"[eval] Running command: {' '.join(cmd)}")
             
-            # Create output directory
-            Path(output_path).mkdir(parents=True, exist_ok=True)
+            # Create output directory and cache root so lm-eval can persist artifacts
+            output_dir = Path(output_path)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            cache_root = output_dir / ".lm_eval_cache"
+            cache_root.mkdir(parents=True, exist_ok=True)
             result.output_path = output_path
+
+            # Ensure lm-eval default cache dir exists so caching never fails on Windows installs
+            try:
+                import lm_eval  # type: ignore
+
+                package_cache_dir = Path(lm_eval.__file__).resolve().parent / "caching" / ".cache"
+                package_cache_dir.mkdir(parents=True, exist_ok=True)
+            except Exception as exc:  # pragma: no cover - best effort
+                self.log_callback(f"[eval] Warning: unable to prepare default lm-eval cache dir: {exc}")
             
             # For AIOS models, ensure the adapter is registered by importing it
             # in this process. The subprocess will inherit the registration if
@@ -192,6 +222,10 @@ cli_evaluate()
             # Set up environment with UTF-8 support for Windows
             env = os.environ.copy()
             env['PYTHONIOENCODING'] = 'utf-8'
+            # Allow code-eval metrics (HumanEval/MBPP) to execute sandboxed code
+            env.setdefault('HF_ALLOW_CODE_EVAL', '1')
+            env.setdefault('LM_EVAL_CACHE_PATH', str(cache_root))
+            env.setdefault('LM_HARNESS_CACHE_PATH', str(cache_root))
             
             # Run subprocess with explicit UTF-8 encoding
             self._process = subprocess.Popen(
@@ -237,6 +271,27 @@ cli_evaluate()
             self._process = None
             
         return result
+
+    def _filter_tasks(self, tasks: list[str]) -> list[str]:
+        """Filter tasks that are unsupported on the current platform.
+
+        Returns a possibly reduced list of tasks and logs any removals.
+        """
+        filtered = list(tasks)
+
+        if sys.platform.startswith("win"):
+            unsupported = {"humaneval", "mbpp"}
+            removed = [task for task in filtered if task in unsupported]
+            if removed:
+                filtered = [task for task in filtered if task not in unsupported]
+                self.log_callback(
+                    "[eval] Skipping Windows-unsupported code-eval tasks: " + ", ".join(removed)
+                )
+                self.log_callback(
+                    "[eval] (Set up Linux or WSL to include code generation benchmarks.)"
+                )
+
+        return filtered
     
     def run_evaluation_async(
         self,
@@ -257,9 +312,12 @@ cli_evaluate()
             raise RuntimeError("An evaluation is already running")
         
         def _run_thread():
-            result = self.run_evaluation(model_name, tasks, **kwargs)
-            if callback:
-                callback(result)
+            try:
+                result = self.run_evaluation(model_name, tasks, **kwargs)
+                if callback:
+                    callback(result)
+            finally:
+                self._thread = None
         
         self._thread = threading.Thread(target=_run_thread, daemon=True)
         self._thread.start()
@@ -282,6 +340,27 @@ cli_evaluate()
                 self._process.wait()
         except Exception as e:
             self.log_callback(f"[eval] Error cancelling: {e}")
+
+    def wait_for_completion(self, timeout: Optional[float] = None) -> bool:
+        """Wait for the background evaluation thread to finish.
+
+        Args:
+            timeout: Maximum time to wait in seconds (None waits indefinitely)
+
+        Returns:
+            True if the thread finished, False if it is still running after timeout
+        """
+        thread = self._thread
+        if thread is None:
+            return True
+
+        if thread.is_alive():
+            thread.join(timeout)
+
+        finished = not thread.is_alive()
+        if finished:
+            self._thread = None
+        return finished
     
     def _build_command(
         self,
@@ -289,7 +368,7 @@ cli_evaluate()
         tasks: list[str],
         model_args: str,
         batch_size: str,
-        limit: Optional[int],
+        limit: Optional[float],
         num_fewshot: int,
         device: str,
         output_path: str,

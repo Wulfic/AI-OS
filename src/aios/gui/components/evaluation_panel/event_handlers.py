@@ -83,6 +83,12 @@ def start_evaluation(panel: "EvaluationPanel") -> None:
         panel._log("[eval] Subsequent runs will be faster (cached datasets)")
     
     # Update UI state
+    if hasattr(panel, "_reset_progress_tracker"):
+        try:
+            panel._reset_progress_tracker()
+        except Exception:
+            logger.debug("Failed to reset evaluation progress tracker", exc_info=True)
+
     panel._is_running = True
     panel.start_btn.config(state="disabled")
     panel.stop_btn.config(state="normal")
@@ -254,6 +260,12 @@ def on_progress_update(panel: "EvaluationPanel", progress: float, status_msg: st
         
         # Force update to ensure GUI responsiveness
         panel.update_idletasks()
+
+        if hasattr(panel, "_record_progress_update"):
+            try:
+                panel._record_progress_update(progress, status_msg)
+            except Exception:
+                logger.debug("Failed to log progress update", exc_info=True)
     except Exception as e:
         # Silently ignore update errors to prevent crashes
         pass
@@ -420,6 +432,12 @@ def on_evaluation_complete(panel: "EvaluationPanel", result: "EvaluationResult")
             "Evaluation Failed",
             f"Evaluation failed:\n{result.error_message}"
         )
+
+    if hasattr(panel, "_reset_progress_tracker"):
+        try:
+            panel._reset_progress_tracker()
+        except Exception:
+            logger.debug("Failed to reset progress tracker after evaluation", exc_info=True)
 
 
 def on_stop_evaluation(panel: "EvaluationPanel") -> None:
