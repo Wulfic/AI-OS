@@ -8,7 +8,7 @@
 
 Production-ready HRM-sMoE training toolkit with a clean GUI, CLI, and installers. Future-facing architecture for OS-integrated autonomous assistance.
 
-License: AI-OS Non‑Selling Attribution License (ANSL) v1.0. You may use, copy, modify, and redistribute this code, but you may not sell the Software or derivative works. All redistributions must retain attribution and link back to the original repository. See LICENSE and NOTICE.
+License: AI-OS Non‑Selling Attribution License (ANSL) v1.0. You may use, copy, modify, and redistribute this code, but you may not sell the Software or derivative works. All redistributions must retain attribution and link back to the original repository. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 ## What is AI-OS?
 
@@ -36,73 +36,46 @@ The model that ships with this program was trained on 2x RTX 2080ti(11GB) cards.
 TLDR; Have a fast ass GPU with lots of VRAM if you're impatient.
 
 ### Prerequisites
+- ~8-10GB Storage for the program, however having at a least a 1 TB SSD/NVME is ideal!
 
-- **Python 3.10+** (included in installers)
-- **Node.js 20+** (for MCP tool support - optional but recommended)
-  - Windows: `winget install OpenJS.NodeJS.LTS`
-  - Ubuntu: `sudo apt install nodejs npm`
-  - Or download from: https://nodejs.org/
-  - ~8-10GB Storage for the program, however having at a least a 1 TB SSD/NVME is ideal!
-
+## Quick Install Info
+## Installers
+Find the official installers also in the [Releases section](https://github.com/Wulfic/AI-OS/releases).
+See [installers/README.md](installers/README.md) for Windows (.exe) and Ubuntu (.deb) info.
 ### Windows (PowerShell)
 ```powershell
 # From repo root
 ./scripts/install_aios_on_windows.ps1 -Action install -Yes
-aios gui
 ```
-
 ### Ubuntu
 ```bash
+# From repo root
 ./scripts/install_aios_on_ubuntu.sh install --yes
-aios gui
-```
-
-Manual developer setup (Windows PowerShell):
-```powershell
-python -m venv .venv
-. .\.venv\Scripts\Activate.ps1
-pip install -e .
-aios gui
 ```
 
 ## Usage
-
+Use the shortcut to start the program or via terminal.
 GUI (recommended):
-```powershell
-aios gui
-```
+- aios gui
 
-CLI (training):
-```powershell
-aios hrm-hf train-actv1 `
-  --model hrm-smoe `
-  --dataset-file training_data/curated_datasets/test_sample.txt `
-  --steps 1000
-```
-
-Minimal dry‑run tasks are available in VS Code (Terminal → Run Task):
-- Run brief HRM CLI dry‑run
-- Run HRM dry‑run (module)
+Interactive CLI:
+- aios
 
 ## Documentation
 
-- Start here: docs/INDEX.md
-- Maintenance and guides: docs/README.md
-- Attributions and upstream projects: REFERENCES.md
-- One-page Quick Start: docs/QUICK_START.md
-
-## Installers
-
-See installers/README.md for Windows (.exe) and Ubuntu (.deb) build instructions and features.
+- Start here: [docs/INDEX.md](docs/INDEX.md)
+- Maintenance and guides: [docs/README.md](docs/README.md)
+- Attributions and upstream projects: [REFERENCES.md](REFERENCES.md)
+- One-page Quick Start: [docs/QUICK_START.md](docs/QUICK_START.md)
 
 ## References and third‑party integrations
 
-See REFERENCES.md for a complete list of libraries and upstream projects used (PyTorch, Transformers, DeepSpeed, bitsandbytes, FlashAttention, and more) with links and licenses.
+See [REFERENCES.md](REFERENCES.md) for a complete list of libraries and upstream projects used (PyTorch, Transformers, DeepSpeed, bitsandbytes, FlashAttention, and more) with links and licenses.
 
 ## Acknowledgments
 
-Thanks to the open‑source ML community and upstream projects that made this possible. See REFERENCES.md.
+Thanks to the open‑source ML community and upstream projects that made this possible. See [REFERENCES.md](REFERENCES.md).
 
 ## License
 
-AI‑OS Non‑Selling Attribution License (ANSL) v1.0 — see LICENSE and NOTICE.
+AI‑OS Non‑Selling Attribution License (ANSL) v1.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
