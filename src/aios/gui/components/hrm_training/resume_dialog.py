@@ -29,7 +29,9 @@ class ResumeDialog(tk.Toplevel):
         
         # Configure window
         self.title("Resume Training?")
-        self.geometry("600x400")
+        # Dialog defaults were previously 600x400; double both dimensions for readability.
+        self.geometry("1200x800")
+        self.minsize(1200, 800)
         self.resizable(False, False)
         
         # Make modal

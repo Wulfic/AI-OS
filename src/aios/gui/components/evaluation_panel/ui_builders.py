@@ -91,7 +91,7 @@ def create_benchmark_selection(panel: "EvaluationPanel") -> None:
         columns=columns,
         show="tree headings",
         selectmode="extended",
-        height=8
+        height=4
     )
     add_tooltip(panel.bench_tree, 
                 "Benchmark Selection:\n\n"

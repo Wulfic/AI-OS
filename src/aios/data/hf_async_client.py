@@ -7,6 +7,7 @@ import logging
 import random
 import threading
 import time
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any, Dict, Optional
 
 import httpx
@@ -22,6 +23,8 @@ _MAX_DELAY = 6.0
 _NON_RETRY_ERROR_CODES = {
     "ConfigNamesError",
 }
+
+_DEFAULT_OVERALL_TIMEOUT = 12.0
 
 
 class _AsyncHttpClient:
@@ -80,16 +83,23 @@ class _AsyncHttpClient:
             if url in self._failure_cache:
                 del self._failure_cache[url]
 
-    async def fetch_json(self, url: str, *, timeout: float | None = None) -> Dict[str, Any]:
+    async def fetch_json(
+        self,
+        url: str,
+        *,
+        timeout: float | None = None,
+        max_attempts: int | None = None,
+    ) -> Dict[str, Any]:
         if self._should_defer(url):
             request = httpx.Request("GET", url)
             raise httpx.RequestError("Hugging Face request suppressed by backoff", request=request)
 
         client = await self._ensure_client()
         attempts = 0
+        attempt_limit = max(1, max_attempts or _MAX_ATTEMPTS)
         last_exc: Exception | None = None
 
-        while attempts < _MAX_ATTEMPTS:
+        while attempts < attempt_limit:
             attempts += 1
             try:
                 response = await client.get(url, timeout=timeout)
@@ -99,7 +109,7 @@ class _AsyncHttpClient:
             except httpx.HTTPStatusError as exc:
                 status = exc.response.status_code
                 last_exc = exc
-                should_retry = status in _TRANSIENT_STATUS and attempts < _MAX_ATTEMPTS
+                should_retry = status in _TRANSIENT_STATUS and attempts < attempt_limit
 
                 if should_retry:
                     error_code = self._extract_error_code(exc.response)
@@ -139,7 +149,7 @@ class _AsyncHttpClient:
                 await asyncio.sleep(delay)
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 last_exc = exc
-                if attempts >= _MAX_ATTEMPTS:
+                if attempts >= attempt_limit:
                     self._record_failure(url, attempts)
                     raise
                 delay = min(_BASE_DELAY * (2 ** (attempts - 1)), _MAX_DELAY)
@@ -148,7 +158,7 @@ class _AsyncHttpClient:
                     "HTTP transport issue for %s (attempt %d/%d); retrying in %.2fs",
                     url,
                     attempts,
-                    _MAX_ATTEMPTS,
+                    attempt_limit,
                     delay,
                 )
                 await asyncio.sleep(delay)
@@ -169,7 +179,12 @@ class _AsyncHttpClient:
 _client = _AsyncHttpClient()
 
 
-def fetch_json_sync(url: str, *, timeout: float | None = None) -> Dict[str, Any]:
+def fetch_json_sync(
+    url: str,
+    *,
+    timeout: float | None = None,
+    max_attempts: int | None = None,
+) -> Dict[str, Any]:
     """Fetch JSON from *url* using the shared async HTTP client.
 
     The coroutine is executed on the global async event loop. Raises RuntimeError
@@ -178,13 +193,39 @@ def fetch_json_sync(url: str, *, timeout: float | None = None) -> Dict[str, Any]
     loop = get_async_loop()
     if loop is None:
         raise RuntimeError("Async event loop is not initialized")
-    future = loop.run_coroutine(_client.fetch_json(url, timeout=timeout))
-    return future.result()
+    future = loop.run_coroutine(_client.fetch_json(url, timeout=timeout, max_attempts=max_attempts))
+
+    per_attempt = timeout if timeout is not None else 5.0
+    attempt_limit = max(1, max_attempts or _MAX_ATTEMPTS)
+    extra_slack = max(1.0, per_attempt * 0.4)
+    computed = per_attempt * attempt_limit + extra_slack
+    cap = max(_DEFAULT_OVERALL_TIMEOUT, per_attempt + extra_slack)
+    overall_timeout = max(per_attempt + extra_slack, min(computed, cap))
+
+    try:
+        return future.result(timeout=overall_timeout)
+    except FuturesTimeoutError as exc:
+        if future.cancel():
+            logger.debug(
+                "Cancelled Hugging Face request wait after %.1fs: %s",
+                overall_timeout,
+                url,
+            )
+        request = httpx.Request("GET", url)
+        raise httpx.TimeoutException(
+            f"Blocking wait exceeded {overall_timeout:.1f}s",
+            request=request,
+        ) from exc
 
 
-async def fetch_json(url: str, *, timeout: float | None = None) -> Dict[str, Any]:
+async def fetch_json(
+    url: str,
+    *,
+    timeout: float | None = None,
+    max_attempts: int | None = None,
+) -> Dict[str, Any]:
     """Async variant for direct coroutine usage."""
-    return await _client.fetch_json(url, timeout=timeout)
+    return await _client.fetch_json(url, timeout=timeout, max_attempts=max_attempts)
 
 
 async def shutdown_client() -> None:

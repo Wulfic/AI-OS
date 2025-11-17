@@ -47,6 +47,11 @@ class HRMTrainingPanel(ttk.LabelFrame):  # type: ignore[misc]
         self._worker_pool = worker_pool
         self._resources_panel = resources_panel
         self._post_to_ui = post_to_ui
+        if self._resources_panel is not None:
+            try:
+                self._resources_panel._hrm_deepspeed_callback = self.update_deepspeed_state
+            except Exception:
+                pass
         
         # Get project root
         from .helpers import project_root
@@ -56,6 +61,11 @@ class HRMTrainingPanel(ttk.LabelFrame):  # type: ignore[misc]
         # Initialize variables
         from .variable_setup import setup_variables, setup_variable_traces
         logger.debug("Setting up HRM training panel variables")
+        if self._resources_panel is not None and hasattr(self._resources_panel, "zero_stage_var"):
+            try:
+                self.zero_stage_var = self._resources_panel.zero_stage_var
+            except Exception:
+                pass
         setup_variables(self)
         setup_variable_traces(self)
         
@@ -145,8 +155,11 @@ class HRMTrainingPanel(ttk.LabelFrame):  # type: ignore[misc]
                 # Also trace GPU selection changes
                 if hasattr(self._resources_panel, "_cuda_train_rows"):
                     for row in self._resources_panel._cuda_train_rows:
-                        if "enabled_var" in row:
-                            row["enabled_var"].trace_add("write", lambda *args: self.update_deepspeed_state())
+                        var = row.get("enabled")
+                        if hasattr(var, "trace_add"):
+                            var.trace_add("write", lambda *args: self.update_deepspeed_state())
+            if self._resources_panel is not None and hasattr(self._resources_panel, "zero_stage_var"):
+                self._resources_panel.zero_stage_var.trace_add("write", lambda *args: self.update_deepspeed_state())
         except Exception:
             pass
         
@@ -189,40 +202,75 @@ class HRMTrainingPanel(ttk.LabelFrame):  # type: ignore[misc]
             logger.error(f"Failed to apply theme to HRM panel: {e}")
 
     def update_deepspeed_state(self) -> None:
-        """Update DeepSpeed ZeRO dropdown state based on training mode.
-        
-        Only enables DeepSpeed ZeRO in Linux environments with multiple GPUs in DDP mode.
-        Disables it in all other scenarios (Windows, single GPU, or parallel mode).
-        """
+        """Update DeepSpeed ZeRO dropdown state based on training mode and platform."""
         try:
-            # Get training mode from resources panel
             if not hasattr(self, "_resources_panel") or self._resources_panel is None:
                 return
-            
-            rvals = self._resources_panel.get_values()
-            training_mode = rvals.get("training_mode", "ddp")
-            num_gpus = len(rvals.get("train_cuda_selected", []))
-            
-            # Check if we're on Linux
+
             import platform
+
             is_linux = platform.system() == "Linux"
-            
-            # DeepSpeed ZeRO should only be enabled on Linux with multiple GPUs in DDP mode
-            should_enable = is_linux and num_gpus > 1 and training_mode == "ddp"
-            
-            logger.debug(f"DeepSpeed state update: enabled={should_enable} (Linux={is_linux}, GPUs={num_gpus}, mode={training_mode})")
-            
-            if hasattr(self, "zero_combo"):
-                if should_enable:
-                    # Enable ZeRO dropdown
-                    self.zero_combo.config(state="readonly")
-                else:
-                    # Disable ZeRO dropdown and set to "none"
-                    self.zero_combo.config(state="disabled")
-                    current_stage = self.zero_stage_var.get()
-                    if current_stage != "none":
-                        logger.debug(f"DeepSpeed ZeRO disabled, resetting stage from '{current_stage}' to 'none'")
+            rvals = self._resources_panel.get_values()
+            training_mode = rvals.get("training_mode", "none")
+            selected = rvals.get("train_cuda_selected", [])
+            if (not selected) and hasattr(self._resources_panel, "_pending_gpu_settings"):
+                try:
+                    pending = self._resources_panel._pending_gpu_settings.get("train_cuda_selected", set())
+                    if isinstance(pending, (set, list, tuple)) and pending:
+                        selected = list(pending)
+                except Exception:
+                    selected = selected
+            num_gpus = len(selected) if isinstance(selected, list) else 0
+            zero_stage_resource = rvals.get("zero_stage", "none")
+
+            linux_gpu_available = is_linux and num_gpus >= 1
+            zero3_active = zero_stage_resource == "zero3" or training_mode == "zero3"
+
+            allowed_values: list[str] = ["none"]
+            if linux_gpu_available:
+                allowed_values.extend(["zero1", "zero2"])
+            if zero3_active and "zero3" not in allowed_values:
+                allowed_values.append("zero3")
+
+            logger.debug(
+                "DeepSpeed state update (linux=%s, gpus=%d, mode=%s, zero=%s)",
+                is_linux,
+                num_gpus,
+                training_mode,
+                zero_stage_resource,
+            )
+
+            if not hasattr(self, "zero_combo"):
+                return
+
+            try:
+                current_values = tuple(self.zero_combo["values"])
+            except Exception:
+                current_values = tuple()
+
+            desired_values = tuple(allowed_values)
+            if desired_values != current_values:
+                self.zero_combo["values"] = desired_values
+
+            if not linux_gpu_available:
+                if self.zero_stage_var.get() != "none":
+                    logger.debug("ZeRO disabled (no eligible GPUs or platform), resetting to none")
                     self.zero_stage_var.set("none")
+                self.zero_combo.config(state="disabled")
+                return
+
+            if zero3_active:
+                if self.zero_stage_var.get() != "zero3":
+                    logger.debug("ZeRO-3 enforced by Resources panel")
+                    self.zero_stage_var.set("zero3")
+                self.zero_combo.config(state="disabled")
+                return
+
+            if self.zero_stage_var.get() == "zero3":
+                logger.debug("Clearing ZeRO-3 selection; Resources mode no longer requires it")
+                self.zero_stage_var.set("none")
+
+            self.zero_combo.config(state="readonly")
         except Exception as e:
             logger.error(f"Failed to update DeepSpeed state: {e}")
 

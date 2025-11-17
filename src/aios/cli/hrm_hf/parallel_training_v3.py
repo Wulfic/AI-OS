@@ -26,8 +26,10 @@ Features:
 
 from __future__ import annotations
 
+import json
 import os
 import threading
+import time
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Any
@@ -74,6 +76,9 @@ def train_gpu_worker(
     device_index: int = 0,
     stop_event: Optional[Any] = None,
     graceful_stop_event: Optional[Any] = None,
+    stop_ack_event: Optional[Any] = None,
+    graceful_stop_ack_event: Optional[Any] = None,
+    tracker_gpu_id: Optional[int] = None,
 ) -> str:
     """GPU worker that trains on unique chunks from blocks.
     
@@ -95,12 +100,70 @@ def train_gpu_worker(
         device_index: PyTorch device index (remapped by CUDA_VISIBLE_DEVICES)
         stop_event: Event to signal immediate stop
         graceful_stop_event: Event to signal graceful stop (finish current chunk)
+        stop_ack_event: Event set when immediate stop is observed
+        graceful_stop_ack_event: Event set when graceful stop is observed
         
     Returns:
         Path to final checkpoint
     """
     import signal
     import sys
+
+    tracker_id = tracker_gpu_id if tracker_gpu_id is not None else gpu_id
+
+    # Determine if we should emit progress updates to a shared file (DDP spawn path)
+    progress_file: Optional[str] = None
+    try:
+        candidate = os.environ.get("AIOS_DDP_PROGRESS_FILE")
+        if candidate:
+            ddp_rank = None
+            ddp_initialized = False
+            try:
+                import torch.distributed as dist  # type: ignore
+                if dist.is_available() and dist.is_initialized():
+                    ddp_rank = dist.get_rank()
+                    ddp_initialized = True
+            except Exception:
+                ddp_initialized = False
+                ddp_rank = None
+
+            if ddp_initialized:
+                if ddp_rank == 0:
+                    progress_file = candidate
+            else:
+                # Fallback: allow tracker_id 0 to report when DDP not detected
+                if tracker_id == 0:
+                    progress_file = candidate
+    except Exception:
+        progress_file = None
+
+    def _write_progress(
+        *,
+        step: int,
+        total_steps: int,
+        loss: Optional[float],
+        block_id: int,
+        chunk_id: int,
+        global_optimizer_steps: int,
+        samples_trained: int,
+    ) -> None:
+        if not progress_file:
+            return
+        try:
+            payload = {
+                "step": int(max(0, step)),
+                "total_steps": int(max(1, total_steps)),
+                "loss": float(loss) if loss is not None else None,
+                "block_id": int(block_id),
+                "chunk_id": int(chunk_id),
+                "global_optimizer_steps": int(max(0, global_optimizer_steps)),
+                "samples_trained": int(max(0, samples_trained)),
+                "timestamp": time.time(),
+            }
+            with open(progress_file, "w", encoding="utf-8") as pf:
+                json.dump(payload, pf)
+        except Exception:
+            pass
     
     # Install signal handler to catch termination
     def signal_handler(signum, frame):
@@ -108,7 +171,7 @@ def train_gpu_worker(
             sig_name = signal.Signals(signum).name if hasattr(signal, 'Signals') else str(signum)
         except:
             sig_name = str(signum)
-        print(f"\n[GPU {gpu_id}] !!!!! SIGNAL RECEIVED: {sig_name} ({signum}) !!!!!", flush=True)
+        print(f"\n[GPU {tracker_id}] !!!!! SIGNAL RECEIVED: {sig_name} ({signum}) !!!!!", flush=True)
         sys.stdout.flush()
         sys.stderr.flush()
         # Don't exit immediately - let the process finish gracefully
@@ -119,10 +182,28 @@ def train_gpu_worker(
         signal.signal(signal.SIGINT, signal_handler)
         if hasattr(signal, 'SIGBREAK'):  # Windows
             signal.signal(signal.SIGBREAK, signal_handler)
-        print(f"[GPU {gpu_id}] Signal handlers installed", flush=True)
+        print(f"[GPU {tracker_id}] Signal handlers installed", flush=True)
     except Exception as e:
-        print(f"[GPU {gpu_id}] Failed to install signal handlers: {e}", flush=True)
+        print(f"[GPU {tracker_id}] Failed to install signal handlers: {e}", flush=True)
     
+    def _ack_immediate_stop() -> None:
+        if stop_ack_event is None:
+            return
+        try:
+            if not stop_ack_event.is_set():
+                stop_ack_event.set()
+        except Exception:
+            pass
+
+    def _ack_graceful_stop() -> None:
+        if graceful_stop_ack_event is None:
+            return
+        try:
+            if not graceful_stop_ack_event.is_set():
+                graceful_stop_ack_event.set()
+        except Exception:
+            pass
+
     # CRITICAL: Use the actual GPU ID (gpu_id), not the device_index
     # When CUDA_VISIBLE_DEVICES is not set, we need to select the physical GPU
     # device_index is only used when CUDA_VISIBLE_DEVICES successfully remaps devices
@@ -132,21 +213,21 @@ def train_gpu_worker(
     if cuda_visible:
         # CUDA_VISIBLE_DEVICES is set - use remapped index
         device = torch.device(f'cuda:{device_index}')
-        print(f"[GPU {gpu_id}] CUDA_VISIBLE_DEVICES={cuda_visible}, using remapped index {device_index}")
+        print(f"[GPU {tracker_id}] CUDA_VISIBLE_DEVICES={cuda_visible}, using remapped index {device_index}")
     else:
         # CUDA_VISIBLE_DEVICES not set - use actual GPU ID
         device = torch.device(f'cuda:{gpu_id}')
-        print(f"[GPU {gpu_id}] CUDA_VISIBLE_DEVICES not set, using physical GPU {gpu_id}")
+        print(f"[GPU {tracker_id}] CUDA_VISIBLE_DEVICES not set, using physical GPU {gpu_id}")
     
     torch.cuda.set_device(device)
     
     # Verify which GPU we're actually using
     actual_device = torch.cuda.current_device()
     device_name = torch.cuda.get_device_name(actual_device)
-    print(f"[GPU {gpu_id}] Active CUDA device: {actual_device} ({device_name})")
+    print(f"[GPU {tracker_id}] Active CUDA device: {actual_device} ({device_name})")
     
     print(f"\n{'='*60}")
-    print(f"[GPU {gpu_id}] Starting Training Worker")
+    print(f"[GPU {tracker_id}] Starting Training Worker")
     print(f"{'='*60}\n")
     
     # Build model
@@ -170,7 +251,7 @@ def train_gpu_worker(
     # CRITICAL: Must happen before optimizer creation
     adjusted_lr = auto_adjust_moe_learning_rate(config, print)
     if adjusted_lr != config.lr:
-        print(f"[GPU {gpu_id}] Learning rate adjusted: {config.lr} -> {adjusted_lr}")
+        print(f"[GPU {tracker_id}] Learning rate adjusted: {config.lr} -> {adjusted_lr}")
         # Create a copy of config with adjusted LR for this GPU worker
         config.lr = adjusted_lr
     
@@ -203,23 +284,25 @@ def train_gpu_worker(
     current_block_id = 0
     graceful_stop_pending = False  # Track graceful stop request
     
-    print(f"[GPU {gpu_id}] Starting training loop...")
+    print(f"[GPU {tracker_id}] Starting training loop...")
     
     try:
         while True:
             # Check for immediate stop event
             if stop_event and stop_event.is_set():
-                print(f"[GPU {gpu_id}] Immediate stop requested - terminating now", flush=True)
+                _ack_immediate_stop()
+                print(f"[GPU {tracker_id}] Immediate stop requested - terminating now", flush=True)
                 break
             
             # Check for graceful stop event - set flag to stop after current chunk
             if graceful_stop_event and graceful_stop_event.is_set() and not graceful_stop_pending:
+                _ack_graceful_stop()
                 graceful_stop_pending = True
-                print(f"[GPU {gpu_id}] Graceful stop requested - will finish current chunk then exit", flush=True)
+                print(f"[GPU {tracker_id}] Graceful stop requested - will finish current chunk then exit", flush=True)
             
             # If graceful stop is pending and we're between chunks, exit now
             if graceful_stop_pending:
-                print(f"[GPU {gpu_id}] Graceful stop honored - exiting between chunks", flush=True)
+                print(f"[GPU {tracker_id}] Graceful stop honored - exiting between chunks", flush=True)
                 break
             
             # No total step limit check here - iterate mode continues indefinitely
@@ -239,7 +322,7 @@ def train_gpu_worker(
             
             if block is None:
                 # No more blocks - epoch complete
-                print(f"[GPU {gpu_id}] Block {current_block_id} not available (end of dataset)")
+                print(f"[GPU {tracker_id}] Block {current_block_id} not available (end of dataset)")
                 
                 # Check if epoch complete
                 total_blocks = block_manager.get_total_blocks()
@@ -247,7 +330,7 @@ def train_gpu_worker(
                 # Update chunk_tracker with total blocks if detected for first time
                 if total_blocks and chunk_tracker.total_blocks_in_dataset is None:
                     chunk_tracker.total_blocks_in_dataset = total_blocks
-                    print(f"[GPU {gpu_id}] Detected {total_blocks} total blocks in dataset")
+                    print(f"[GPU {tracker_id}] Detected {total_blocks} total blocks in dataset")
                     
                     # Log to GUI
                     write_jsonl({
@@ -257,31 +340,32 @@ def train_gpu_worker(
                     })
                 
                 if total_blocks and chunk_tracker.check_epoch_complete(total_blocks):
-                    print(f"[GPU {gpu_id}] Epoch {chunk_tracker.current_epoch} complete!")
+                    print(f"[GPU {tracker_id}] Epoch {chunk_tracker.current_epoch} complete!")
                     
                     # Iterate mode takes priority - continue training
                     if config.iterate:
                         # Check if stop_after_epoch is set (one-time stop flag)
                         if config.stop_after_epoch:
-                            print(f"[GPU {gpu_id}] Epoch complete + stop_after_epoch set, stopping")
+                            print(f"[GPU {tracker_id}] Epoch complete + stop_after_epoch set, stopping")
                             break
                         
-                        print(f"[GPU {gpu_id}] Iterate mode enabled, starting new epoch")
+                        print(f"[GPU {tracker_id}] Iterate mode enabled, starting new epoch")
                         chunk_tracker.start_new_epoch()
                         block_manager.reset()
                         current_block_id = 0
                         continue
                     else:
-                        print(f"[GPU {gpu_id}] Iterate mode disabled, stopping after epoch")
+                        print(f"[GPU {tracker_id}] Iterate mode disabled, stopping after epoch")
                         break
                 else:
                     # Dataset exhausted but epoch not complete
-                    print(f"[GPU {gpu_id}] Dataset exhausted (epoch not complete), stopping")
+                    print(f"[GPU {tracker_id}] Dataset exhausted (epoch not complete), stopping")
                     break
             
             # Check for graceful stop BEFORE claiming next chunk
             if graceful_stop_event and graceful_stop_event.is_set():
-                print(f"[GPU {gpu_id}] Graceful stop detected before claiming next chunk - exiting cleanly", flush=True)
+                _ack_graceful_stop()
+                print(f"[GPU {tracker_id}] Graceful stop detected before claiming next chunk - exiting cleanly", flush=True)
                 break
             
             # Get next untrained chunk from this block
@@ -291,12 +375,11 @@ def train_gpu_worker(
             chunk_id = chunk_tracker.get_next_untrained_chunk(
                 block_id=current_block_id,
                 total_chunks_in_block=total_chunks_in_block,
-                gpu_id=gpu_id
+                gpu_id=tracker_id,
             )
-            
             if chunk_id is None:
                 # Block exhausted, check if we should stop
-                print(f"[GPU {gpu_id}] Block {current_block_id} fully trained")
+                print(f"[GPU {tracker_id}] Block {current_block_id} fully trained")
                 chunk_tracker.mark_block_complete(current_block_id)
                 
                 # Free the block from memory now that it's complete
@@ -304,7 +387,7 @@ def train_gpu_worker(
                 block_manager.free_block(current_block_id)
                 
                 if config.stop_after_block:
-                    print(f"[GPU {gpu_id}] stop_after_block enabled, stopping")
+                    print(f"[GPU {tracker_id}] stop_after_block enabled, stopping")
                     break
                 
                 # Move to next block
@@ -314,7 +397,8 @@ def train_gpu_worker(
             # Check for graceful stop AGAIN after claiming chunk (catch race condition)
             # Event might have been set between the check above and chunk claim
             if graceful_stop_event and graceful_stop_event.is_set():
-                print(f"[GPU {gpu_id}] Graceful stop detected after claiming chunk {chunk_id} - exiting without training it", flush=True)
+                _ack_graceful_stop()
+                print(f"[GPU {tracker_id}] Graceful stop detected after claiming chunk {chunk_id} - exiting without training it", flush=True)
                 # Note: Chunk was claimed but not trained, so it will remain available for next session
                 break
             
@@ -323,7 +407,7 @@ def train_gpu_worker(
             chunk_samples = block_manager.get_chunk(current_block_id, chunk_id, chunk_size)
             
             if not chunk_samples:
-                print(f"[GPU {gpu_id}] Warning: Empty chunk {chunk_id} in block {current_block_id}")
+                print(f"[GPU {tracker_id}] Warning: Empty chunk {chunk_id} in block {current_block_id}")
                 continue
             
             # Calculate number of training steps needed for this chunk
@@ -337,7 +421,7 @@ def train_gpu_worker(
             optimizer_steps_in_chunk = (len(chunk_samples) + effective_batch_size - 1) // effective_batch_size
             steps_to_train = min(optimizer_steps_in_chunk, max_steps_this_chunk)
             
-            print(f"\n[GPU {gpu_id}] > Training Block {current_block_id} Chunk {chunk_id}: "
+            print(f"\n[GPU {tracker_id}] > Training Block {current_block_id} Chunk {chunk_id}: "
                   f"{len(chunk_samples)} samples, training {steps_to_train} optimizer steps "
                   f"(batch_size={config.batch_size}, grad_accum={grad_accum_steps}, effective_batch={effective_batch_size})")
             
@@ -346,24 +430,37 @@ def train_gpu_worker(
             chunk_losses = []
             step_in_chunk = 0  # Counts optimizer steps, not micro-batches
             micro_batch_count = 0  # Counts micro-batches for gradient accumulation
+
+            if progress_file:
+                _write_progress(
+                    step=0,
+                    total_steps=max(1, steps_to_train),
+                    loss=None,
+                    block_id=current_block_id,
+                    chunk_id=chunk_id,
+                    global_optimizer_steps=total_steps_this_gpu,
+                    samples_trained=0,
+                )
             
             try:
                 for batch_start in range(0, len(chunk_samples), config.batch_size):
                     # Check for immediate stop during training
                     if stop_event and stop_event.is_set():
-                        print(f"[GPU {gpu_id}] Immediate stop requested during chunk - terminating now", flush=True)
+                        _ack_immediate_stop()
+                        print(f"[GPU {tracker_id}] Immediate stop requested during chunk - terminating now", flush=True)
                         graceful_stop_pending = False  # Override graceful stop for immediate exit
                         break
                     
                     # Check for graceful stop during chunk training
                     # Set flag but DON'T break - let the entire chunk complete
                     if graceful_stop_event and graceful_stop_event.is_set() and not graceful_stop_pending:
+                        _ack_graceful_stop()
                         graceful_stop_pending = True
-                        print(f"[GPU {gpu_id}] Graceful stop detected - will finish current chunk then exit", flush=True)
+                        print(f"[GPU {tracker_id}] Graceful stop detected - will finish current chunk then exit", flush=True)
                     
                     # Stop if we've reached the per-chunk step limit
                     if step_in_chunk >= steps_to_train:
-                        print(f"[GPU {gpu_id}] Reached per-chunk step limit ({steps_to_train}), moving to next chunk", flush=True)
+                        print(f"[GPU {tracker_id}] Reached per-chunk step limit ({steps_to_train}), moving to next chunk", flush=True)
                         break
                     
                     batch_end = min(batch_start + config.batch_size, len(chunk_samples))
@@ -436,12 +533,23 @@ def train_gpu_worker(
                         # Only report AFTER completing an optimizer step to avoid duplicate prints during gradient accumulation
                         if step_in_chunk >= steps_to_train or batch_start + config.batch_size >= len(chunk_samples) or True:
                             avg_loss = sum(chunk_losses[-min(5*grad_accum_steps, len(chunk_losses)):]) / min(5*grad_accum_steps, len(chunk_losses))
-                            print(f"[GPU {gpu_id}] Optimizer Step: {step_in_chunk}/{steps_to_train} | "
+                            print(f"[GPU {tracker_id}] Optimizer Step: {step_in_chunk}/{steps_to_train} | "
                                   f"Block {current_block_id} Chunk {chunk_id} | Loss={avg_loss:.4f}")
+
+                            if progress_file:
+                                _write_progress(
+                                    step=step_in_chunk,
+                                    total_steps=max(1, steps_to_train),
+                                    loss=avg_loss,
+                                    block_id=current_block_id,
+                                    chunk_id=chunk_id,
+                                    global_optimizer_steps=total_steps_this_gpu,
+                                    samples_trained=samples_trained,
+                                )
             
             except Exception as batch_error:
                 # Catch any exception during batch processing to prevent silent crashes
-                print(f"\n[ERROR] GPU {gpu_id} EXCEPTION during batch processing: {batch_error}", flush=True)
+                print(f"\n[ERROR] GPU {tracker_id} EXCEPTION during batch processing: {batch_error}", flush=True)
                 import traceback
                 traceback.print_exc()
                 import sys
@@ -452,13 +560,13 @@ def train_gpu_worker(
             
             # Mark chunk complete
             # Mark chunk complete
-            print(f"[GPU {gpu_id}] Batch loop done for chunk {chunk_id} (graceful_stop={graceful_stop_pending}, steps={step_in_chunk})", flush=True)
+            print(f"[GPU {tracker_id}] Batch loop done for chunk {chunk_id} (graceful_stop={graceful_stop_pending}, steps={step_in_chunk})", flush=True)
             
             avg_chunk_loss = sum(chunk_losses) / len(chunk_losses) if chunk_losses else 0.0
             chunk_tracker.mark_chunk_complete(
                 block_id=current_block_id,
                 chunk_id=chunk_id,
-                gpu_id=gpu_id,
+                gpu_id=tracker_id,
                 step=total_steps_this_gpu,
                 samples_trained=samples_trained,
                 true_steps=micro_batch_count  # Pass the number of micro-batches processed in this chunk
@@ -474,7 +582,7 @@ def train_gpu_worker(
             
             write_jsonl({
                 "event": "chunk_complete",
-                "gpu_id": gpu_id,
+                "gpu_id": tracker_id,
                 "block_id": current_block_id,
                 "chunk_id": chunk_id,
                 "step": total_steps_this_gpu,
@@ -489,33 +597,45 @@ def train_gpu_worker(
                 "total_blocks": stats.get("total_blocks_in_dataset"),
             })
             
-            print(f"[GPU {gpu_id}] * Completed Block {current_block_id} Chunk {chunk_id}: "
+            print(f"[GPU {tracker_id}] * Completed Block {current_block_id} Chunk {chunk_id}: "
                   f"{step_in_chunk} optimizer steps (limit: {steps_to_train}) | "
                   f"{micro_batch_count} micro-batches | "
                   f"GPU Total: {total_steps_this_gpu} opt steps ({total_micro_batches_this_gpu} true steps) | "
                   f"Avg Loss: {avg_chunk_loss:.4f}")
+
+            if progress_file:
+                _write_progress(
+                    step=step_in_chunk,
+                    total_steps=max(1, steps_to_train),
+                    loss=avg_chunk_loss,
+                    block_id=current_block_id,
+                    chunk_id=chunk_id,
+                    global_optimizer_steps=total_steps_this_gpu,
+                    samples_trained=samples_trained,
+                )
             
             # If immediate stop was triggered during chunk, break outer loop
             if stop_event and stop_event.is_set():
-                print(f"[GPU {gpu_id}] Immediate stop confirmed - exiting", flush=True)
+                _ack_immediate_stop()
+                print(f"[GPU {tracker_id}] Immediate stop confirmed - exiting", flush=True)
                 break
             
             # Check for graceful stop after chunk completion
             if graceful_stop_pending:
-                print(f"[GPU {gpu_id}] Graceful stop honored after chunk completion", flush=True)
+                print(f"[GPU {tracker_id}] Graceful stop honored after chunk completion", flush=True)
                 break
             
             # If iterate is disabled, stop after training one chunk
             if not config.iterate:
-                print(f"[GPU {gpu_id}] Iterate mode disabled - stopping after one chunk", flush=True)
+                print(f"[GPU {tracker_id}] Iterate mode disabled - stopping after one chunk", flush=True)
                 break
         
         # Save final checkpoint
-        print(f"[GPU {gpu_id}] Saving final checkpoint...", flush=True)
+        print(f"[GPU {tracker_id}] Saving final checkpoint...", flush=True)
         
         # Ensure checkpoint directory exists (in case worker process doesn't have it)
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        checkpoint_path = checkpoint_dir / f"gpu{gpu_id}_final.safetensors"
+        checkpoint_path = checkpoint_dir / f"gpu{tracker_id}_final.safetensors"
         
         from safetensors.torch import save_file as save_safetensors
         state_dict = model.state_dict()
@@ -524,10 +644,10 @@ def train_gpu_worker(
         # Release state_dict to avoid file handle issues on Windows
         del state_dict
         
-        print(f"[GPU {gpu_id}] Training complete! Steps: {total_steps_this_gpu}", flush=True)
+        print(f"[GPU {tracker_id}] Training complete! Steps: {total_steps_this_gpu}", flush=True)
         
     except Exception as e:
-        print(f"\n[ERROR] GPU {gpu_id} training failed: {e}", flush=True)
+        print(f"\n[ERROR] GPU {tracker_id} training failed: {e}", flush=True)
         import traceback
         traceback.print_exc()
         import sys
@@ -589,10 +709,123 @@ def merge_checkpoints(checkpoint_paths: list[str], output_path: str) -> None:
     print(f"[OK] Merged checkpoint saved: {output_path}\n")
 
 
+def _run_parallel_training_v3_ddp(
+    *,
+    config: "TrainingConfig",
+    checkpoint_dir: Path,
+    tokenizer,
+    vocab_size: int,
+    block_manager: BlockManager,
+    chunk_tracker: ChunkTracker,
+    write_jsonl,
+    final_checkpoint_path: Path,
+) -> None:
+    import os
+    from pathlib import Path as _Path
+
+    import torch
+
+    try:
+        import torch.distributed as dist
+    except Exception as exc:  # pragma: no cover - defensive
+        raise RuntimeError("DDP requested but torch.distributed is unavailable") from exc
+
+    if not dist.is_initialized():
+        raise RuntimeError("DDP mode requested but torch.distributed is not initialized")
+
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
+    local_rank = int(os.environ.get("LOCAL_RANK", rank))
+
+    # Always prefer LOCAL_RANK for device selection; CUDA_VISIBLE_DEVICES remaps indices per process
+    device_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    device_index = local_rank if device_count > 0 else 0
+    if device_count > 0 and device_index >= device_count:
+        device_index = device_index % device_count
+
+    if torch.cuda.is_available():
+        try:
+            torch.cuda.set_device(device_index)
+        except RuntimeError as err:
+            print(f"[DDP] Warning: failed to set CUDA device {device_index}: {err}")
+        physical_device = torch.cuda.current_device()
+    else:
+        physical_device = 0
+
+    # Each rank runs the standard worker, but shares tracker state via disk locks
+    ckpt_path = train_gpu_worker(
+        config=config,
+        gpu_id=int(physical_device),
+        checkpoint_dir=checkpoint_dir,
+        tokenizer=tokenizer,
+        vocab_size=vocab_size,
+        block_manager=block_manager,
+        chunk_tracker=chunk_tracker,
+        write_jsonl=write_jsonl,
+        device_index=device_index,
+        stop_event=None,
+        graceful_stop_event=None,
+        stop_ack_event=None,
+        graceful_stop_ack_event=None,
+        tracker_gpu_id=rank,
+    )
+
+    # Persist tracker state changes before synchronization
+    chunk_tracker.save()
+
+    dist.barrier()
+
+    local_ckpt = ckpt_path if ckpt_path and _Path(ckpt_path).exists() else None
+    gathered: Optional[list[Optional[str]]] = [None] * world_size if rank == 0 else None
+    dist.gather_object(local_ckpt, gathered, dst=0)
+
+    if rank == 0:
+        valid_paths = [p for p in gathered or [] if p]
+        if valid_paths:
+            merge_checkpoints(valid_paths, str(final_checkpoint_path))
+            print(f"[DDP] Merged {len(valid_paths)} checkpoints into {final_checkpoint_path}")
+        else:
+            print("[DDP] Warning: No valid checkpoints gathered from ranks")
+
+        # Refresh tracker state from disk to capture all ranks' updates
+        chunk_tracker.refresh()
+        final_stats = chunk_tracker.get_progress_stats()
+
+        write_jsonl({
+            "event": "training_complete",
+            "session_steps": final_stats.get('session_steps', 0),
+            "session_true_steps": final_stats.get('session_true_steps', 0),
+            "total_gpu_steps": final_stats['total_gpu_steps'],
+            "total_true_steps": final_stats.get('total_true_steps', 0),
+            "total_samples_trained": final_stats['total_samples_trained'],
+            "total_chunks_trained": final_stats['total_chunks_trained'],
+            "session_chunks_trained": final_stats.get('session_chunks_trained', 0),
+            "blocks_completed": final_stats['blocks_completed'],
+            "current_epoch": final_stats['current_epoch'],
+        })
+
+        print("\n" + "=" * 60)
+        print("TRAINING COMPLETE! (DDP mode)")
+        print("=" * 60)
+        print(f"World size: {world_size}")
+        print(f"Total optimizer steps: {final_stats['total_gpu_steps']}")
+        print(f"Total true steps: {final_stats.get('total_true_steps', 0)}")
+        print(f"Session true steps: {final_stats.get('session_true_steps', 0)}")
+        print(f"Items trained: {final_stats['total_samples_trained']:,}")
+        print(f"Chunks trained: {final_stats['total_chunks_trained']}")
+        print(f"Blocks completed: {final_stats['blocks_completed']}")
+        print(f"Current epoch: {final_stats['current_epoch']}")
+        print(f"Checkpoint: {final_checkpoint_path}")
+        print("=" * 60 + "\n")
+
+    dist.barrier()
+
 def run_parallel_training_v3(
     config: "TrainingConfig",
     stop_event: Optional[Any] = None,
     graceful_stop_event: Optional[Any] = None,
+    stop_ack_event: Optional[Any] = None,
+    graceful_stop_ack_event: Optional[Any] = None,
 ) -> None:
     """Main orchestrator for block/chunk-based parallel training.
     
@@ -607,18 +840,45 @@ def run_parallel_training_v3(
         config: Training configuration
         stop_event: Multiprocessing event for immediate stop
         graceful_stop_event: Multiprocessing event for graceful stop (finish chunk)
+        stop_ack_event: Event set when workers observe the immediate stop request
+        graceful_stop_ack_event: Event set when workers observe the graceful stop request
     """
     
-    print("\n" + "="*60)
-    print("PARALLEL TRAINING V3 - BLOCK/CHUNK DISTRIBUTION")
-    print("="*60)
-    print("Features:")
-    print("  • Block-based dataset streaming (100k items/block)")
-    print("  • Unique chunk distribution per GPU")
-    print("  • Progress tracking (no duplicate training)")
-    print("  • Stopping conditions: steps/block/epoch")
-    print("  • Iterate mode support")
-    print("="*60 + "\n")
+    zero_stage = str(getattr(config, "zero_stage", "none") or "none").lower()
+
+    ddp_active = False
+    ddp_rank = 0
+    ddp_world = 1
+    dist_mod = None
+    if torch.distributed.is_available():
+        try:
+            import torch.distributed as dist_mod  # type: ignore
+            if dist_mod.is_initialized():
+                ddp_active = True
+                ddp_rank = dist_mod.get_rank()
+                ddp_world = dist_mod.get_world_size()
+        except Exception:
+            ddp_active = False
+            dist_mod = None
+
+    is_primary = (not ddp_active) or (ddp_rank == 0)
+
+    if is_primary:
+        print("\n" + "="*60)
+        print("PARALLEL TRAINING V3 - BLOCK/CHUNK DISTRIBUTION")
+        print("="*60)
+        print("Features:")
+        print("  • Block-based dataset streaming (100k items/block)")
+        print("  • Unique chunk distribution per GPU")
+        print("  • Progress tracking (no duplicate training)")
+        print("  • Stopping conditions: steps/block/epoch")
+        print("  • Iterate mode support")
+        if zero_stage != "none":
+            label = "ZeRO-3 + Inference" if zero_stage == "zero3" else f"ZeRO stage {zero_stage}"
+            print(f"  • {label}: DeepSpeed configuration active (model sharded across GPUs)")
+        if ddp_active:
+            print(f"  • Distributed Data Parallel integration (world_size={ddp_world})")
+        print("="*60 + "\n")
     
     # Setup write_jsonl for GUI metrics logging
     from .training_helpers import write_jsonl as _write_jsonl_helper
@@ -628,8 +888,8 @@ def run_parallel_training_v3(
         _write_jsonl_helper(
             log_file=log_file,
             payload=payload,
-            is_distributed=False,
-            rank_id=0
+            is_distributed=ddp_active,
+            rank_id=ddp_rank,
         )
     
     # Setup directories
@@ -647,11 +907,13 @@ def run_parallel_training_v3(
     )
     tokenizer_path = extract_tokenizer_from_metadata(brain_metadata, config.model)
     
-    print(f"[LOAD] Loading tokenizer from: {tokenizer_path}")
+    if is_primary:
+        print(f"[LOAD] Loading tokenizer from: {tokenizer_path}")
     tokenizer = _load_tokenizer(tokenizer_path)
     adjust_tokenizer_padding(tokenizer)
     vocab_size = calculate_vocab_size(tokenizer, print)
-    print(f"[OK] Vocabulary size: {vocab_size:,}\n")
+    if is_primary:
+        print(f"[OK] Vocabulary size: {vocab_size:,}\n")
     
     # Initialize BlockManager
     from aios.data.datasets import read_text_lines_sample_any
@@ -659,14 +921,16 @@ def run_parallel_training_v3(
     if not config.dataset_file:
         raise ValueError("dataset_file is required for parallel training")
     
-    print(f"[INIT] Initializing BlockManager (async)...")
-    print(f"   Dataset: {config.dataset_file}")
-    print(f"   Items per block: {config.samples_per_block:,}")
-    print(f"   Chunk size: {config.dataset_chunk_size:,}")
+    if is_primary:
+        print(f"[INIT] Initializing BlockManager (async)...")
+        print(f"   Dataset: {config.dataset_file}")
+        print(f"   Items per block: {config.samples_per_block:,}")
+        print(f"   Chunk size: {config.dataset_chunk_size:,}")
     
     # Calculate total chunks per block
     chunks_per_block = config.samples_per_block // config.dataset_chunk_size
-    print(f"   Chunks per block: {chunks_per_block:,}")
+    if is_primary:
+        print(f"   Chunks per block: {chunks_per_block:,}")
     
     # Create BlockManager - initialization is now lazy (non-blocking)
     # Blocks will be loaded on-demand when training starts
@@ -678,30 +942,33 @@ def run_parallel_training_v3(
         read_text_lines_sample_any=read_text_lines_sample_any,
         enable_prefetch=True,  # Lightweight metadata prefetch for next block
     )
-    print(f"[OK] BlockManager initialized (ready for lazy loading)")
-    print(f"[INFO] Blocks will be loaded on-demand during training\n")
+    if is_primary:
+        print(f"[OK] BlockManager initialized (ready for lazy loading)")
+        print(f"[INFO] Blocks will be loaded on-demand during training\n")
     
     # Get total blocks if already detected (for local datasets)
     total_blocks_detected = block_manager.get_total_blocks()
-    if total_blocks_detected:
+    if total_blocks_detected and is_primary:
         print(f"[INFO] Detected {total_blocks_detected} total blocks in dataset")
     
     # Initialize ChunkTracker in brain directory for proper resume detection
     state_file = save_dir / "chunk_tracker_state.json"
-    print(f"[INIT] Initializing ChunkTracker...")
-    print(f"   Save directory (config.save_dir): {config.save_dir}")
-    print(f"   Save directory (local save_dir var): {save_dir}")
-    print(f"   Bundle directory: {config.bundle_dir}")
-    print(f"   Brain name: {config.brain_name}")
-    print(f"   State file: {state_file}")
-    print(f"   Note: Checkpoint will be saved to: {save_dir / 'actv1_student.safetensors'}")
+    if is_primary:
+        print(f"[INIT] Initializing ChunkTracker...")
+        print(f"   Save directory (config.save_dir): {config.save_dir}")
+        print(f"   Save directory (local save_dir var): {save_dir}")
+        print(f"   Bundle directory: {config.bundle_dir}")
+        print(f"   Brain name: {config.brain_name}")
+        print(f"   State file: {state_file}")
+        print(f"   Note: Checkpoint will be saved to: {save_dir / 'actv1_student.safetensors'}")
     
     chunk_tracker = ChunkTracker(state_file=state_file)
     
     # Set total blocks in ChunkTracker if detected
     if total_blocks_detected:
         chunk_tracker.total_blocks_in_dataset = total_blocks_detected
-        print(f"[INFO] ChunkTracker configured with {total_blocks_detected} total blocks")
+        if is_primary:
+            print(f"[INFO] ChunkTracker configured with {total_blocks_detected} total blocks")
         
         # Log to GUI for progress tracking
         write_jsonl({
@@ -710,7 +977,8 @@ def run_parallel_training_v3(
             "samples_per_block": config.samples_per_block,
             "dataset_chunk_size": config.dataset_chunk_size,
             "chunks_per_block": chunks_per_block,
-            "note": "Block-based parallel training enabled"
+            "note": "Block-based parallel training enabled",
+            "zero_stage": zero_stage,
         })
     else:
         # Log that blocks will be detected during training
@@ -720,18 +988,20 @@ def run_parallel_training_v3(
             "samples_per_block": config.samples_per_block,
             "dataset_chunk_size": config.dataset_chunk_size,
             "chunks_per_block": chunks_per_block,
-            "note": "Blocks will be detected during training"
+            "note": "Blocks will be detected during training",
+            "zero_stage": zero_stage,
         })
     
     # Show resumed state if applicable
     stats = chunk_tracker.get_progress_stats()
-    if stats['total_chunks_trained'] > 0:
+    if stats['total_chunks_trained'] > 0 and is_primary:
         print(f"[RESUME] Resuming from previous state:")
         print(f"   Chunks trained: {stats['total_chunks_trained']}")
         print(f"   Epoch: {stats['current_epoch']}")
         print(f"   Items trained: {stats['total_samples_trained']:,}")
     
-    print(f"[OK] ChunkTracker initialized\n")
+    if is_primary:
+        print(f"[OK] ChunkTracker initialized\n")
     
     # Parse cuda_ids
     cuda_ids = config.cuda_ids
@@ -760,19 +1030,36 @@ def run_parallel_training_v3(
 
     num_gpus = len(cuda_ids)
     
-    print(f"[PLAN] Training Plan:")
-    print(f"   GPUs: {cuda_ids} ({num_gpus} GPUs)")
-    print(f"   Steps PER CHUNK: {config.steps} (each chunk trains for this many steps)")
-    print(f"   Stop after block: {config.stop_after_block}")
-    print(f"   Stop after epoch: {config.stop_after_epoch}")
-    print(f"   Iterate mode: {'ENABLED (continuous training)' if config.iterate else 'DISABLED (stop after dataset exhausted)'}")
-    print()
+    if is_primary:
+        print(f"[PLAN] Training Plan:")
+        print(f"   GPUs: {cuda_ids} ({num_gpus} GPUs)")
+        print(f"   Steps PER CHUNK: {config.steps} (each chunk trains for this many steps)")
+        print(f"   Stop after block: {config.stop_after_block}")
+        print(f"   Stop after epoch: {config.stop_after_epoch}")
+        print(f"   Iterate mode: {'ENABLED (continuous training)' if config.iterate else 'DISABLED (stop after dataset exhausted)'}")
+        print()
     
+    final_checkpoint_path = save_dir / "actv1_student.safetensors"
+
+    if ddp_active:
+        _run_parallel_training_v3_ddp(
+            config=config,
+            checkpoint_dir=checkpoint_dir,
+            tokenizer=tokenizer,
+            vocab_size=vocab_size,
+            block_manager=block_manager,
+            chunk_tracker=chunk_tracker,
+            write_jsonl=write_jsonl,
+            final_checkpoint_path=final_checkpoint_path,
+        )
+        return
+
     # Events are passed as arguments from the caller (GUI with multiprocessing.Manager)
     # No need to create them here
     
     # Launch GPU workers
-    print(f"[PARALLEL] Launching {num_gpus} GPU workers...")
+    if is_primary:
+        print(f"[PARALLEL] Launching {num_gpus} GPU workers...")
     threads = []
     checkpoint_paths_list: list[str | None] = [None] * num_gpus
     exceptions: list[Exception | None] = [None] * num_gpus
@@ -792,6 +1079,8 @@ def run_parallel_training_v3(
                 device_index=idx,  # Use index for PyTorch (0, 1, 2...) not original GPU ID
                 stop_event=stop_event,
                 graceful_stop_event=graceful_stop_event,
+                stop_ack_event=stop_ack_event,
+                graceful_stop_ack_event=graceful_stop_ack_event,
             )
             checkpoint_paths_list[idx] = ckpt_path
         except Exception as e:
@@ -806,9 +1095,11 @@ def run_parallel_training_v3(
             t = threading.Thread(target=worker_wrapper, args=(i, gpu_id), daemon=False)
             threads.append(t)
             t.start()
-            print(f"   [OK] Launched GPU {gpu_id} worker")
+            if is_primary:
+                print(f"   [OK] Launched GPU {gpu_id} worker")
         
-        print(f"\n[PARALLEL] All {num_gpus} workers running...\n")
+        if is_primary:
+            print(f"\n[PARALLEL] All {num_gpus} workers running...\n")
         
         # Wait for completion
         for i, t in enumerate(threads):
@@ -817,26 +1108,29 @@ def run_parallel_training_v3(
             if exc is not None:
                 raise exc
         
-        print(f"\n[OK] All {num_gpus} workers completed!")
+        if is_primary:
+            print(f"\n[OK] All {num_gpus} workers completed!")
         
         # Save final tracker state
         chunk_tracker.save()
         
     except Exception as e:
-        print(f"\n[FATAL] Parallel training failed: {e}")
+        if is_primary:
+            print(f"\n[FATAL] Parallel training failed: {e}")
         import traceback
         traceback.print_exc()
         raise
     
     # Merge checkpoints to expected resume location
-    final_checkpoint_path = save_dir / "actv1_student.safetensors"
     valid_checkpoints = [str(p) for p in checkpoint_paths_list if p is not None]
     
     if len(valid_checkpoints) > 0:
         merge_checkpoints(valid_checkpoints, str(final_checkpoint_path))
-        print(f"[OK] Merged checkpoint saved to: {final_checkpoint_path}")
+        if is_primary:
+            print(f"[OK] Merged checkpoint saved to: {final_checkpoint_path}")
     else:
-        print("[WARN] No valid checkpoints to merge")
+        if is_primary:
+            print("[WARN] No valid checkpoints to merge")
     
     # Print final stats
     final_stats = chunk_tracker.get_progress_stats()
@@ -853,19 +1147,23 @@ def run_parallel_training_v3(
         "session_chunks_trained": final_stats.get('session_chunks_trained', 0),
         "blocks_completed": final_stats['blocks_completed'],
         "current_epoch": final_stats['current_epoch'],
+        "zero_stage": zero_stage,
     })
     
-    print("\n" + "="*60)
-    print("TRAINING COMPLETE!")
-    print("="*60)
-    print(f"Final Statistics:")
-    print(f"   Total optimizer steps (all GPUs): {final_stats['total_gpu_steps']}")
-    print(f"   Total true steps (all GPUs): {final_stats.get('total_true_steps', 0)}")
-    print(f"   Session true steps: {final_stats.get('session_true_steps', 0)}")
-    print(f"   Items trained: {final_stats['total_samples_trained']:,}")
-    print(f"   Chunks trained: {final_stats['total_chunks_trained']}")
-    print(f"   Blocks completed: {final_stats['blocks_completed']}")
-    print(f"   Current epoch: {final_stats['current_epoch']}")
-    print(f"   Checkpoint: {final_checkpoint_path}")
-    print(f"   Resume: Training can be resumed from this checkpoint")
-    print("="*60 + "\n")
+    if is_primary:
+        print("\n" + "="*60)
+        print("TRAINING COMPLETE!")
+        print("="*60)
+        print(f"Final Statistics:")
+        print(f"   Total optimizer steps (all GPUs): {final_stats['total_gpu_steps']}")
+        print(f"   Total true steps (all GPUs): {final_stats.get('total_true_steps', 0)}")
+        print(f"   Session true steps: {final_stats.get('session_true_steps', 0)}")
+        print(f"   Items trained: {final_stats['total_samples_trained']:,}")
+        print(f"   Chunks trained: {final_stats['total_chunks_trained']}")
+        print(f"   Blocks completed: {final_stats['blocks_completed']}")
+        print(f"   Current epoch: {final_stats['current_epoch']}")
+        if zero_stage != "none":
+            print(f"   ZeRO stage: {zero_stage}")
+        print(f"   Checkpoint: {final_checkpoint_path}")
+        print(f"   Resume: Training can be resumed from this checkpoint")
+        print("="*60 + "\n")

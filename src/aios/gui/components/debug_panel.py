@@ -534,10 +534,12 @@ class DebugPanel(ttk.LabelFrame):  # type: ignore[misc]
             return 'ERROR'
         elif 'warning' in text_lower or 'warn' in text_lower:
             return 'WARNING'
-        elif 'info' in text_lower:
+        elif 'debug' in text_lower or 'trace' in text_lower:
+            return 'DEBUG'
+        elif 'info' in text_lower or 'status' in text_lower:
             return 'INFO'
         else:
-            return 'DEBUG'
+            return 'INFO'
     
     def set_global_log_level(self, level: str) -> None:
         """Set the global logging level from settings panel.
@@ -550,18 +552,20 @@ class DebugPanel(ttk.LabelFrame):  # type: ignore[misc]
     
     def _should_display_message(self, category: str, level: str) -> bool:
         """Check if message should be displayed based on current filters."""
-        # Check global log level filter (set from settings)
-        # Normal: Only CRITICAL errors + essential outputs
-        # Advanced: Normal + WARNING + INFO
-        # DEBUG: Everything
+        # Check global log level filter (set from settings).
+        # Normal: show INFO+ from essential categories and any ERROR/CRITICAL messages
+        # Advanced: show INFO+ for all categories (still hide DEBUG noise)
+        # DEBUG: show everything
         msg_level = self._log_level_map.get(level, logging.DEBUG)
+        essential_categories = {'system', 'training', 'chat', 'dataset', 'error'}
         
         if self.global_log_level == "Normal":
-            # Only show CRITICAL and essential messages (errors)
             if msg_level < logging.ERROR:
-                return False
+                if category not in essential_categories:
+                    return False
+                if msg_level < logging.INFO:
+                    return False
         elif self.global_log_level == "Advanced":
-            # Show INFO and above (filters out DEBUG)
             if msg_level < logging.INFO:
                 return False
         # DEBUG shows everything (no filtering by level)

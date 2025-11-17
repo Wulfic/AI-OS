@@ -160,7 +160,11 @@ def initialize_panels(app: Any) -> None:
         
         # Create bridge for streaming download progress to output panel
         def _create_download_bridge():
-            queue_bridge = OutputPanel(app.root)
+            from tkinter import ttk  # Lazy import to keep startup fast
+
+            hidden_parent = ttk.Frame(app.root)
+            queue_bridge = OutputPanel(hidden_parent, show_summary_toggle=False)
+            hidden_parent.pack_forget()  # Keep bridge headless so it does not surface in the UI
             
             def _bridge_write(text: str, tag: str | None = None) -> None:
                 try:
@@ -1050,6 +1054,7 @@ def _initialize_resources_panel(app: Any, save_state_cb: Callable[[], None] | No
             save_state_fn=save_state_fn,
             root=app.root,
             worker_pool=app._worker_pool,
+            post_to_ui=getattr(app, "post_to_ui", None),
         )
         
         # Store functions for async loading

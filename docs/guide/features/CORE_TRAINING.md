@@ -41,13 +41,13 @@ You can run training either via the CLI entry point or directly through Python's
 aios hrm-hf train-actv1 --model gpt2 --dataset-file training_data/curated_datasets/test_sample.txt --steps 1000 --batch-size 2 --halt-max-steps 1 --eval-batches 2 --log-file artifacts/brains/actv1/metrics.jsonl
 ```
 
-### b) Module invocation (positional model)
+### b) Module invocation (explicit model flag)
 ```powershell
-.venv\Scripts\python.exe -m aios.cli.aios hrm-hf train-actv1 gpt2 --dataset-file training_data/curated_datasets/test_sample.txt --steps 1000 --batch-size 2 --halt-max-steps 1 --eval-batches 2 --log-file artifacts/brains/actv1/metrics.jsonl
+.venv\Scripts\python.exe -m aios.cli.aios hrm-hf train-actv1 --model gpt2 --dataset-file training_data/curated_datasets/test_sample.txt --steps 1000 --batch-size 2 --halt-max-steps 1 --eval-batches 2 --log-file artifacts/brains/actv1/metrics.jsonl
 ```
 
 ### Key parameters (selection)
-- Model selection: `--model <name_or_path>` or positional `gpt2`
+- Model selection: `--model <name_or_path>`
 - Dataset: `--dataset-file <path>` (txt/jsonl); optional `--ascii-only`
 - Steps and batching: `--steps <int>`, `--batch-size <int>`
 - Halting: `--halt-max-steps <int>` (controls ACT halting behavior)
@@ -56,7 +56,7 @@ aios hrm-hf train-actv1 --model gpt2 --dataset-file training_data/curated_datase
 - Iteration control: `--iterate`, `--stop-file <path>`
 - Brain bundle: `--brain-name <str>`, `--bundle-dir <path>`
 - Architecture knobs: `--h-layers`, `--l-layers`, `--hidden-size`, `--expansion`, `--num-heads`, `--h-cycles`, `--l-cycles`, `--window-size`, `--pos-encodings`
-- Memory: `--gradient-checkpointing|--no-gradient-checkpointing`, `--amp|--no-amp`, `--8bit-optimizer`
+- Memory: `--gradient-checkpointing|--no-gradient-checkpointing`, `--amp|--no-amp`, `--use-8bit-optimizer`
 - Multi-GPU: `--ddp`, `--cuda-ids <list>`, `--world-size <int>`
 - DeepSpeed: `--zero-stage <none|zero1|zero2|zero3>` (uses configs in `config/`)
 - Experts: `--expert-id <id>` (train/freeze expert-specific components)
@@ -97,13 +97,13 @@ These mirror VS Code tasks configured in this repo and are safe to run. Ensure y
 aios hrm-hf train-actv1 --model gpt2 --dataset-file training_data/curated_datasets/test_sample.txt --steps 1 --batch-size 2 --halt-max-steps 1 --eval-batches 1 --log-file artifacts/brains/actv1/metrics.jsonl
 ```
 
-### Option 2: Module (positional model)
+### Option 2: Module invocation
 ```powershell
-.venv\Scripts\python.exe -m aios.cli.aios hrm-hf train-actv1 gpt2 --dataset-file training_data/curated_datasets/test_sample.txt --steps 1 --batch-size 2 --halt-max-steps 1 --eval-batches 1 --log-file artifacts/brains/actv1/metrics.jsonl
+.venv\Scripts\python.exe -m aios.cli.aios hrm-hf train-actv1 --model gpt2 --dataset-file training_data/curated_datasets/test_sample.txt --steps 1 --batch-size 2 --halt-max-steps 1 --eval-batches 1 --log-file artifacts/brains/actv1/metrics.jsonl
 ```
 
 ### Option 3: Use VS Code Task
-- Run: Tasks → "Run brief HRM CLI dry-run" or "Run brief HRM CLI dry-run (positional)" or "Run HRM dry-run (module)"
+- Run: Tasks → "Run brief HRM CLI dry-run" or "Run HRM dry-run (module)"
 - Expected outputs:
 	- Metrics JSONL at `artifacts/brains/actv1/metrics.jsonl`
 	- Brain bundle directories under `artifacts/brains/actv1/`

@@ -1,8 +1,10 @@
-"""Windows startup utilities for AI-OS.
+"""Startup utilities for AI-OS (Windows and Linux).
 
 This module provides functionality to enable/disable AI-OS starting
-automatically when Windows boots. It manages the Windows registry
-entry in HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run.
+automatically when the desktop session begins. On Windows it manages the
+registry entry in HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run,
+while on Linux it writes a freedesktop.org autostart entry under
+~/.config/autostart.
 
 Example:
     >>> from aios.gui.utils.startup import set_startup_enabled, is_startup_enabled
@@ -37,6 +39,8 @@ except ImportError:
 # Constants
 APP_NAME = "AI-OS"
 REGISTRY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+LINUX_AUTOSTART_DIR = Path.home() / ".config" / "autostart"
+LINUX_AUTOSTART_FILENAME = "ai-os.desktop"
 
 
 def is_windows() -> bool:
@@ -48,31 +52,83 @@ def is_windows() -> bool:
     return sys.platform == "win32"
 
 
+def is_linux() -> bool:
+    """Check if running on a Linux platform."""
+    return sys.platform.startswith("linux")
+
+
+def _linux_autostart_file() -> Path:
+    """Return the path to the Linux autostart .desktop file."""
+    return LINUX_AUTOSTART_DIR / LINUX_AUTOSTART_FILENAME
+
+
+def _detect_project_root() -> Optional[Path]:
+    """Best effort detection of the project root containing pyproject.toml."""
+    try:
+        for parent in Path(__file__).resolve().parents:
+            if (parent / "pyproject.toml").exists():
+                return parent
+    except Exception:
+        logger.debug("Unable to detect project root for autostart", exc_info=True)
+    return None
+
+
+def _resolve_icon_path() -> Optional[Path]:
+    """Locate the application icon if packaged with the repository."""
+    try:
+        for parent in Path(__file__).resolve().parents:
+            candidate = parent / "installers" / "AI-OS.png"
+            if candidate.exists():
+                return candidate
+    except Exception:
+        logger.debug("Unable to resolve icon path for autostart", exc_info=True)
+    return None
+
+
+def _render_linux_desktop_entry(command: str, working_dir: Optional[Path]) -> str:
+    """Create the contents of the autostart .desktop file."""
+    icon_path = _resolve_icon_path()
+    lines: list[str] = [
+        "[Desktop Entry]",
+        "Type=Application",
+        "Version=1.0",
+        "Name=AI-OS",
+        "Comment=Launch AI-OS Control Panel on login",
+    ]
+
+    if icon_path:
+        lines.append(f"Icon={icon_path}")
+
+    lines.extend(
+        [
+            f"Exec={command}",
+            "Terminal=false",
+            "Categories=Development;Utility;",
+            "X-GNOME-Autostart-enabled=true",
+            "StartupNotify=false",
+            "Hidden=false",
+        ]
+    )
+
+    if working_dir:
+        lines.append(f"Path={working_dir}")
+
+    return "\n".join(lines) + "\n"
+
+
 def get_startup_command(minimized: bool = False) -> str:
-    """Get the command to use for Windows startup.
-    
-    This function determines the best command to use for starting AI-OS
-    on Windows boot. It tries several approaches in order of preference:
-    
-    1. Installed executable (if found in Program Files or AppData)
-    2. Batch script (if aios.bat is in PATH)
-    3. Python module invocation (fallback for development)
-    
-    Args:
-        minimized: If True, add --minimized flag to start minimized to tray
-    
-    Returns:
-        Command string to execute on Windows startup
-    
-    Example:
-        >>> cmd = get_startup_command()
-        >>> print(cmd)
-        "C:\\Python\\python.exe" -m aios.gui
-        
-        >>> cmd = get_startup_command(minimized=True)
-        >>> print(cmd)
-        "C:\\Python\\python.exe" -m aios.gui --minimized
-    """
+    """Return the platform-specific command used for autostart."""
+    if is_windows():
+        return _get_windows_startup_command(minimized)
+
+    minimized_flag = " --minimized" if minimized else ""
+    python_exe = sys.executable
+    logger.debug("Using Python module invocation for autostart: %s", python_exe)
+    return f'"{python_exe}" -m aios.cli.aios gui{minimized_flag}'
+
+
+def _get_windows_startup_command(minimized: bool) -> str:
+    """Determine the best command to use for Windows startup."""
     minimized_flag = " --minimized" if minimized else ""
     
     # Option 1: Check for installed executable
@@ -110,56 +166,48 @@ def get_startup_command(minimized: bool = False) -> str:
     
     # Option 3: Fall back to Python module invocation
     python_exe = sys.executable
-    logger.debug(f"Using Python module invocation: {python_exe}")
+    logger.debug("Using Python module invocation for Windows autostart: %s", python_exe)
     return f'"{python_exe}" -m aios.gui{minimized_flag}'
 
 
 def set_startup_enabled(enabled: bool, minimized: bool = False) -> bool:
-    """Enable or disable AI-OS starting on Windows boot.
-    
-    This function modifies the Windows registry to add or remove
-    the AI-OS startup entry. The entry is added to:
-    HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run
-    
-    Args:
-        enabled: True to enable startup, False to disable
-        minimized: If True and enabled, start minimized to tray
-    
-    Returns:
-        True if operation succeeded, False if failed or not on Windows
-    
-    Example:
-        >>> # Enable startup
-        >>> success = set_startup_enabled(True)
-        >>> if success:
-        ...     print("Startup enabled successfully")
-        
-        >>> # Enable startup with minimize
-        >>> success = set_startup_enabled(True, minimized=True)
-        
-        >>> # Disable startup
-        >>> success = set_startup_enabled(False)
-        >>> if success:
-        ...     print("Startup disabled successfully")
-    
-    Note:
-        - Only works on Windows platform
-        - Requires winreg module (standard on Windows Python)
-        - Does not require admin privileges (uses HKEY_CURRENT_USER)
-        - On non-Windows platforms, returns False silently
-    """
-    if not is_windows() or not HAS_WINREG:
-        logger.debug("Startup configuration not available (non-Windows or winreg missing)")
-        return False
-    
+    """Enable or disable AI-OS autostart on supported platforms."""
+    if is_windows() and HAS_WINREG:
+        return _set_windows_startup_enabled(enabled, minimized)
+    if is_linux():
+        return _set_linux_startup_enabled(enabled, minimized)
+
+    logger.debug("Startup configuration not available on this platform")
+    return False
+
+
+def _set_windows_startup_enabled(enabled: bool, minimized: bool) -> bool:
+    """Windows-specific implementation for enabling autostart via registry."""
+    key = None
+    access_flags = (  # type: ignore[attr-defined]
+        winreg.KEY_SET_VALUE  # type: ignore[union-attr]
+        | getattr(winreg, "KEY_WRITE", 0)  # Some Python builds omit KEY_WRITE
+    )
     try:
-        # Open registry key for writing
-        key = winreg.OpenKey(  # type: ignore[union-attr]
-            winreg.HKEY_CURRENT_USER,  # type: ignore[union-attr]
-            REGISTRY_KEY,
-            0,
-            winreg.KEY_SET_VALUE  # type: ignore[union-attr]
-        )
+        try:
+            # Prefer opening existing key so we do not create it when disabling
+            key = winreg.OpenKey(  # type: ignore[union-attr]
+                winreg.HKEY_CURRENT_USER,  # type: ignore[union-attr]
+                REGISTRY_KEY,
+                0,
+                access_flags,
+            )
+        except FileNotFoundError:
+            if not enabled:
+                logger.debug("Startup key missing while disabling; nothing to remove")
+                return True
+            # Ensure the Run key exists before writing the value
+            key = winreg.CreateKeyEx(  # type: ignore[union-attr]
+                winreg.HKEY_CURRENT_USER,  # type: ignore[union-attr]
+                REGISTRY_KEY,
+                0,
+                access_flags,
+            )
         
         if enabled:
             # Add startup entry with optional minimize flag
@@ -175,42 +223,63 @@ def set_startup_enabled(enabled: bool, minimized: bool = False) -> bool:
                 # Already not set - this is fine
                 logger.debug("Startup entry already absent")
         
-        winreg.CloseKey(key)  # type: ignore[union-attr]
         return True
         
     except PermissionError as e:
         # User doesn't have permission to modify registry
-        logger.error(f"Permission denied to modify registry: {e}")
+        logger.error(
+            "Permission denied to modify startup registry entry. "
+            "Try running AI-OS once with elevated privileges or disable corporate policy blocks.",
+            exc_info=True,
+        )
         return False
     except Exception as e:
         # Other registry errors
         logger.error(f"Failed to modify startup configuration: {e}", exc_info=True)
         return False
+    finally:
+        if key is not None:
+            winreg.CloseKey(key)  # type: ignore[union-attr]
+
+
+def _set_linux_startup_enabled(enabled: bool, minimized: bool) -> bool:
+    """Linux-specific implementation writing a .desktop autostart entry."""
+    desktop_file = _linux_autostart_file()
+    try:
+        if enabled:
+            command = get_startup_command(minimized=minimized)
+            working_dir = _detect_project_root()
+            content = _render_linux_desktop_entry(command, working_dir)
+            LINUX_AUTOSTART_DIR.mkdir(parents=True, exist_ok=True)
+            desktop_file.write_text(content, encoding="utf-8")
+            desktop_file.chmod(0o755)
+            logger.info("Startup enabled via %s", desktop_file)
+        else:
+            if desktop_file.exists():
+                desktop_file.unlink()
+                logger.info("Startup disabled (removed %s)", desktop_file)
+            else:
+                logger.debug("No autostart desktop file found to remove")
+        return True
+    except PermissionError as exc:
+        logger.error("Insufficient permissions to manage autostart file: %s", exc, exc_info=True)
+        return False
+    except Exception as exc:
+        logger.error("Failed to configure Linux autostart: %s", exc, exc_info=True)
+        return False
 
 
 def is_startup_enabled() -> bool:
-    """Check if AI-OS is currently configured to start on Windows boot.
-    
-    This function queries the Windows registry to check if the
-    AI-OS startup entry exists.
-    
-    Returns:
-        True if startup is enabled, False otherwise
-    
-    Example:
-        >>> if is_startup_enabled():
-        ...     print("AI-OS will start on boot")
-        ... else:
-        ...     print("AI-OS will not start on boot")
-    
-    Note:
-        - Only works on Windows platform
-        - Returns False on non-Windows platforms
-        - Returns False if registry access fails
-    """
-    if not is_windows() or not HAS_WINREG:
-        return False
-    
+    """Return True if autostart is currently enabled on this system."""
+    if is_windows() and HAS_WINREG:
+        return _is_windows_startup_enabled()
+    if is_linux():
+        return _is_linux_startup_enabled()
+    return False
+
+
+def _is_windows_startup_enabled() -> bool:
+    """Check startup status via the Windows registry."""
     try:
         # Open registry key for reading
         key = winreg.OpenKey(  # type: ignore[union-attr]
@@ -233,56 +302,67 @@ def is_startup_enabled() -> bool:
         # Key or value doesn't exist
         logger.debug("Startup entry not found in registry")
         return False
-    except Exception as e:
-        # Other registry errors
-        logger.error(f"Failed to check startup status: {e}", exc_info=True)
+
+
+def _is_linux_startup_enabled() -> bool:
+    """Check whether the Linux autostart .desktop file exists and is active."""
+    desktop_file = _linux_autostart_file()
+    if not desktop_file.exists():
         return False
+    try:
+        for line in desktop_file.read_text(encoding="utf-8").splitlines():
+            if line.startswith("Hidden=") and line.split("=", 1)[1].strip().lower() == "true":
+                return False
+            if line.startswith("Exec="):
+                return bool(line.split("=", 1)[1].strip())
+    except Exception as exc:
+        logger.error("Failed to read autostart desktop file: %s", exc, exc_info=True)
+        return False
+    return False
 
 
 def get_startup_path() -> Optional[str]:
-    """Get the current startup command if enabled.
-    
-    This function retrieves the actual command string stored in the
-    Windows registry for AI-OS startup.
-    
-    Returns:
-        Command string if startup is enabled, None otherwise
-    
-    Example:
-        >>> path = get_startup_path()
-        >>> if path:
-        ...     print(f"Startup command: {path}")
-        ... else:
-        ...     print("Startup not enabled")
-    """
-    if not is_windows() or not HAS_WINREG:
-        return None
-    
+    """Return the stored autostart command, if any."""
+    if is_windows() and HAS_WINREG:
+        return _get_windows_startup_path()
+    if is_linux():
+        return _get_linux_startup_path()
+    return None
+
+
+def _get_windows_startup_path() -> Optional[str]:
     try:
-        # Open registry key for reading
         key = winreg.OpenKey(  # type: ignore[union-attr]
             winreg.HKEY_CURRENT_USER,  # type: ignore[union-attr]
             REGISTRY_KEY,
             0,
             winreg.KEY_READ  # type: ignore[union-attr]
         )
-        
-        # Try to read the value
         value, reg_type = winreg.QueryValueEx(key, APP_NAME)  # type: ignore[union-attr]
         winreg.CloseKey(key)  # type: ignore[union-attr]
-        
         path = str(value) if value else None
-        logger.debug(f"Startup path: {path}")
+        logger.debug("Startup path: %s", path)
         return path
-        
     except FileNotFoundError:
-        # Key or value doesn't exist
         logger.debug("Startup path not found in registry")
         return None
-    except Exception as e:
-        # Other registry errors
-        logger.error(f"Failed to get startup path: {e}", exc_info=True)
+    except Exception as exc:
+        logger.error("Failed to get startup path: %s", exc, exc_info=True)
         return None
+
+
+def _get_linux_startup_path() -> Optional[str]:
+    desktop_file = _linux_autostart_file()
+    if not desktop_file.exists():
+        return None
+    try:
+        for line in desktop_file.read_text(encoding="utf-8").splitlines():
+            if line.startswith("Exec="):
+                return line.split("=", 1)[1].strip() or None
+    except Exception as exc:
+        logger.error("Failed to read Linux autostart command: %s", exc, exc_info=True)
+        return None
+    return None
 
 
 def verify_startup_command() -> tuple[bool, str]:
@@ -336,16 +416,16 @@ Module Functions:
   Check if running on Windows platform
 
 - get_startup_command() -> str
-  Get the command to use for startup (auto-detects best option)
+    Get the command to use for startup (auto-detects best option per platform)
 
 - set_startup_enabled(enabled: bool) -> bool
-  Enable/disable startup on Windows boot via registry
+    Enable/disable startup on login (registry on Windows, autostart entry on Linux)
 
 - is_startup_enabled() -> bool
   Check if startup is currently enabled
 
 - get_startup_path() -> Optional[str]
-  Get current startup command from registry
+    Get current startup command from registry or .desktop entry
 
 - verify_startup_command() -> tuple[bool, str]
   Verify startup command is valid and executable
@@ -360,8 +440,8 @@ Value Data: Full command to execute (e.g., "C:\Python\python.exe" -m aios.gui)
 Cross-Platform:
 ---------------
 - Windows: Full functionality using winreg
-- Linux/macOS: Functions return False/None (no-op)
-- No exceptions raised on non-Windows platforms
+- Linux: Writes ~/.config/autostart/ai-os.desktop
+- Other platforms: Functions return False/None (no-op)
 
 Security:
 ---------

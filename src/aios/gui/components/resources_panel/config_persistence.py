@@ -128,6 +128,9 @@ def save_resources_to_config(resources_values: dict[str, Any]) -> bool:
         
         # Storage caps
         resources['dataset_cap'] = resources_values.get('dataset_cap', '')
+
+        # DeepSpeed ZeRO stage selection (shared with training panel)
+        resources['zero_stage'] = resources_values.get('zero_stage', 'none')
         
         # System RAM limit
         system_mem_limit = resources_values.get('system_mem_limit_gb', None)
@@ -180,7 +183,7 @@ def merge_config_with_defaults(config_values: dict[str, Any], default_values: di
         elif key in ['train_cuda_mem_pct', 'train_cuda_util_pct', 'run_cuda_mem_pct', 'run_cuda_util_pct']:
             if isinstance(value, dict):
                 result[key] = value
-        elif key in ['dataset_cap', 'model_cap', 'per_brain_cap']:
+        elif key in ['dataset_cap', 'model_cap', 'per_brain_cap', 'zero_stage']:
             # Allow empty strings for storage caps
             result[key] = value
         elif key == 'system_mem_limit_gb':

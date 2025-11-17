@@ -74,6 +74,11 @@ installers/releases/*.deb
 installers/releases/*.exe
 installers/releases/*.AppImage
 installers/releases/*.dmg
+installers/_builds/ubuntu/*.snap
+installers/_builds/ubuntu/parts/
+installers/_builds/ubuntu/prime/
+installers/_builds/ubuntu/stage/
+installers/_builds/ubuntu/snap/
 
 # Local training outputs (ignored)
 training_data/
@@ -82,6 +87,7 @@ training_data/
 # Diagnostics files (generated with user-specific paths)
 artifacts/diagnostics/diagnostics_latest.json
 artifacts/diagnostics/diagnostics_latest.txt
+artifacts/diagnostics/analytics_events.jsonl
 
 # Evaluation results (contain user-specific paths)
 artifacts/evaluation/
@@ -116,3 +122,5 @@ flash_attn-*.whl
 artifacts/diagnostics/device_info_cache.json
 artifacts/diagnostics/device_info_cache.json
 artifacts/diagnostics/device_info_cache.json
+training_datasets/huggingface_documentation-images/dataset_info.json
+training_datasets/huggingface_documentation-images/state.json

@@ -76,8 +76,9 @@ Configs present: config/deepspeed_zero1.json, config/deepspeed_zero2.json, confi
 
 Current state:
 - The CLI and GUI expose ZeRO stage selection and use it for estimators/UI.
-- Full DeepSpeed engine initialization is not wired in the training loop at this time.
-- Treat ZeRO as experimental/planned. If you require ZeRO now, you’ll need to integrate deepspeed.initialize() around the model/optimizer in training code.
+- `train_actv1` calls `initialize_deepspeed(...)`; when the `deepspeed` package is available and the requested stage is supported, the model is wrapped in a DeepSpeed engine automatically.
+- The code falls back to standard optimizers if import or initialization fails, logging the reason.
+- Treat ZeRO as experimental: there is minimal automated coverage, and successful initialization still depends on your environment (CUDA-only, compatible DeepSpeed build, etc.).
 
 ## Inputs and Outputs
 

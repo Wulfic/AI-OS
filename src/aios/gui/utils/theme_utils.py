@@ -8,7 +8,69 @@ GUI components including dialogs, popups, and panels.
 from __future__ import annotations
 import logging
 import tkinter as tk
-from typing import Any, Dict, Optional
+import tkinter.font as tkfont
+from typing import Any, Dict, Optional, Tuple
+_TREEVIEW_CACHE: Dict[str, Tuple[int, int]] = {}
+
+
+def compute_treeview_dimensions(cache_key: str = "default") -> Tuple[int, int]:
+    """Return (rowheight, heading_padding) tuned for the current default font."""
+
+    if cache_key in _TREEVIEW_CACHE:
+        return _TREEVIEW_CACHE[cache_key]
+
+    try:
+        base_font = tkfont.nametofont("TkDefaultFont")
+        line_height = base_font.metrics("linespace")
+        row_height = max(int(line_height * 1.6), int(line_height + 10), 26)
+    except Exception as exc:  # pragma: no cover - fallback when font lookup fails
+        logger.debug("Treeview dimension fallback due to font lookup failure: %s", exc)
+        row_height = 26
+
+    heading_padding = max(row_height // 6, 4)
+    _TREEVIEW_CACHE[cache_key] = (row_height, heading_padding)
+    return row_height, heading_padding
+
+
+def compute_popup_dimensions(
+    parent: tk.Widget,
+    *,
+    width_ratio: float = 0.68,
+    height_ratio: float = 0.7,
+    min_width: int = 1024,
+    min_height: int = 640,
+    padding: int = 140,
+) -> Tuple[int, int, int, int]:
+    """Calculate popup geometry that scales with the current display."""
+
+    try:
+        parent.update_idletasks()
+    except Exception:
+        pass
+
+    try:
+        screen_w = parent.winfo_screenwidth()
+        screen_h = parent.winfo_screenheight()
+    except Exception:
+        screen_w = min_width + padding
+        screen_h = min_height + padding
+
+    width = max(min(int(screen_w * width_ratio), screen_w - padding), min_width)
+    height = max(min(int(screen_h * height_ratio), screen_h - padding), min_height)
+
+    try:
+        root_x = parent.winfo_rootx()
+        root_y = parent.winfo_rooty()
+        parent_w = parent.winfo_width() or width
+        parent_h = parent.winfo_height() or height
+        x = root_x + max((parent_w - width) // 2, 0)
+        y = root_y + max((parent_h - height) // 2, 0)
+    except Exception:
+        x = max((screen_w - width) // 2, 40)
+        y = max((screen_h - height) // 2, 40)
+
+    return width, height, int(x), int(y)
+
 
 logger = logging.getLogger(__name__)
 
@@ -67,8 +129,12 @@ THEME_COLORS: Dict[str, Dict[str, Any]] = {
         "bg": "#ffffff",
         "fg": "#000000",
         "select_bg": "#0078d7",
+        "select_fg": "#ffffff",
         "button_bg": "#f0f0f0",
         "entry_bg": "#ffffff",
+        "border": "#c8c8c8",
+        "disabled_bg": "#e0e0e0",
+        "disabled_fg": "#888888",
         "info_message": "✓ Light Mode applied",
         "info_color": "#6060a0",
     }
@@ -192,7 +258,7 @@ def get_theme_colors(theme: Optional[str] = None) -> Dict[str, str]:
             "bg": colors.get("bg", "#ffffff"),
             "fg": colors.get("fg", "#000000"),
             "select_bg": colors.get("select_bg", "#0078d7"),
-            "select_fg": "#ffffff",
+            "select_fg": colors.get("select_fg", "#ffffff"),
             "entry_bg": colors.get("entry_bg", "#ffffff"),
             "button_bg": colors.get("button_bg", "#f0f0f0"),
             "insert_bg": colors.get("fg", "#000000"),

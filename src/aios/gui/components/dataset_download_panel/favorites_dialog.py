@@ -10,7 +10,12 @@ from typing import Dict, Any, Callable
 
 from .favorites_manager import load_favorites, remove_favorite
 from .dataset_details import show_dataset_details_dialog
-from aios.gui.utils.theme_utils import apply_theme_to_toplevel, get_theme_colors
+from aios.gui.utils.theme_utils import (
+    apply_theme_to_toplevel,
+    get_theme_colors,
+    compute_treeview_dimensions,
+    compute_popup_dimensions,
+)
 
 
 def _configure_favorites_styles(dialog: tk.Toplevel) -> Dict[str, str]:
@@ -36,13 +41,15 @@ def _configure_favorites_styles(dialog: tk.Toplevel) -> Dict[str, str]:
         background=[("active", colors["select_bg"]), ("pressed", colors["select_bg"])],
         foreground=[("active", colors["select_fg"]), ("pressed", colors["select_fg"])],
     )
+    row_height, heading_padding = compute_treeview_dimensions("favorites-popup")
     style.configure(
         tree_style,
         background=colors["entry_bg"],
         foreground=colors["fg"],
         fieldbackground=colors["entry_bg"],
-        rowheight=22,
-        borderwidth=0
+        rowheight=row_height,
+        borderwidth=0,
+        padding=(4, 2),
     )
     style.map(
         tree_style,
@@ -53,7 +60,8 @@ def _configure_favorites_styles(dialog: tk.Toplevel) -> Dict[str, str]:
         f"{tree_style}.Heading",
         background=colors["button_bg"],
         foreground=colors["fg"],
-        relief="flat"
+        relief="flat",
+        padding=(8, heading_padding, 8, heading_padding),
     )
     style.configure(
         scrollbar_style,
@@ -92,10 +100,33 @@ def show_favorites_popup(parent: tk.Widget, log_func: Callable[[str], None], dow
     # Create popup dialog
     dialog = tk.Toplevel(parent)
     dialog.title("⭐ Favorite Datasets")
-    dialog.geometry("900x500")
     dialog.transient(parent)
     apply_theme_to_toplevel(dialog)
     styles = _configure_favorites_styles(dialog)
+    min_height = 640
+    width, height, x, y = compute_popup_dimensions(
+        parent,
+        width_ratio=0.26,
+        height_ratio=0.74,
+        min_width=480,
+        min_height=min_height,
+    )
+
+    _, baseline_height, _, _ = compute_popup_dimensions(
+        parent,
+        width_ratio=0.52,
+        height_ratio=0.74,
+        min_width=960,
+        min_height=min_height,
+    )
+
+    if baseline_height > height:
+        delta = baseline_height - height
+        height = baseline_height
+        y = max(y - delta // 2, 0)
+    dialog.geometry(f"{width}x{height}+{x}+{y}")
+    dialog.minsize(480, min_height)
+    dialog.resizable(True, True)
     
     # Info label
     info_label = ttk.Label(
@@ -104,7 +135,8 @@ def show_favorites_popup(parent: tk.Widget, log_func: Callable[[str], None], dow
         font=("", 9),
         style=styles["label"],
     )
-    info_label.pack(pady=10, padx=10)
+    info_label.configure(wraplength=max(width - 40, 280))
+    info_label.pack(pady=10, padx=10, fill="x")
     
     # Create treeview for favorites
     tree_frame = ttk.Frame(dialog, style=styles["frame"])
@@ -128,11 +160,11 @@ def show_favorites_popup(parent: tk.Widget, log_func: Callable[[str], None], dow
     fav_tree.heading("downloads", text="Downloads")
     fav_tree.heading("likes", text="Likes")
     fav_tree.heading("description", text="Description")
-    
-    fav_tree.column("#0", width=250, minwidth=150)
-    fav_tree.column("downloads", width=100, minwidth=80)
-    fav_tree.column("likes", width=80, minwidth=60)
-    fav_tree.column("description", width=400, minwidth=200)
+
+    fav_tree.column("downloads", width=100, minwidth=80, stretch=False, anchor="center")
+    fav_tree.column("likes", width=80, minwidth=60, stretch=False, anchor="center")
+    fav_tree.column("description", minwidth=240, stretch=True)
+    fav_tree.column("#0", minwidth=200, stretch=True)
     
     # Add favorites to tree
     fav_dict = {}  # Store dataset info by item ID
@@ -243,3 +275,18 @@ def show_favorites_popup(parent: tk.Widget, log_func: Callable[[str], None], dow
         width=10,
         style=styles["button"],
     ).pack(side="right")
+
+    def _resize_columns(event=None):
+        if event is not None and getattr(event, "widget", None) is not dialog:
+            return
+        current_width = event.width if event is not None and hasattr(event, "width") else dialog.winfo_width()
+        if current_width <= 1:
+            return
+        available = max(current_width - 220, 320)
+        dataset_width = max(int(current_width * 0.4), 200)
+        desc_width = max(available - dataset_width, 220)
+        fav_tree.column("#0", width=dataset_width)
+        fav_tree.column("description", width=desc_width)
+
+    dialog.bind("<Configure>", _resize_columns, add=True)
+    dialog.after(100, _resize_columns)

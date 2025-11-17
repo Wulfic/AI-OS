@@ -16,6 +16,7 @@ import faulthandler
 import sys
 import logging
 import time
+import os
 from pathlib import Path
 
 if TYPE_CHECKING:
@@ -269,20 +270,25 @@ def run_app(app_instance: Any) -> None:
         msg = f"[TIMING] Total startup time: {total_startup:.3f}s"
         logger.info(msg)
 
-        try:
-            faulthandler.enable()
-            logger.debug("Faulthandler enabled for post-start diagnostics")
+        if os.environ.get("AIOS_ENABLE_FAULTHANDLER", "0") == "1":
+            try:
+                faulthandler.enable()
+                logger.debug("Faulthandler enabled for post-start diagnostics")
 
-            if sys.platform.startswith("win"):
-                logger.info(
-                    "Skipping faulthandler.dump_traceback_later repeating timer on Windows (stability workaround)"
-                )
-            else:
-                faulthandler.dump_traceback_later(15.0, repeat=True)
-                _faulthandler_timer_active = True
-                logger.debug("Scheduled faulthandler traceback dumps every 15s")
-        except Exception:
-            logger.debug("Failed to enable faulthandler diagnostics", exc_info=True)
+                if sys.platform.startswith("win"):
+                    logger.info(
+                        "Skipping faulthandler.dump_traceback_later repeating timer on Windows (stability workaround)"
+                    )
+                else:
+                    faulthandler.dump_traceback_later(15.0, repeat=True)
+                    _faulthandler_timer_active = True
+                    logger.debug("Scheduled faulthandler traceback dumps every 15s")
+            except Exception:
+                logger.debug("Failed to enable faulthandler diagnostics", exc_info=True)
+        else:
+            logger.debug(
+                "Faulthandler diagnostics disabled by default; set AIOS_ENABLE_FAULTHANDLER=1 to enable periodic stack dumps."
+            )
         
         # Final status update
         update_status("Ready!")

@@ -90,22 +90,40 @@ def build_limits_ui(panel: "ResourcesPanel") -> None:
     toggle_frame.pack(side="left", padx=(8, 0))
     
     ddp_btn = ttk.Radiobutton(
-        toggle_frame, 
-        text="DDP", 
-        variable=panel.training_mode_var, 
+        toggle_frame,
+        text="DDP",
+        variable=panel.training_mode_var,
         value="ddp",
-        state="disabled"  # Will be enabled/disabled dynamically
+        state="disabled",  # Will be enabled/disabled dynamically
     )
     ddp_btn.pack(side="left", padx=2, pady=2)
-    
+
+    zero3_btn = ttk.Radiobutton(
+        toggle_frame,
+        text="Zero3",
+        variable=panel.training_mode_var,
+        value="zero3",
+        state="disabled",  # Enabled only on Linux with 2+ GPUs
+    )
+    zero3_btn.pack(side="left", padx=2, pady=2)
+
     parallel_btn = ttk.Radiobutton(
-        toggle_frame, 
-        text="Parallel", 
-        variable=panel.training_mode_var, 
+        toggle_frame,
+        text="Parallel",
+        variable=panel.training_mode_var,
         value="parallel",
-        state="disabled"  # Will be enabled/disabled dynamically
+        state="disabled",  # Will be enabled/disabled dynamically
     )
     parallel_btn.pack(side="left", padx=2, pady=2)
+
+    none_btn = ttk.Radiobutton(
+        toggle_frame,
+        text="None",
+        variable=panel.training_mode_var,
+        value="none",
+        state="disabled",  # Enabled when single-GPU mode is active
+    )
+    none_btn.pack(side="left", padx=2, pady=2)
     
     # Lock indicator label (shown conditionally)
     lock_label = ttk.Label(r, text="", foreground="gray")
@@ -156,6 +174,8 @@ def build_limits_ui(panel: "ResourcesPanel") -> None:
         "label": mode_label,
         "ddp_btn": ddp_btn,
         "parallel_btn": parallel_btn,
+        "zero3_btn": zero3_btn,
+        "none_btn": none_btn,
         "lock_label": lock_label,
     }
     
@@ -165,6 +185,9 @@ def build_limits_ui(panel: "ResourcesPanel") -> None:
         add_tooltip(mode_label, "Training mode for multi-GPU setups. Only enabled when 2+ GPUs are selected.")
         add_tooltip(ddp_btn, "DistributedDataParallel: Each GPU trains on different data batches (faster, recommended)")
         add_tooltip(parallel_btn, "DataParallel: Legacy mode, splits batch across GPUs (slower but more compatible)")
+        add_tooltip(none_btn, "Single-GPU mode: disable multi-GPU orchestration and use the selected device only.")
+        add_tooltip(zero3_btn, "Enable DeepSpeed ZeRO Stage 3 with dedicated inference shard (Linux only, requires 2+ GPUs).")
+        add_tooltip(none_btn, "Single-GPU mode: disable multi-GPU orchestration and use the selected device only.")
     except Exception:
         pass
     

@@ -175,25 +175,26 @@ def maybe_spawn_and_exit_if_parent(
                     stop_monitor = threading.Event()
                     
                     def monitor_progress():
-                        """Monitor progress file and print updates for GUI"""
+                        """Monitor progress file and print JSON updates for GUI consumers."""
                         last_step = -1
                         while not stop_monitor.is_set():
                             try:
                                 if os.path.exists(progress_file):
-                                    with open(progress_file, 'r') as pf:
+                                    with open(progress_file, 'r', encoding='utf-8') as pf:
                                         data = json.load(pf)
-                                        step = data.get("step", 0)
-                                        if step > last_step:
-                                            last_step = step
-                                            # Print progress for GUI
-                                            print({
-                                                "event": "train",
-                                                "step": step,
-                                                "loss": data.get("loss"),
-                                                "ddp": True,
-                                                "rank": 0,
-                                                "source": "progress_monitor"
-                                            }, flush=True)
+                                    step = int(data.get("step") or 0)
+                                    if step > last_step:
+                                        last_step = step
+                                        payload = {
+                                            "event": "train",
+                                            "step": step,
+                                            "total_steps": data.get("total_steps"),
+                                            "loss": data.get("loss"),
+                                            "ddp": True,
+                                            "rank": 0,
+                                            "source": "progress_monitor"
+                                        }
+                                        print(json.dumps(payload), flush=True)
                             except Exception:
                                 pass
                             stop_monitor.wait(0.5)  # Check every 500ms

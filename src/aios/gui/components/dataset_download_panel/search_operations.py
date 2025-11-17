@@ -7,7 +7,7 @@ Helper functions for searching, filtering, displaying, and sorting dataset searc
 import logging
 import time
 import tkinter as tk
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from dataclasses import dataclass
 from tkinter import messagebox
 from typing import Dict, List, Any, Optional
@@ -384,17 +384,45 @@ def do_search(
                 }
 
                 try:
-                    for future in as_completed(futures):
+                    pending = set(futures.keys())
+
+                    while pending:
                         if _should_abort():
                             abort_reason = "timeout" if time.perf_counter() >= deadline else "panel"
                             break
-                        idx, ok = future.result()
-                        if ok:
-                            enriched_count += 1
-                            if idx % 5 == 0 and getattr(panel, "_panel_active", True):
-                                panel.log(f"ℹ️ Enriched {idx}/{total} datasets so far")
-                        else:
-                            failed_count += 1
+
+                        remaining = deadline - time.perf_counter()
+                        if remaining <= 0:
+                            abort_reason = "timeout"
+                            break
+
+                        wait_timeout = min(0.75, remaining)
+                        done, pending = wait(pending, timeout=wait_timeout, return_when=FIRST_COMPLETED)
+
+                        if not done:
+                            continue
+
+                        for future in done:
+                            idx = futures.get(future)
+                            if idx is None:
+                                continue
+                            try:
+                                idx, ok = future.result()
+                            except Exception:
+                                ok = False
+                            if ok:
+                                enriched_count += 1
+                                if idx % 5 == 0 and getattr(panel, "_panel_active", True):
+                                    panel.log(f"ℹ️ Enriched {idx}/{total} datasets so far")
+                            else:
+                                failed_count += 1
+
+                    if abort_reason is not None:
+                        for future in pending:
+                            try:
+                                future.cancel()
+                            except Exception:
+                                pass
                 finally:
                     executor.shutdown(wait=abort_reason is None, cancel_futures=abort_reason is not None)
 

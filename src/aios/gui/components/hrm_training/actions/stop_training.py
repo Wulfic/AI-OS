@@ -5,6 +5,8 @@ This module handles graceful and forceful termination of training processes.
 
 from __future__ import annotations
 import logging
+import os
+import signal
 import time
 from typing import Any
 
@@ -116,7 +118,11 @@ def _do_immediate_stop(panel: Any, already_graceful_stopping: bool) -> None:
     
     # Start forceful termination
     logger.info("Initiating graceful shutdown with fallback to forced termination")
-    _graceful_stop_then_terminate(panel)
+    ack_timeout = 15.0
+    acknowledged = _wait_for_stop_ack(panel, ack_timeout)
+    if not acknowledged:
+        _thread_safe_log(panel, f"[hrm] Stop acknowledgement not received within {int(ack_timeout)}s; will continue monitoring")
+    _graceful_stop_then_terminate(panel, ack_waited=acknowledged)
     
     # Handle optimization background thread
     logger.debug("Stopping background optimization thread")
@@ -167,6 +173,9 @@ def _do_graceful_stop_request(panel: Any) -> None:
     _write_graceful_stop_file(panel)
     
     logger.debug("Starting graceful stop monitor")
+    ack_timeout = 20.0
+    if not _wait_for_graceful_ack(panel, ack_timeout):
+        _thread_safe_log(panel, f"[hrm] Waiting for graceful stop acknowledgement (>{int(ack_timeout)}s)")
     _monitor_graceful_stop(panel)
     
     # Save state
@@ -233,6 +242,78 @@ def _write_graceful_stop_file(panel: Any) -> None:
         _thread_safe_log(panel, f"[hrm] Failed to signal graceful stop: {e}")
 
 
+def _wait_for_ack_event(panel: Any, attr: str, timeout: float) -> bool:
+    """Wait for a multiprocessing ack event to become set."""
+    if timeout <= 0:
+        timeout = 0
+    event = getattr(panel, attr, None)
+    if event is None:
+        return False
+    # Fast path: check without blocking first
+    try:
+        if event.is_set():
+            return True
+    except Exception:
+        pass
+
+    deadline = time.time() + timeout
+    poll = 0.25
+    while True:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            return False
+        try:
+            if event.wait(timeout=min(poll, remaining)):
+                return True
+        except Exception as exc:
+            logger.debug("Ack wait failed for %s: %s", attr, exc)
+            return False
+
+
+def _wait_for_stop_ack(panel: Any, timeout: float) -> bool:
+    """Wait for immediate-stop acknowledgement."""
+    acknowledged = _wait_for_ack_event(panel, "_stop_ack_event", timeout)
+    if acknowledged and not getattr(panel, "_stop_ack_notified", False):
+        _thread_safe_log(panel, "[hrm] Training acknowledged immediate stop request")
+        try:
+            panel._stop_ack_notified = True
+        except Exception:
+            pass
+    return acknowledged
+
+
+def _wait_for_graceful_ack(panel: Any, timeout: float) -> bool:
+    """Wait for graceful-stop acknowledgement."""
+    acknowledged = _wait_for_ack_event(panel, "_graceful_stop_ack_event", timeout)
+    if acknowledged and not getattr(panel, "_graceful_stop_ack_notified", False):
+        _thread_safe_log(panel, "[hrm] Training acknowledged graceful stop request")
+        try:
+            panel._graceful_stop_ack_notified = True
+        except Exception:
+            pass
+    return acknowledged
+
+
+def _attempt_signal(panel: Any, proc: Any, sig: int | None, description: str) -> bool:
+    """Try sending a signal to the training process."""
+    if sig is None:
+        return False
+    try:
+        pid = proc.pid
+    except Exception:
+        return False
+    if pid is None:
+        return False
+    try:
+        os.kill(pid, sig)
+        if description:
+            _thread_safe_log(panel, f"[hrm] {description}")
+        return True
+    except Exception as exc:
+        logger.debug("Failed to send signal %s: %s", description or sig, exc)
+        return False
+
+
 def _update_ui_stopping(panel: Any) -> None:
     """Update UI to show stopping state."""
     try:
@@ -243,7 +324,7 @@ def _update_ui_stopping(panel: Any) -> None:
         pass
 
 
-def _graceful_stop_then_terminate(panel: Any) -> None:
+def _graceful_stop_then_terminate(panel: Any, ack_waited: bool = False) -> None:
     """
     Wait for graceful shutdown, then escalate to terminate if needed.
     
@@ -266,18 +347,33 @@ def _graceful_stop_then_terminate(panel: Any) -> None:
             panel._stop_requested = False
             _cleanup_stop_files(panel)
             return
-        
-        _thread_safe_log(panel, "[hrm] Waiting for graceful shutdown (finishing chunk + merging checkpoints)…")
-        
-        # Wait up to 120 seconds for graceful shutdown
-        for i in range(480):  # 480 * 0.25 = 120 seconds
+        ack_observed = ack_waited
+        if not ack_observed:
+            ack_observed = _wait_for_stop_ack(panel, 5.0)
+        if ack_observed:
+            _thread_safe_log(panel, "[hrm] Stop acknowledged; allowing worker to finish cleanup")
+        else:
+            _thread_safe_log(panel, "[hrm] Stop acknowledgement still pending; grace period shortened to 45s")
+
+        grace_seconds = 120 if ack_observed else 45
+        start_time = time.time()
+        deadline = start_time + grace_seconds
+        last_log = 0
+        _thread_safe_log(panel, f"[hrm] Waiting up to {int(grace_seconds)}s for graceful shutdown (finishing chunk + merging checkpoints)…")
+
+        while True:
             if not proc.is_alive():
                 _thread_safe_log(panel, "[hrm] Training process exited gracefully")
                 return
-            
-            # Progress indicator every 10 seconds
-            if i > 0 and i % 40 == 0:
-                elapsed = i * 0.25
+
+            now = time.time()
+            if now >= deadline:
+                break
+
+            elapsed = now - start_time
+            log_bucket = int(elapsed // 10)
+            if log_bucket > last_log and elapsed >= 10:
+                last_log = log_bucket
                 if elapsed < 30:
                     _thread_safe_log(panel, f"[hrm] Finishing current batch... ({elapsed:.0f}s)")
                 elif elapsed < 60:
@@ -286,26 +382,43 @@ def _graceful_stop_then_terminate(panel: Any) -> None:
                     _thread_safe_log(panel, f"[hrm] Merging checkpoints... ({elapsed:.0f}s)")
                 else:
                     _thread_safe_log(panel, f"[hrm] Still waiting for finalization... ({elapsed:.0f}s)")
-            
+
+            if not ack_observed:
+                try:
+                    ack_event = getattr(panel, "_stop_ack_event", None)
+                    if ack_event is not None and ack_event.is_set():
+                        ack_observed = True
+                        _wait_for_stop_ack(panel, 0)
+                        _thread_safe_log(panel, "[hrm] Stop acknowledgement received while waiting; extending grace window")
+                        grace_seconds = 120
+                        deadline = max(deadline, time.time() + 120)
+                except Exception:
+                    pass
+
             time.sleep(0.25)
-        
-        # If still running after 120 seconds, force terminate
-        if proc.is_alive():
-            _thread_safe_log(panel, "[hrm] Grace period expired (120s), terminating process…")
-            proc.terminate()
-            
-            # Wait 10 more seconds for terminate to work
+
+        if not proc.is_alive():
+            return
+
+        sigint_sent = _attempt_signal(panel, proc, getattr(signal, "SIGINT", None), "Sent SIGINT to training process")
+        if sigint_sent:
             for _ in range(40):  # 10 seconds
                 if not proc.is_alive():
                     return
                 time.sleep(0.25)
-        
-        # Last resort: kill
+
         if proc.is_alive():
-            _thread_safe_log(panel, "[hrm] escalation: attempting kill()…")
+            _thread_safe_log(panel, "[hrm] Grace period expired, invoking terminate()…")
+            proc.terminate()
+            for _ in range(40):  # 10 seconds
+                if not proc.is_alive():
+                    return
+                time.sleep(0.25)
+
+        if proc.is_alive():
+            _attempt_signal(panel, proc, getattr(signal, "SIGUSR2", None), "Requesting stack trace before kill (SIGUSR2)")
+            _thread_safe_log(panel, "[hrm] Escalation: attempting kill()…")
             proc.kill()
-            
-            # Wait briefly for kill to take effect
             for _ in range(8):  # 2 seconds
                 if not proc.is_alive():
                     return
@@ -333,6 +446,8 @@ def _monitor_graceful_stop(panel: Any) -> None:
         # No timeout - user can click stop again for immediate termination
         elapsed = 0
         last_log_time = 0
+        ack_observed = _wait_for_graceful_ack(panel, 5.0)
+        ack_missing_logged = False
         
         while True:
             if not proc.is_alive():
@@ -356,6 +471,18 @@ def _monitor_graceful_stop(panel: Any) -> None:
                 
                 return
             
+            if not ack_observed:
+                try:
+                    ack_event = getattr(panel, "_graceful_stop_ack_event", None)
+                    if ack_event is not None and ack_event.is_set():
+                        ack_observed = True
+                        _wait_for_graceful_ack(panel, 0)
+                except Exception:
+                    pass
+                if not ack_observed and elapsed >= 10 and not ack_missing_logged:
+                    _thread_safe_log(panel, "[hrm] Waiting for worker to acknowledge graceful stop request…")
+                    ack_missing_logged = True
+            
             # Progress indicator every 30 seconds (less verbose)
             if elapsed > 0 and (elapsed - last_log_time) >= 30:
                 _thread_safe_log(panel, f"[hrm] Finishing current chunk... ({int(elapsed)}s elapsed)")
@@ -373,11 +500,28 @@ def _cleanup_stop_files(panel: Any) -> None:
     try:
         stop_event = getattr(panel, "_stop_event", None)
         graceful_stop_event = getattr(panel, "_graceful_stop_event", None)
+        stop_ack_event = getattr(panel, "_stop_ack_event", None)
+        graceful_stop_ack_event = getattr(panel, "_graceful_stop_ack_event", None)
         
         if stop_event:
             stop_event.clear()
         if graceful_stop_event:
             graceful_stop_event.clear()
+        if stop_ack_event:
+            try:
+                stop_ack_event.clear()
+            except Exception:
+                pass
+        if graceful_stop_ack_event:
+            try:
+                graceful_stop_ack_event.clear()
+            except Exception:
+                pass
+        try:
+            panel._stop_ack_notified = False
+            panel._graceful_stop_ack_notified = False
+        except Exception:
+            pass
             
         _thread_safe_log(panel, "[hrm] Cleared stop events")
     except Exception:

@@ -77,7 +77,7 @@ Notes:
 - `--num-experts <int>`: Total experts (capacity vs VRAM trade‑off).
 - `--num-experts-per-tok <int>`: Top‑k experts per token; lower = faster/less memory.
 - `--moe-capacity-factor <float>`: Load‑balancing headroom.
-- `--auto-adjust-moe-lr/--no-auto-adjust-moe-lr`: Auto reduce LR for MoE stability.
+- `--auto-adjust-lr/--no-auto-adjust-lr`: Auto reduce LR for MoE stability.
 Tips: Start with 8 experts, top‑k=2, capacity 1.25; raise gradually.
 
 ### PEFT (parameter‑efficient fine‑tuning)
@@ -138,7 +138,7 @@ Note: Requires bitsandbytes + CUDA; prefer Linux.
 aios hrm-hf train-actv1 --model gpt2 `
 	--dataset-file training_data/curated_datasets/test_sample.txt `
 	--use-moe --num-experts 8 --num-experts-per-tok 2 `
-	--moe-capacity-factor 1.25 --auto-adjust-moe-lr `
+	--moe-capacity-factor 1.25 --auto-adjust-lr `
 	--amp --gradient-checkpointing `
 	--steps 200 --batch-size 8
 ```

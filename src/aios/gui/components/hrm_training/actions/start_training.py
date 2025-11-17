@@ -12,10 +12,12 @@ This module orchestrates the training start process:
 from __future__ import annotations
 import os
 from typing import Any
-from multiprocessing import Manager
-
+import multiprocessing as mp
 from .process_manager import launch_training_process
 from ....utils.resource_management import submit_background
+
+
+_MP_SPAWN_CTX = mp.get_context("spawn")
 
 
 def on_start(panel: Any) -> None:
@@ -42,6 +44,10 @@ def on_start(panel: Any) -> None:
         pass
     panel._stop_requested = False
     panel._last_heartbeat = None
+    panel._stop_ack_event = None
+    panel._graceful_stop_ack_event = None
+    panel._stop_ack_notified = False
+    panel._graceful_stop_ack_notified = False
 
     # Auto-detect GPUs if user selected CUDA but no rows populated
     _auto_detect_gpus_if_needed(panel)
@@ -101,14 +107,21 @@ def on_start(panel: Any) -> None:
     # Create multiprocessing Manager and Events for stop signaling
     try:
         panel._log("[hrm] Creating multiprocessing Manager and Events...")
-        manager = Manager()
+        # Use spawn start method so CUDA is initialized in a clean process
+        manager = _MP_SPAWN_CTX.Manager()
         stop_event = manager.Event()
         graceful_stop_event = manager.Event()
+        stop_ack_event = manager.Event()
+        graceful_stop_ack_event = manager.Event()
         
         # Store on panel for stop button access
         panel._training_manager = manager
         panel._stop_event = stop_event
         panel._graceful_stop_event = graceful_stop_event
+        panel._stop_ack_event = stop_ack_event
+        panel._graceful_stop_ack_event = graceful_stop_ack_event
+        panel._stop_ack_notified = False
+        panel._graceful_stop_ack_notified = False
         panel._log("[hrm] Manager and Events created successfully")
     except Exception as e:
         panel._log(f"[hrm] Failed to create Manager: {e}")
@@ -125,7 +138,15 @@ def on_start(panel: Any) -> None:
 
     # Launch in background thread to avoid freezing GUI
     def _launch_bg():
-        launch_training_process(panel, args, config, stop_event, graceful_stop_event)
+        launch_training_process(
+            panel,
+            args,
+            config,
+            stop_event,
+            graceful_stop_event,
+            stop_ack_event,
+            graceful_stop_ack_event,
+        )
 
     panel._bg_thread = None
     try:
@@ -473,9 +494,30 @@ def _auto_add_default_goal(panel: Any, config: Any) -> None:
 
 def _log_ddp_settings(panel: Any, config: Any, args: list) -> None:
     """Log DDP settings if enabled."""
+    zero_stage = str(getattr(config, "zero_stage", "none") or "none").lower()
+    cuda_ids_list: list[str] = []
+    if config.cuda_ids:
+        try:
+            cuda_ids_list = [c.strip() for c in str(config.cuda_ids).split(",") if c.strip()]
+        except Exception:
+            cuda_ids_list = []
+
+    if zero_stage == "zero3":
+        if cuda_ids_list:
+            gpu_repr = ",".join(cuda_ids_list)
+            if len(cuda_ids_list) > 1:
+                panel._log(f"[hrm] ZeRO-3 standalone mode active on GPUs {gpu_repr}; DeepSpeed stage-3 handles sharding (no DDP).")
+            else:
+                panel._log(f"[hrm] ZeRO-3 standalone mode active on GPU {gpu_repr}; DeepSpeed stage-3 handles sharding (no DDP).")
+        else:
+            panel._log("[hrm] ZeRO-3 standalone mode active; DeepSpeed stage-3 will handle device assignment (no DDP).")
+        return
+
     if config.ddp and config.world_size and config.world_size > 1:
         backend = "gloo" if os.name == "nt" else "nccl"
         panel._log(f"[hrm] Auto-DDP enabled: world_size={config.world_size} cuda_ids={config.cuda_ids} backend={backend}")
+    elif config.parallel_independent and len(cuda_ids_list) > 1:
+        panel._log(f"[hrm] Parallel independent mode active on GPUs {', '.join(cuda_ids_list)} (no DDP).")
     elif config.cuda_ids:
         panel._log(f"[hrm] Single GPU training: cuda_id={config.cuda_ids}")
 

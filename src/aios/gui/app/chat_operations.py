@@ -353,7 +353,11 @@ def setup_chat_operations(app: Any) -> None:
                 
                 # Get the brain that will handle this request to configure response limit
                 # We need to set max_response_chars BEFORE generation
-                task = {"modalities": ["text"], "payload": enhanced_prompt}
+                task = {
+                    "modalities": ["text"],
+                    "payload": enhanced_prompt,
+                    "strict_master": True,
+                }
                 
                 # Apply max_response_chars to brain if specified
                 # Note: This configures response length but doesn't reload the model
@@ -418,7 +422,11 @@ def setup_chat_operations(app: Any) -> None:
                             # Ask model to synthesize final response based on tool result
                             # Create a follow-up task with tool context
                             followup_prompt = f"{prompt}\n\nTool result:\n{formatted_result}\n\nBased on this tool result, provide a clear answer to the user's question."
-                            followup_task = {"modalities": ["text"], "payload": followup_prompt}
+                            followup_task = {
+                                "modalities": ["text"],
+                                "payload": followup_prompt,
+                                "strict_master": True,
+                            }
                             
                             followup_res = router.handle(followup_task)
                             if isinstance(followup_res, dict) and followup_res.get("ok") and followup_res.get("text"):
@@ -485,6 +493,11 @@ def setup_chat_operations(app: Any) -> None:
                     load_time = time.time() - start_time
                     # Mark as master so router uses it for chat
                     registry.mark_master(brain_name)
+                    try:
+                        modalities = list(getattr(brain, "modalities", [])) or None
+                    except Exception:
+                        modalities = None
+                    registry.record_use(brain_name, modalities)
                     
                     logger.info(f"Successfully loaded brain '{brain_name}' in {load_time:.2f}s and set as master")
                     app._log_router.log(f"Brain {brain_name} loaded and set as master for chat ({load_time:.2f}s)", LogCategory.CHAT, "INFO")

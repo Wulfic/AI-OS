@@ -15,3 +15,5 @@ Use the Memory tool to keep track of important information and context during ou
 Use the sequentialthinking tool to break down complex problems into manageable steps and ensure thorough reasoning.
 
 Do NOT create test files unnecessarily, only when they are essential for verifying complex logic or critical functionality. They should be removed promptly after their purpose is served.
+
+Ensure the project is both windows and ubuntu compatible.

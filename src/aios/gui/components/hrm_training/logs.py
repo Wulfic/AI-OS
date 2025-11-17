@@ -9,7 +9,7 @@ def open_rank_logs(panel: Any) -> None:
         import tkinter as tk
         from tkinter import ttk
         import glob
-        log_dir = os.environ.get("AIOS_DDP_LOG_DIR")
+        log_dir = getattr(panel, "_current_ddp_log_dir", None) or os.environ.get("AIOS_DDP_LOG_DIR")
         if not log_dir or not os.path.isdir(log_dir):
             panel._log("[hrm] No per-rank log directory available yet.")
             return
@@ -26,7 +26,10 @@ def open_rank_logs(panel: Any) -> None:
 
         def _refresh() -> None:
             try:
-                files = sorted(glob.glob(os.path.join(log_dir, "rank*.out.log")))
+                pattern_primary = os.path.join(log_dir, "rank*.out.log")
+                files = sorted(glob.glob(pattern_primary))
+                if not files:
+                    files = sorted(glob.glob(os.path.join(log_dir, "rank*.log")))
                 out_lines = []
                 for fpath in files:
                     try:

@@ -24,9 +24,11 @@ def enable_extreme_memory_mode():
     Call this at the start of training for 100K+ contexts or 500M+ param models.
     """
     import os
-    
-    # PyTorch CUDA allocator settings for extreme scale
-    os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128,expandable_segments:True,roundup_power2_divisions:4'
+
+    # PyTorch allocator settings for extreme scale (PYTORCH_CUDA_ALLOC_CONF deprecated)
+    alloc_conf = 'max_split_size_mb:128,expandable_segments:True,roundup_power2_divisions:4'
+    os.environ['PYTORCH_ALLOC_CONF'] = alloc_conf
+    os.environ.pop('PYTORCH_CUDA_ALLOC_CONF', None)
     
     # Force aggressive garbage collection
     gc.set_threshold(500, 5, 5)  # More aggressive than default (700, 10, 10)

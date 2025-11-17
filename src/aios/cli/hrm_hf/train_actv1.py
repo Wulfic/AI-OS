@@ -10,8 +10,9 @@ from __future__ import annotations
 import os
 import warnings
 
-# Set CUDA allocator config BEFORE torch import
-os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128,expandable_segments:True,roundup_power2_divisions:4'
+# Set CUDA allocator config BEFORE torch import (PYTORCH_CUDA_ALLOC_CONF deprecated)
+os.environ['PYTORCH_ALLOC_CONF'] = 'max_split_size_mb:128,expandable_segments:True,roundup_power2_divisions:4'
+os.environ.pop('PYTORCH_CUDA_ALLOC_CONF', None)
 warnings.filterwarnings("ignore", message=".*expandable_segments not supported.*", category=UserWarning)
 
 # CRITICAL: Set CUDA_VISIBLE_DEVICES before importing torch if cuda_ids provided
@@ -171,7 +172,13 @@ from .finalization import (
 )
 
 
-def run_training_multiprocessing_entry(config: "TrainingConfig", stop_event=None, graceful_stop_event=None) -> None:
+def run_training_multiprocessing_entry(
+    config: "TrainingConfig",
+    stop_event=None,
+    graceful_stop_event=None,
+    stop_ack_event=None,
+    graceful_stop_ack_event=None,
+) -> None:
     """Entry point for multiprocessing.Process.
     
     This function is called when training is launched via multiprocessing.Process
@@ -181,13 +188,35 @@ def run_training_multiprocessing_entry(config: "TrainingConfig", stop_event=None
         config: Training configuration
         stop_event: Multiprocessing Event for immediate stop
         graceful_stop_event: Multiprocessing Event for graceful stop
+        stop_ack_event: Event set by worker when immediate stop is observed
+        graceful_stop_ack_event: Event set by worker when graceful stop is observed
     """
     import sys
     import traceback
+    import faulthandler
+    import signal
+
+    try:
+        faulthandler.enable(all_threads=True)
+    except Exception:
+        pass
+
+    try:
+        sigusr2 = getattr(signal, "SIGUSR2", None)
+        if sigusr2 is not None:
+            faulthandler.register(sigusr2, file=sys.__stderr__, all_threads=True, chain=False)
+    except Exception:
+        pass
     
     try:
         # Call the main training implementation with Events
-        train_actv1_impl(config, stop_event=stop_event, graceful_stop_event=graceful_stop_event)
+        train_actv1_impl(
+            config,
+            stop_event=stop_event,
+            graceful_stop_event=graceful_stop_event,
+            stop_ack_event=stop_ack_event,
+            graceful_stop_ack_event=graceful_stop_ack_event,
+        )
         sys.exit(0)
     except KeyboardInterrupt:
         print("\n[TRAIN] Training interrupted by user")
@@ -198,7 +227,13 @@ def run_training_multiprocessing_entry(config: "TrainingConfig", stop_event=None
         sys.exit(1)
 
 
-def train_actv1_impl(config: "TrainingConfig", stop_event=None, graceful_stop_event=None) -> None:
+def train_actv1_impl(
+    config: "TrainingConfig",
+    stop_event=None,
+    graceful_stop_event=None,
+    stop_ack_event=None,
+    graceful_stop_ack_event=None,
+) -> None:
     """Train the ACT V1 HRM model or expert module.
     
     This is the main orchestrator that coordinates all training components.
@@ -208,6 +243,8 @@ def train_actv1_impl(config: "TrainingConfig", stop_event=None, graceful_stop_ev
         config: Training configuration object containing all parameters
         stop_event: Optional multiprocessing Event for immediate stop
         graceful_stop_event: Optional multiprocessing Event for graceful stop
+        stop_ack_event: Optional Event set once stop_event is observed by workers
+        graceful_stop_ack_event: Optional Event set once graceful stop is observed
     """
     # ========================================================================
     # OUTPUT DIRECTORY SETUP (must happen before any training mode)
@@ -274,7 +311,13 @@ def train_actv1_impl(config: "TrainingConfig", stop_event=None, graceful_stop_ev
             })
             config.parallel_independent = True
         
-        return run_parallel_training_v3(config, stop_event=stop_event, graceful_stop_event=graceful_stop_event)
+        return run_parallel_training_v3(
+            config,
+            stop_event=stop_event,
+            graceful_stop_event=graceful_stop_event,
+            stop_ack_event=stop_ack_event,
+            graceful_stop_ack_event=graceful_stop_ack_event,
+        )
     
     # ========================================================================
     # EXPERT-ONLY TRAINING MODE

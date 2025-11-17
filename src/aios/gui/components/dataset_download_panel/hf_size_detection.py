@@ -14,6 +14,7 @@ import logging
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from typing import Optional, Dict, Any, Tuple, List
 
 import httpx
@@ -58,7 +59,7 @@ _FAILURE_BACKOFF_MAX = 600.0
 
 # Constants
 SAMPLES_PER_BLOCK = 100000  # Standard block size for training
-API_TIMEOUT = 3  # seconds - reduced to prevent hanging
+API_TIMEOUT_DEFAULT = 3  # seconds - reduced to prevent hanging
 
 # Bytes per row estimates for different data types
 BYTES_PER_ROW_ESTIMATES = {
@@ -101,7 +102,10 @@ def _record_success(dataset_name: str) -> None:
 def get_hf_dataset_size_api(
     dataset_name: str,
     config: Optional[str] = None,
-    split: str = "train"
+    split: str = "train",
+    *,
+    request_timeout: float | None = None,
+    max_attempts: int | None = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Get dataset size information from HuggingFace Dataset Viewer /size API.
@@ -133,7 +137,8 @@ def get_hf_dataset_size_api(
     """
     try:
         url = f"https://datasets-server.huggingface.co/size?dataset={dataset_name}"
-        data = fetch_json_sync(url, timeout=API_TIMEOUT)
+        timeout = request_timeout or API_TIMEOUT_DEFAULT
+        data = fetch_json_sync(url, timeout=timeout, max_attempts=max_attempts)
         
         # Check if partial (incomplete data)
         is_partial = data.get("partial", False)
@@ -198,7 +203,10 @@ def get_hf_dataset_size_api(
 def get_hf_dataset_info_api(
     dataset_name: str,
     config: Optional[str] = None,
-    split: str = "train"
+    split: str = "train",
+    *,
+    request_timeout: float | None = None,
+    max_attempts: int | None = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Get dataset info from HuggingFace Dataset Viewer /info API.
@@ -233,7 +241,8 @@ def get_hf_dataset_info_api(
     """
     try:
         url = f"https://datasets-server.huggingface.co/info?dataset={dataset_name}"
-        data = fetch_json_sync(url, timeout=API_TIMEOUT)
+        timeout = request_timeout or API_TIMEOUT_DEFAULT
+        data = fetch_json_sync(url, timeout=timeout, max_attempts=max_attempts)
         dataset_info = data.get("dataset_info", {})
         
         # Find the right config
@@ -293,7 +302,12 @@ def get_hf_dataset_info_api(
         return None
 
 
-def get_hf_dataset_size_hub_api(dataset_name: str) -> Optional[Dict[str, Any]]:
+def get_hf_dataset_size_hub_api(
+    dataset_name: str,
+    *,
+    request_timeout: float | None = None,
+    max_siblings: int = 2000,
+) -> Optional[Dict[str, Any]]:
     """
     Get dataset size using HuggingFace Hub API (file-based).
     
@@ -323,16 +337,44 @@ def get_hf_dataset_size_hub_api(dataset_name: str) -> Optional[Dict[str, Any]]:
     
     try:
         api = HfApi()
-        dataset_info = api.dataset_info(repo_id=dataset_name, files_metadata=True)
-        
+        timeout = max(request_timeout or API_TIMEOUT_DEFAULT, 0.1)
+
+        def _load_dataset_info():
+            return api.dataset_info(
+                repo_id=dataset_name,
+                files_metadata=True,
+                timeout=timeout,
+            )
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_load_dataset_info)
+            try:
+                dataset_info = future.result(timeout=timeout + 0.5)
+            except TimeoutError:
+                future.cancel()
+                logger.debug(
+                    "Hub API size lookup timed out after %.2fs for %s",
+                    timeout,
+                    dataset_name,
+                )
+                return None
+
         total_bytes = 0
         file_count = 0
-        
-        for sibling in dataset_info.siblings:
+
+        for sibling in dataset_info.siblings[:max_siblings]:
             size_in_bytes = sibling.size or 0
             total_bytes += size_in_bytes
             file_count += 1
-        
+
+        if len(dataset_info.siblings) > max_siblings:
+            logger.debug(
+                "Hub API truncated %d of %d file entries for %s",
+                len(dataset_info.siblings) - max_siblings,
+                len(dataset_info.siblings),
+                dataset_name,
+            )
+
         return {
             "num_files": file_count,
             "total_bytes": total_bytes,
@@ -341,6 +383,9 @@ def get_hf_dataset_size_hub_api(dataset_name: str) -> Optional[Dict[str, Any]]:
             "source": "hub_api"
         }
         
+    except TimeoutError:
+        logger.debug("Hub API size lookup thread hung for %s", dataset_name)
+        return None
     except Exception as e:
         logger.debug(f"Error fetching dataset size via Hub API for {dataset_name}: {e}")
         return None
@@ -430,7 +475,10 @@ def calculate_blocks(num_rows: int) -> int:
 def get_hf_dataset_metadata(
     dataset_name: str,
     config: Optional[str] = None,
-    split: str = "train"
+    split: str = "train",
+    *,
+    request_timeout: float | None = None,
+    max_attempts: int | None = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Get HuggingFace dataset metadata using best available method.
@@ -471,7 +519,16 @@ def get_hf_dataset_metadata(
         return None
 
     # Try Dataset Viewer /size API first (fastest, exact row counts)
-    info = get_hf_dataset_size_api(dataset_name, config, split)
+    timeout = request_timeout or API_TIMEOUT_DEFAULT
+    attempts = max_attempts or 2
+
+    info = get_hf_dataset_size_api(
+        dataset_name,
+        config,
+        split,
+        request_timeout=timeout,
+        max_attempts=attempts,
+    )
     if info and not info.get("is_partial", False):
         info["num_rows_estimated"] = False
         info["estimation_quality"] = "exact"
@@ -479,7 +536,13 @@ def get_hf_dataset_metadata(
         return info
     
     # Try Dataset Viewer /info API (exact rows + feature types)
-    info = get_hf_dataset_info_api(dataset_name, config, split)
+    info = get_hf_dataset_info_api(
+        dataset_name,
+        config,
+        split,
+        request_timeout=timeout,
+        max_attempts=attempts,
+    )
     if info:
         info["estimation_quality"] = "exact"
         _record_success(dataset_name)
@@ -492,7 +555,7 @@ def get_hf_dataset_metadata(
             HUB_FALLBACK_MODE,
             dataset_name,
         )
-        hub_info = get_hf_dataset_size_hub_api(dataset_name)
+        hub_info = get_hf_dataset_size_hub_api(dataset_name, request_timeout=timeout)
         if hub_info:
             bytes_per_row = DEFAULT_BYTES_PER_ROW
             estimated_rows = estimate_rows_from_size(hub_info["total_bytes"], bytes_per_row)
@@ -528,7 +591,12 @@ def get_hf_dataset_metadata(
     return None
 
 
-def enrich_dataset_with_size(dataset: Dict[str, Any], timeout: float = 3.0) -> Dict[str, Any]:
+def enrich_dataset_with_size(
+    dataset: Dict[str, Any],
+    timeout: float | None = None,
+    *,
+    max_attempts: int | None = None,
+) -> Dict[str, Any]:
     """
     Enrich a dataset dictionary with size and block information.
     
@@ -570,7 +638,13 @@ def enrich_dataset_with_size(dataset: Dict[str, Any], timeout: float = 3.0) -> D
         import signal
         
         # Use timeout for the metadata retrieval
-        metadata = get_hf_dataset_metadata(dataset_name, config, split)
+        metadata = get_hf_dataset_metadata(
+            dataset_name,
+            config,
+            split,
+            request_timeout=timeout,
+            max_attempts=max_attempts,
+        )
         
         if metadata:
             dataset["size_gb"] = metadata.get("size_gb", 0.0)

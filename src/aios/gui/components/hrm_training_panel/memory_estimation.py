@@ -426,7 +426,7 @@ def _apply_vram_summary(panel: HRMTrainingPanel, summary: Dict[str, Any], inputs
             color = "red"
             recommendation = "❌ Needs 40GB+ GPU"
 
-        panel.vram_total_lbl.config(text=f"{per_gpu_vram_gb:.2f} GB", foreground=color)
+        panel.vram_total_lbl.config(text=f"{per_gpu_vram_gb:.2f} GB (wip)", foreground=color)
 
         dataset_ram_gb = float(ram.get("dataset_gb", 0.0))
         optimizer_ram_gb = float(ram.get("optimizer_gb", 0.0))
@@ -555,7 +555,7 @@ def _set_vram_placeholders(panel: HRMTrainingPanel) -> None:  # pyright: ignore[
         panel.vram_model_lbl.config(text="-")
         panel.vram_optimizer_lbl.config(text="-")
         panel.vram_activations_lbl.config(text="-")
-        panel.vram_total_lbl.config(text="-", foreground="black")
+        panel.vram_total_lbl.config(text="- (wip)", foreground="black")
         panel.ram_dataset_lbl.config(text="-")
         panel.ram_offload_lbl.config(text="-")
         panel.ram_total_lbl.config(text="-")

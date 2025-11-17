@@ -12,8 +12,11 @@ from __future__ import annotations
 import os
 import time
 import logging
+from datetime import datetime
+from pathlib import Path
 from typing import Any
-from multiprocessing import Process, Queue
+import multiprocessing as mp
+from multiprocessing.queues import Queue as MPQueue
 import queue
 
 from aios.python_exec import get_preferred_python_executable
@@ -21,8 +24,76 @@ from ....utils.resource_management import submit_background
 
 logger = logging.getLogger(__name__)
 
+_MP_SPAWN_CTX = mp.get_context("spawn")
 
-def launch_training_process(panel: Any, args: list[str], config: Any, stop_event: Any, graceful_stop_event: Any) -> None:
+
+def _prepare_rank_log_dir(panel: Any, config: Any) -> str | None:
+    """Create per-rank log directory for DDP runs."""
+
+    try:
+        base_candidate = (
+            getattr(config, "save_dir", None)
+            or getattr(config, "bundle_dir", None)
+            or "artifacts/brains/actv1"
+        )
+        base_path = Path(base_candidate).expanduser()
+        if base_path.suffix:
+            base_path = base_path.parent
+        if not base_path.is_absolute():
+            base_path = Path.cwd() / base_path
+
+        log_root = base_path / "ddp_logs"
+        log_root.mkdir(parents=True, exist_ok=True)
+
+        run_label = getattr(config, "brain_name", None) or "run"
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        run_dir = log_root / f"{run_label}_{timestamp}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+        return str(run_dir)
+    except Exception as exc:  # pragma: no cover - filesystem edge cases
+        logger.warning("Failed to prepare per-rank log directory: %s", exc, exc_info=True)
+        try:
+            panel._log(f"[hrm] Failed to prepare per-rank log directory: {exc}")
+        except Exception:
+            pass
+        return None
+
+
+def _infer_world_size_from_config(config: Any) -> int:
+    """Infer DDP world size from config fields."""
+
+    try:
+        world_size = getattr(config, "world_size", None)
+        if world_size is not None and int(world_size) > 0:
+            return int(world_size)
+    except Exception:
+        pass
+
+    cuda_ids_val = getattr(config, "cuda_ids", None)
+    if cuda_ids_val:
+        try:
+            if isinstance(cuda_ids_val, str):
+                entries = [item.strip() for item in cuda_ids_val.split(",") if item.strip()]
+            else:
+                entries = [str(item).strip() for item in cuda_ids_val if str(item).strip()]
+            if entries:
+                return len(entries)
+        except Exception:
+            pass
+
+    return 0
+
+
+def launch_training_process(
+    panel: Any,
+    args: list[str],
+    config: Any,
+    stop_event: Any,
+    graceful_stop_event: Any,
+    stop_ack_event: Any | None = None,
+    graceful_stop_ack_event: Any | None = None,
+) -> None:
     """
     Launch training process using multiprocessing.Process.
     
@@ -32,6 +103,8 @@ def launch_training_process(panel: Any, args: list[str], config: Any, stop_event
         config: TrainingConfig object
         stop_event: Multiprocessing Event for immediate stop
         graceful_stop_event: Multiprocessing Event for graceful stop
+        stop_ack_event: Multiprocessing Event set by worker when immediate stop observed
+        graceful_stop_ack_event: Multiprocessing Event set by worker when graceful stop observed
     """
     from aios.cli.hrm_hf.train_actv1 import run_training_multiprocessing_entry
     
@@ -39,19 +112,32 @@ def launch_training_process(panel: Any, args: list[str], config: Any, stop_event
     logger.debug(f"Config: dataset={config.dataset_file}, batch_size={config.batch_size}, steps={config.steps}")
     
     # Create Queue for output communication
-    output_queue = Queue()
+    output_queue = _MP_SPAWN_CTX.Queue()
     panel._output_queue = output_queue
     logger.debug("Created multiprocessing.Queue for process output")
+    panel._current_ddp_log_dir = None
     
     try:
         # CRITICAL: Set CUDA device IDs in environment BEFORE creating the Process
         # This ensures CUDA_VISIBLE_DEVICES is set before torch is imported in the child process
         cuda_ids_env = {}
+        ddp_world_size = 0
+        if getattr(config, 'ddp', False):
+            ddp_world_size = _infer_world_size_from_config(config)
+            cuda_ids_env['AIOS_DDP_SPAWN'] = '1'
+            if ddp_world_size > 1:
+                log_dir = _prepare_rank_log_dir(panel, config)
+                if log_dir:
+                    cuda_ids_env['AIOS_DDP_LOG_DIR'] = log_dir
+                    panel._current_ddp_log_dir = log_dir
+                    panel._log(f"[hrm] Capturing per-rank logs in: {log_dir}")
+                    logger.info("Per-rank logs directory established: %s", log_dir)
+
         if hasattr(config, 'cuda_ids') and config.cuda_ids:
             cuda_ids_str = str(config.cuda_ids) if isinstance(config.cuda_ids, str) else ','.join(map(str, config.cuda_ids))
             cuda_ids_env['AIOS_CUDA_IDS'] = cuda_ids_str
             panel._log(f"[hrm] Setting CUDA devices for training process: {cuda_ids_str}")
-            logger.info(f"Setting CUDA devices for training process: {cuda_ids_str}")
+            logger.info(f"Setting CUDA devices for training process: {cuda_ids_str} (world_size={ddp_world_size or 'n/a'})")
         
         # Ensure CUDA environment variables propagate to spawned process (Windows uses spawn)
         original_env: dict[str, str | None] = {}
@@ -62,9 +148,18 @@ def launch_training_process(panel: Any, args: list[str], config: Any, stop_event
         # Create and start multiprocessing.Process
         logger.debug("Creating multiprocessing.Process for training")
         try:
-            proc = Process(
+            proc = _MP_SPAWN_CTX.Process(
                 target=_training_process_wrapper,
-                args=(run_training_multiprocessing_entry, config, stop_event, graceful_stop_event, output_queue, cuda_ids_env),
+                args=(
+                    run_training_multiprocessing_entry,
+                    config,
+                    stop_event,
+                    graceful_stop_event,
+                    stop_ack_event,
+                    graceful_stop_ack_event,
+                    output_queue,
+                    cuda_ids_env,
+                ),
                 daemon=False
             )
             proc.start()
@@ -121,7 +216,16 @@ def launch_training_process(panel: Any, args: list[str], config: Any, stop_event
         _cleanup_process_resources(panel)
 
 
-def _training_process_wrapper(entry_func, config, stop_event, graceful_stop_event, output_queue, cuda_env):
+def _training_process_wrapper(
+    entry_func,
+    config,
+    stop_event,
+    graceful_stop_event,
+    stop_ack_event,
+    graceful_stop_ack_event,
+    output_queue,
+    cuda_env,
+):
     """Wrapper to redirect output to Queue and call training entry point.
     
     Args:
@@ -129,6 +233,8 @@ def _training_process_wrapper(entry_func, config, stop_event, graceful_stop_even
         config: Training configuration
         stop_event: Event for immediate stop
         graceful_stop_event: Event for graceful stop
+        stop_ack_event: Event set when worker acknowledges immediate stop
+        graceful_stop_ack_event: Event set when worker acknowledges graceful stop
         output_queue: Queue for output communication
         cuda_env: Dict with CUDA environment variables to set (e.g., {'AIOS_CUDA_IDS': '0,1'})
     """
@@ -163,7 +269,13 @@ def _training_process_wrapper(entry_func, config, stop_event, graceful_stop_even
     
     try:
         # Call the actual training function
-        entry_func(config, stop_event=stop_event, graceful_stop_event=graceful_stop_event)
+        entry_func(
+            config,
+            stop_event=stop_event,
+            graceful_stop_event=graceful_stop_event,
+            stop_ack_event=stop_ack_event,
+            graceful_stop_ack_event=graceful_stop_ack_event,
+        )
         output_queue.put(('exit', 0))
     except KeyboardInterrupt:
         output_queue.put(('exit', 1))
@@ -173,7 +285,7 @@ def _training_process_wrapper(entry_func, config, stop_event, graceful_stop_even
         raise
 
 
-def _start_queue_monitoring(panel: Any, output_queue: Queue) -> None:
+def _start_queue_monitoring(panel: Any, output_queue: MPQueue) -> None:
     """Monitor output Queue using the Tkinter event loop."""
     logger.debug("Starting queue monitor via Tk callbacks")
 
@@ -229,7 +341,7 @@ def _start_queue_monitoring(panel: Any, output_queue: Queue) -> None:
     panel._queue_monitor_thread = None
 
 
-def _wait_for_process(panel: Any, proc: Process) -> None:
+def _wait_for_process(panel: Any, proc: mp.Process) -> None:
     """Wait for process to complete, checking for stop requests."""
     while proc.is_alive():
         proc.join(timeout=0.5)
@@ -270,6 +382,17 @@ def _cleanup_process_resources(panel: Any) -> None:
         # Clear Events
         panel._stop_event = None
         panel._graceful_stop_event = None
+        panel._stop_ack_event = None
+        panel._graceful_stop_ack_event = None
+        try:
+            panel._stop_ack_notified = False
+            panel._graceful_stop_ack_notified = False
+        except Exception:
+            pass
+        try:
+            panel._current_ddp_log_dir = None
+        except Exception:
+            pass
         logger.debug("Process resource cleanup complete")
         
     except Exception as e:

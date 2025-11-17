@@ -98,20 +98,26 @@ def build_training_config(panel: HRMTrainingPanel) -> Any:
         if rp is not None:
             rvals = rp.get_values()
             sel_train = rvals.get("train_cuda_selected") or []
-            training_mode = rvals.get("training_mode", "ddp")  # Get training mode from resources
+            training_mode = rvals.get("training_mode", "none")  # Get training mode from resources
             logger.debug(f"train_cuda_selected from resources: {sel_train}")
             logger.debug(f"training_mode from resources: {training_mode}")
             if isinstance(sel_train, list) and len(sel_train) > 0:
                 cuda_ids = ",".join(str(int(i)) for i in sel_train)
                 if len(sel_train) > 1:
-                    # Use training mode to determine DDP vs Parallel
+                    # Use training mode to determine backend coordination
                     if training_mode == "parallel":
                         parallel_independent = True
+                        ddp = False
+                    elif training_mode == "zero3":
+                        parallel_independent = True
+                        ddp = False
+                    elif training_mode == "none":
+                        parallel_independent = False
                         ddp = False
                     else:
                         ddp = True
                         parallel_independent = False
-                    world_size = len(sel_train)
+                    world_size = len(sel_train) if ddp else None
                 logger.debug(f"Multi-GPU config: cuda_ids={cuda_ids}, mode={training_mode}, ddp={ddp}, parallel={parallel_independent}, world_size={world_size}")
             else:
                 logger.debug("No GPUs selected or invalid selection")
@@ -144,16 +150,28 @@ def build_training_config(panel: HRMTrainingPanel) -> Any:
     
     # Check for incompatible DDP + ZeRO-3 configuration
     zero_stage_val = _str(panel.zero_stage_var, "none")
+    try:
+        rp_zero = None
+        if rp is not None and hasattr(rp, "zero_stage_var"):
+            rp_zero = rp.zero_stage_var.get()
+        elif rp is not None:
+            rvals = rp.get_values()
+            rp_zero = rvals.get("zero_stage")
+        if isinstance(rp_zero, str) and rp_zero.strip() == "zero3":
+            zero_stage_val = "zero3"
+    except Exception:
+        pass
     logger.debug(f"Before ZeRO check: ddp={ddp}, world_size={world_size}, zero_stage={zero_stage_val}")
-    if ddp and world_size and world_size > 1 and zero_stage_val == "zero3":
-        # DDP with multiple GPUs + ZeRO-3 is not supported - fall back to single GPU
-        log(panel, "[hrm] WARNING: Multi-GPU DDP + ZeRO-3 is not supported")
-        log(panel, f"[hrm] Falling back to single GPU (using GPU {cuda_ids.split(',')[0] if cuda_ids else '0'})")
-        # Use only the first GPU
-        if cuda_ids:
-            cuda_ids = cuda_ids.split(',')[0]
-        ddp = False
-        world_size = None
+    if zero_stage_val == "zero3":
+        if ddp:
+            log(panel, "[hrm] ZeRO-3 requested with DDP enabled; ensure DeepSpeed orchestration supports this path.")
+            logger.debug("ZeRO-3 requested alongside DDP; downstream components must handle compatibility.")
+        elif parallel_independent:
+            log(panel, "[hrm] ZeRO-3 standalone mode selected; training will run without DDP while DeepSpeed handles stage-3 sharding.")
+            logger.debug("ZeRO-3 standalone mode active (parallel independent path)")
+        else:
+            log(panel, "[hrm] ZeRO-3 mode selected on a single GPU; training will run without DDP.")
+            logger.debug("ZeRO-3 single-GPU path active (no DDP)")
     logger.debug(f"After ZeRO check: ddp={ddp}, world_size={world_size}, cuda_ids={cuda_ids}")
     
     # Build config

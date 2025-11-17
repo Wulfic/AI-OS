@@ -29,7 +29,7 @@ def build_experts_section(parent: Any, panel: Any) -> None:
         return
     
     experts_frame = ttk.LabelFrame(parent, text="Dynamic Experts (Subbrains) - [WIP - Feature Under Development]", padding=4)
-    experts_frame.pack(fill="both", expand=True, pady=(0, 8))
+    experts_frame.pack(fill="x", expand=False, pady=(0, 8))
     
     # Build table
     _build_experts_table(experts_frame, panel)
@@ -46,7 +46,7 @@ def _build_experts_table(parent: Any, panel: Any) -> None:
         panel: BrainsPanel instance
     """
     expert_cols = ("name", "category", "status", "activations", "avg_weight", "goals", "hierarchy")
-    panel.experts_tree = ttk.Treeview(parent, columns=expert_cols, show="headings", height=8)
+    panel.experts_tree = ttk.Treeview(parent, columns=expert_cols, show="headings", height=6)
     
     panel.experts_tree.heading("name", text="Name")
     panel.experts_tree.heading("category", text="Category")
@@ -64,7 +64,7 @@ def _build_experts_table(parent: Any, panel: Any) -> None:
     panel.experts_tree.column("goals", width=60, anchor="center")
     panel.experts_tree.column("hierarchy", width=150, anchor="w")
     
-    panel.experts_tree.pack(fill="both", expand=True, pady=(0, 6))
+    panel.experts_tree.pack(fill="x", expand=False, pady=(0, 6))
     
     try:  # pragma: no cover
         from ..tooltips import add_tooltip

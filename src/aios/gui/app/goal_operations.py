@@ -33,26 +33,65 @@ def setup_goal_operations(app: Any) -> None:
         import json
 
         text = raw or "[]"
-        lines = [ln for ln in text.splitlines() if ln.strip()]
-        candidate = None
-        for idx in range(len(lines) - 1, -1, -1):
-            ln = lines[idx].strip()
-            if ln.startswith("[") or ln.startswith("{"):
-                candidate = "\n".join(lines[idx:])
-                break
-        payload = candidate or text
 
-        for parser in (json.loads, ast.literal_eval):
+        # Fast path: leverage the CLI bridge parser when available so we share
+        # the same noisy-output handling logic used elsewhere in the app.
+        parser_fn = getattr(app, "_parse_cli_dict", None)
+        if callable(parser_fn):
             try:
-                obj = parser(payload)
-                if isinstance(obj, list):
-                    return [item for item in obj if isinstance(item, dict)]
-                if isinstance(obj, dict):
-                    goals = obj.get("goals")
-                    if isinstance(goals, list):
-                        return [item for item in goals if isinstance(item, dict)]
+                parsed = parser_fn(text)
             except Exception:
-                continue
+                parsed = None
+            if isinstance(parsed, dict) and parsed:
+                for key in ("items", "goals", "data"):
+                    payload_items = parsed.get(key)
+                    if isinstance(payload_items, list):
+                        dict_items = [item for item in payload_items if isinstance(item, dict)]
+                        if dict_items:
+                            return dict_items
+                if {"id", "text"}.issubset(parsed.keys()):
+                    return [parsed]
+
+        lines = [ln for ln in text.splitlines() if ln.strip()]
+
+        # Walk upward collecting candidate segments that look like JSON/dicts.
+        candidates: list[str] = []
+        for idx in range(len(lines) - 1, -1, -1):
+            snippet = lines[idx].strip()
+            if snippet.startswith("[") or snippet.startswith("{"):
+                candidates.append(snippet)
+                # Attempt to include following lines if the payload spans multiple lines
+                brace_balance = snippet.count("{") - snippet.count("}")
+                bracket_balance = snippet.count("[") - snippet.count("]")
+                if brace_balance > 0 or bracket_balance > 0:
+                    payload_lines = [snippet]
+                    for follow in lines[idx + 1:]:
+                        payload_lines.append(follow.strip())
+                        brace_balance += follow.count("{") - follow.count("}")
+                        bracket_balance += follow.count("[") - follow.count("]")
+                        if brace_balance <= 0 and bracket_balance <= 0:
+                            break
+                    candidates[-1] = "\n".join(payload_lines)
+        if not candidates:
+            candidates.append(text)
+
+        for payload in candidates:
+            for parser in (json.loads, ast.literal_eval):
+                try:
+                    obj = parser(payload)
+                    if isinstance(obj, list):
+                        return [item for item in obj if isinstance(item, dict)]
+                    if isinstance(obj, dict):
+                        for key in ("items", "goals", "data"):
+                            payload_items = obj.get(key)
+                            if isinstance(payload_items, list):
+                                dict_items = [item for item in payload_items if isinstance(item, dict)]
+                                if dict_items:
+                                    return dict_items
+                        if {"id", "text"}.issubset(obj.keys()):
+                            return [obj]
+                except Exception:
+                    continue
         return []
 
     def _on_goal_add_for_brain(brain_name: str, goal_text: str) -> Future[str]:
@@ -121,9 +160,10 @@ def setup_goal_operations(app: Any) -> None:
                 if not future.done():
                     future.set_result([])
 
+            # Always fetch fresh directives so UI reflects recent add/remove operations.
             app._run_cli_async(
                 ["goals-list"],
-                use_cache=True,
+                use_cache=False,
                 worker_pool=getattr(app, "_worker_pool", None),
                 ui_dispatcher=getattr(app, "_ui_dispatcher", None),
                 on_success=_on_success,

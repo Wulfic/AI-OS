@@ -5,12 +5,101 @@ Handles dataset selection, batch size, steps, brain name, and related UI compone
 
 from __future__ import annotations
 import os
+import string
 import tkinter as tk
-from tkinter import ttk
-from typing import TYPE_CHECKING
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
+from typing import TYPE_CHECKING, Iterable, Tuple
 
 if TYPE_CHECKING:
     from .panel_main import HRMTrainingPanel
+
+
+def _iter_linux_mount_roots() -> Iterable[Path]:
+    """Yield likely mount root directories for Linux and Unix environments."""
+
+    # Incorporate standard mount roots plus user-specific GVFS mounts.
+    candidates = {
+        Path("/mnt"),
+        Path("/media"),
+        Path("/Volumes"),  # macOS
+        Path.home() / "mnt",
+        Path.home() / "media",
+    }
+
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+    if runtime_dir:
+        candidates.add(Path(runtime_dir) / "gvfs")
+
+    uid = os.getuid() if hasattr(os, "getuid") else None
+    if uid is not None:
+        candidates.add(Path("/run/user") / str(uid) / "gvfs")
+
+    for candidate in candidates:
+        if candidate.is_dir():
+            yield candidate
+
+
+def get_mounted_volumes() -> list[Tuple[str, str]]:
+    """Return a sorted list of accessible mounted volumes for dataset browsing."""
+
+    volumes: list[Tuple[str, str]] = []
+    seen_paths: set[str] = set()
+
+    def _add_volume(label: str, path: Path) -> None:
+        try:
+            resolved = path.resolve()
+        except Exception:
+            resolved = path
+
+        norm_path = str(resolved)
+        if norm_path in seen_paths:
+            return
+
+        try:
+            if resolved.is_dir() and os.access(norm_path, os.R_OK):
+                volumes.append((label, norm_path))
+                seen_paths.add(norm_path)
+        except Exception:
+            return
+
+    if os.name == "nt":
+        for letter in string.ascii_uppercase:
+            root = Path(f"{letter}:/")
+            if root.exists():
+                _add_volume(f"Drive {letter}:", root)
+        return sorted(volumes, key=lambda item: item[0].lower())
+
+    # POSIX-style mounts, including GVFS for SMB shares.
+    for root in _iter_linux_mount_roots():
+        try:
+            # Include the root itself when it is a mount point.
+            _add_volume(f"{root.name or root}/", root)
+
+            for entry in sorted(root.iterdir()):
+                if not entry.is_dir():
+                    continue
+
+                label = entry.name
+                raw = entry.name
+                if raw.startswith("smb-share:"):
+                    suffix = raw.split(":", 1)[-1]
+                    parts = {}
+                    for chunk in suffix.split(","):
+                        if "=" in chunk:
+                            key, value = chunk.split("=", 1)
+                            parts[key] = value
+                    server = parts.get("server", "smb")
+                    share = parts.get("share", "share")
+                    label = f"SMB {server}/{share}"
+                elif raw.startswith("sftp:"):
+                    label = f"SFTP {raw.split(':', 1)[-1]}"
+
+                _add_volume(label, entry)
+        except Exception:
+            continue
+
+    return sorted(volumes, key=lambda item: item[0].lower())
 
 
 def build_core_form(panel: HRMTrainingPanel, parent: any) -> None:  # type: ignore[valid-type]
@@ -25,6 +114,147 @@ def build_core_form(panel: HRMTrainingPanel, parent: any) -> None:  # type: igno
     form = ttk.Frame(parent)
     form.pack(fill="x")
     panel._form_row = 0
+
+    # Track the last directory the user visited so subsequent dialogs reuse it.
+    last_browse_dir = panel.dataset_var.get() or panel._project_root
+
+    def _remember_last_dir(path: str) -> None:
+        nonlocal last_browse_dir
+        if not path:
+            return
+        candidate = path if os.path.isdir(path) else os.path.dirname(path)
+        if candidate:
+            last_browse_dir = candidate
+
+    def _resolve_initial_dir(hint: str | None = None) -> str:
+        if hint and os.path.isdir(hint):
+            return hint
+
+        current = panel.dataset_var.get()
+        if current:
+            if os.path.isdir(current):
+                return current
+            parent_dir = os.path.dirname(current)
+            if parent_dir and os.path.isdir(parent_dir):
+                return parent_dir
+
+        if last_browse_dir and os.path.isdir(last_browse_dir):
+            return last_browse_dir
+
+        try:
+            if panel._project_root and os.path.isdir(panel._project_root):
+                return panel._project_root
+        except Exception:
+            pass
+
+        return os.getcwd()
+
+    def _choose_directory(initial: str | None = None) -> None:
+        initial_dir = _resolve_initial_dir(initial)
+        try:
+            path = filedialog.askdirectory(
+                initialdir=initial_dir,
+                title="Select dataset directory",
+            )
+        except Exception as exc:  # pragma: no cover - tkinter message loop safety
+            log(panel, f"[hrm] Directory picker error: {exc}")
+            return
+
+        if path:
+            panel.dataset_var.set(path)
+            _remember_last_dir(path)
+
+    def _choose_file(initial: str | None = None) -> None:
+        initial_dir = _resolve_initial_dir(initial)
+        filetypes = [
+            ("Text files", "*.txt"),
+            ("CSV files", "*.csv"),
+            ("JSON files", "*.json *.jsonl"),
+            ("All files", "*.*"),
+        ]
+
+        try:
+            path = filedialog.askopenfilename(
+                initialdir=initial_dir,
+                title="Select dataset file",
+                filetypes=filetypes,
+            )
+        except Exception as exc:  # pragma: no cover - tkinter message loop safety
+            log(panel, f"[hrm] File picker error: {exc}")
+            return
+
+        if path:
+            panel.dataset_var.set(path)
+            _remember_last_dir(path)
+
+    def _show_drive_picker() -> None:
+        volumes = get_mounted_volumes()
+        if not volumes:
+            messagebox.showinfo(
+                "No drives detected",
+                "No mounted drives were detected. Mount a drive or network share and try again.",
+            )
+            return
+
+        dialog = tk.Toplevel(panel)
+        dialog.title("Available Drives")
+        dialog.geometry("960x720")
+        dialog.transient(panel)
+        dialog.grab_set()
+        dialog.minsize(640, 480)
+        dialog.resizable(True, True)
+
+        container = ttk.Frame(dialog, padding=12)
+        container.pack(fill="both", expand=True)
+
+        ttk.Label(
+            container,
+            text="Mounted drives and network shares detected on this system:",
+        ).pack(anchor="w")
+
+        listbox = tk.Listbox(container, activestyle="dotbox")
+        listbox.pack(fill="both", expand=True, pady=8)
+
+        for label, path in volumes:
+            listbox.insert("end", f"{label} — {path}")
+
+        if volumes:
+            listbox.selection_set(0)
+
+        hint_label = ttk.Label(
+            container,
+            text="Double-click a drive to browse inside it.",
+            font=("", 8, "italic"),
+            foreground="gray",
+        )
+        hint_label.pack(anchor="w", pady=(0, 6))
+
+        button_row = ttk.Frame(container)
+        button_row.pack(fill="x")
+
+        def _use_selected(open_dialog: bool) -> None:
+            selection = listbox.curselection()
+            if not selection:
+                return
+            selected_path = volumes[selection[0]][1]
+            if open_dialog:
+                dialog.destroy()
+                panel.after(10, lambda: _choose_directory(selected_path))
+                return
+            panel.dataset_var.set(selected_path)
+            _remember_last_dir(selected_path)
+            dialog.destroy()
+
+        ttk.Button(button_row, text="Use Path", command=lambda: _use_selected(False)).pack(side="left")
+        ttk.Button(button_row, text="Browse Inside", command=lambda: _use_selected(True)).pack(side="left", padx=6)
+        ttk.Button(button_row, text="Cancel", command=dialog.destroy).pack(side="right")
+
+        listbox.bind("<Double-Button-1>", lambda _event: _use_selected(True))
+
+    # Expose helpers for other dialogs within the panel.
+    panel._choose_dataset_directory = _choose_directory  # type: ignore[attr-defined]
+    panel._choose_dataset_file = _choose_file  # type: ignore[attr-defined]
+    panel._show_dataset_drive_picker = _show_drive_picker  # type: ignore[attr-defined]
     
     def _row(label: str, widget: any, browse_for: str | None = None) -> None:  # type: ignore[valid-type]
         r = panel._form_row
@@ -80,32 +310,25 @@ def build_core_form(panel: HRMTrainingPanel, parent: any) -> None:  # type: igno
     btn_container.grid(row=panel._form_row, column=2, sticky="w", padx=(6,0))
     select_btn = ttk.Button(btn_container, text="Select", command=lambda: show_dataset_selector(panel), width=7)
     select_btn.pack(side="left", padx=(0, 2))
-    
-    def _browse_dataset():
+
+    browse_menu = tk.Menu(btn_container, tearoff=False)
+    browse_menu.add_command(label="Folder...", command=_choose_directory)
+    browse_menu.add_command(label="Single File...", command=_choose_file)
+    browse_menu.add_separator()
+    browse_menu.add_command(label="Available Drives...", command=_show_drive_picker)
+
+    def _open_browse_menu() -> None:
         try:
-            from tkinter import filedialog
-            path = filedialog.askdirectory(
-                initialdir=panel._project_root,
-                title="Select dataset directory (or cancel to pick a file)"
+            browse_menu.tk_popup(
+                browse_btn.winfo_rootx(),
+                browse_btn.winfo_rooty() + browse_btn.winfo_height(),
             )
-            if not path:
-                path = filedialog.askopenfilename(
-                    initialdir=panel._project_root,
-                    title="Select dataset file",
-                    filetypes=[
-                        ("Text files", "*.txt"),
-                        ("CSV files", "*.csv"),
-                        ("JSON files", "*.json *.jsonl"),
-                        ("All files", "*.*")
-                    ]
-                )
-            if path:
-                panel.dataset_var.set(path)
-        except Exception as e:
-            log(panel, f"[hrm] Browse error: {e}")
-    
-    browse_btn = ttk.Button(btn_container, text="Browse", command=_browse_dataset, width=7)
+        finally:
+            browse_menu.grab_release()
+
+    browse_btn = ttk.Button(btn_container, text="Browse ▾", command=_open_browse_menu, width=9)
     browse_btn.pack(side="left")
+    panel._dataset_browse_menu = browse_menu  # type: ignore[attr-defined]
     
     form.columnconfigure(1, weight=1)
     panel._form_row += 1
@@ -158,7 +381,7 @@ def build_core_form(panel: HRMTrainingPanel, parent: any) -> None:  # type: igno
         from ..tooltips import add_tooltip
         add_tooltip(dataset_entry, "Dataset file or directory to feed into HRM training.")
         add_tooltip(select_btn, "Select from available datasets")
-        add_tooltip(browse_btn, "Browse for dataset file or folder")
+        add_tooltip(browse_btn, "Browse for dataset folders, single files, or mounted drives")
         add_tooltip(context_entry, "Maximum sequence length (context window) in tokens")
         add_tooltip(batch_entry, "Physical batch size: Number of samples per training step")
         add_tooltip(accum_combo, 
@@ -287,6 +510,10 @@ def populate_dataset_dropdown(panel: HRMTrainingPanel) -> list:
     except Exception as e:
         log(panel, f"[hrm] Could not load HuggingFace favorites: {e}")
     
+    # Mounted volumes (drives, network shares, etc.) for quick navigation
+    for display_name, mount_path in get_mounted_volumes():
+        datasets.append(("mount", mount_path, display_name))
+
     return datasets
 
 
@@ -340,6 +567,10 @@ def show_dataset_selector(panel: HRMTrainingPanel) -> None:
                 _, hf_path, display_name, fav_data = item
                 listbox.insert("end", display_name)
                 dataset_info.append(("huggingface", hf_path, fav_data))
+            elif item[0] == "mount":
+                _, mount_path, display_name = item
+                listbox.insert("end", display_name)
+                dataset_info.append(("mount", mount_path, None))
         
         # Info label
         info_label = ttk.Label(
@@ -386,24 +617,82 @@ def show_dataset_selector(panel: HRMTrainingPanel) -> None:
                         panel.after(100, lambda: detect_and_display_dataset_info(panel))
                     except Exception as e:
                         log(panel, f"[hrm] Could not auto-detect dataset size: {e}")
-                
+                elif dataset_type == "mount":
+                    dialog.destroy()
+
+                    def _open_from_mount(initial_path: str = dataset_path) -> None:
+                        chooser = getattr(panel, "_choose_dataset_directory", None)
+                        if callable(chooser):
+                            chooser(initial_path)
+                            return
+                        try:
+                            selected = filedialog.askdirectory(
+                                initialdir=initial_path,
+                                title="Select dataset directory",
+                            )
+                            if selected:
+                                panel.dataset_var.set(selected)
+                        except Exception as exc:
+                            log(panel, f"[hrm] Browse error: {exc}")
+
+                    panel.after(10, _open_from_mount)
+                    return
+
             dialog.destroy()
         
         def _browse_instead():
             dialog.destroy()
-            try:
-                from tkinter import filedialog
-                path = filedialog.askdirectory(
-                    initialdir=panel._project_root,
-                    title="Select dataset directory"
+            chooser = getattr(panel, "_choose_dataset_directory", None)
+            if callable(chooser):
+                panel.after(10, chooser)
+            else:
+                try:
+                    path = filedialog.askdirectory(
+                        initialdir=panel._project_root,
+                        title="Select dataset directory"
+                    )
+                    if path:
+                        panel.dataset_var.set(path)
+                except Exception as e:
+                    log(panel, f"[hrm] Browse error: {e}")
+
+        def _browse_file():
+            dialog.destroy()
+            chooser = getattr(panel, "_choose_dataset_file", None)
+            if callable(chooser):
+                panel.after(10, chooser)
+            else:
+                try:
+                    path = filedialog.askopenfilename(
+                        initialdir=panel._project_root,
+                        title="Select dataset file",
+                        filetypes=[
+                            ("Text files", "*.txt"),
+                            ("CSV files", "*.csv"),
+                            ("JSON files", "*.json *.jsonl"),
+                            ("All files", "*.*")
+                        ]
+                    )
+                    if path:
+                        panel.dataset_var.set(path)
+                except Exception as e:
+                    log(panel, f"[hrm] Browse error: {e}")
+
+        def _open_drive_picker():
+            dialog.destroy()
+            picker = getattr(panel, "_show_dataset_drive_picker", None)
+            if callable(picker):
+                panel.after(10, picker)
+            else:
+                messagebox.showinfo(
+                    "Drive picker unavailable",
+                    "Drive discovery is not yet available in this view. Use the Browse button instead.",
                 )
-                if path:
-                    panel.dataset_var.set(path)
-            except Exception as e:
-                log(panel, f"[hrm] Browse error: {e}")
         
         ttk.Button(btn_frame, text="Select", command=_select).pack(side="left", padx=(0, 5))
-        ttk.Button(btn_frame, text="Browse...", command=_browse_instead).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="Folder...", command=_browse_instead).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="File...", command=_browse_file).pack(side="left")
+        ttk.Button(btn_frame, text="Drives...", command=_open_drive_picker).pack(side="left", padx=5)
         ttk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side="right")
         
         # Double-click to select

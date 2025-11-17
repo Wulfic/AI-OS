@@ -499,7 +499,7 @@ aios hrm-hf train-actv1 \
   --dataset-file data.txt \
   --gradient-checkpointing \
   --amp \
-  --8bit-optimizer \
+  --use-8bit-optimizer \
   --steps 1000
 ```
 

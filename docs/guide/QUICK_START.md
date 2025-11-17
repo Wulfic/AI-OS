@@ -6,7 +6,7 @@ This single page gets you from zero to the GUI.
 
 ```powershell
 # From repo root
-./scripts/install_aios_on_windows.ps1 -Action install -Yes
+./installers/scripts/install_aios_on_windows.ps1 -Action install -Yes
 aios gui
 ```
 
@@ -22,7 +22,7 @@ aios gui
 ## Ubuntu
 
 ```bash
-./scripts/install_aios_on_ubuntu.sh install --yes
+./installers/scripts/install_aios_on_ubuntu.sh install --yes
 aios gui
 ```
 

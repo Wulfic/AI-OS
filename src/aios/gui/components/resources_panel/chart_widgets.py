@@ -281,25 +281,45 @@ def _update_chart_line(panel: "ResourcesPanel", chart_name: str, line_idx: int, 
         line = chart["lines"][line_idx]
         ax = chart["ax"]
         
+        # Convert datetime timestamps to Matplotlib date numbers for stability
+        time_values = times
+        time_converted = False
+        if times:
+            try:
+                time_values = mdates.date2num(times)  # type: ignore[attr-defined]
+                time_converted = True
+            except Exception:
+                time_values = times
+
         # Update line data
-        line.set_data(times, data)
+        line.set_data(time_values, data)
         
         if label:
             line.set_label(label)
         
         # Auto-scale axes
-        if times:
+        time_len = 0
+        try:
+            time_len = len(time_values)
+        except TypeError:
+            time_len = 1 if time_values else 0
+
+        if time_len:
             # Avoid warning when setting identical xlim values (single data point)
-            if len(times) > 1 and times[0] != times[-1]:
-                ax.set_xlim(times[0], times[-1])
-            elif len(times) == 1:
-                # Single point: set a small range around it
+            if time_len > 1 and time_values[0] != time_values[-1]:
+                ax.set_xlim(time_values[0], time_values[-1])
+            elif time_len == 1:
+                # Single point: set a small range around it (30 seconds on each side)
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore", UserWarning)
                     try:
-                        # Expand by 30 seconds on each side
-                        margin = timedelta(seconds=30)
-                        ax.set_xlim(times[0] - margin, times[0] + margin)
+                        if time_converted:
+                            margin_days = (30.0 / 86400.0)
+                            center = time_values[0]
+                            ax.set_xlim(center - margin_days, center + margin_days)
+                        else:
+                            margin = timedelta(seconds=30)
+                            ax.set_xlim(time_values[0] - margin, time_values[0] + margin)
                     except Exception:
                         pass
             

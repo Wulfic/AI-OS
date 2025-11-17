@@ -200,8 +200,8 @@ class SettingsPanel:
             if startup is not None:
                 self.startup_var.set(bool(startup))
                 # Apply startup setting immediately
-                from ...utils.startup import set_startup_enabled, is_windows
-                if is_windows():
+                from ...utils.startup import set_startup_enabled, is_windows, is_linux
+                if is_windows() or is_linux():
                     set_startup_enabled(bool(startup), minimized=bool(start_minimized))
         except Exception:
             pass

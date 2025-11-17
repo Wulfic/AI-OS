@@ -36,7 +36,14 @@ _registry_lock = threading.Lock()
 
 # Temporary/ephemeral brains that should not surface in UI lists.
 _TEMP_PATTERN = re.compile(r"^brain-[a-z]+-[0-9a-f]{8}$")
-_SYSTEM_NAMES = {"parallel_checkpoints", "checkpoints", "temp", "tmp", ".git"}
+_SYSTEM_NAMES = {
+    "parallel_checkpoints",
+    "checkpoints",
+    "temp",
+    "tmp",
+    ".git",
+    "ddp_logs",
+}
 
 
 def _normalize_store_dir(store_dir: str | None) -> str:

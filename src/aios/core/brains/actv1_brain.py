@@ -279,10 +279,11 @@ class ACTv1Brain:
                 raise FileNotFoundError(f"Checkpoint not found: {self.checkpoint_path}")
             
             # Log checkpoint file size
-            checkpoint_size_mb = os.path.getsize(self.checkpoint_path) / (1024 * 1024)
+            checkpoint_size_bytes = os.path.getsize(self.checkpoint_path)
+            checkpoint_size_mb = checkpoint_size_bytes / (1024 * 1024)
             logger.info(f"Loading checkpoint ({checkpoint_size_mb:.1f} MB)...")
             print(f"[ACTv1Brain] Loading checkpoint weights...")
-            
+
             state_dict = load_safetensors(self.checkpoint_path, device=str(self._device))
             
             # Log state dict info

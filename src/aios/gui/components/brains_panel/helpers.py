@@ -167,7 +167,7 @@ def is_temporary_brain(name: str) -> bool:
         return True
     
     # Filter out internal system directories
-    if name in ('parallel_checkpoints', 'checkpoints', 'temp', 'tmp', '.git'):
+    if name in ('parallel_checkpoints', 'checkpoints', 'temp', 'tmp', '.git', 'ddp_logs'):
         return True
     
     return False

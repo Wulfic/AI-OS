@@ -53,7 +53,16 @@ THEME_COLORS: Dict[str, Dict[str, Any]] = {
         "info_color": "#FF1493",
     },
     "Light Mode": {
-        "theme_base": None,  # Use default platform theme
+        "theme_base": None,  # Use default platform theme for baseline widgets
+        "bg": "#ffffff",
+        "fg": "#000000",
+        "button_bg": "#f0f0f0",
+        "entry_bg": "#ffffff",
+        "select_bg": "#0078d7",
+        "select_fg": "#ffffff",
+        "border": "#c8c8c8",
+        "disabled_bg": "#e0e0e0",
+        "disabled_fg": "#888888",
         "info_message": "✓ Light Mode applied",
         "info_color": "#6060a0",
     }

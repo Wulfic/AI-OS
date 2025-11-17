@@ -29,10 +29,10 @@ def _run_on_main_thread(panel: Any, callback) -> None:
         message = str(schedule_err)
         if "main thread is not in main loop" in message:
             try:
-                pending = getattr(panel, "_startup_callbacks")
+                pending = panel._startup_callbacks  # type: ignore[attr-defined]
             except AttributeError:
                 pending = []
-                setattr(panel, "_startup_callbacks", pending)
+                panel._startup_callbacks = pending  # type: ignore[attr-defined]
             pending.append(callback)
             logger.debug("Queued brains panel UI callback until main loop starts")
         else:
@@ -161,17 +161,55 @@ def refresh_brains_data(panel: Any) -> list[str]:
 
                 for message in error_messages:
                     panel._append_out(message)
+
+                # Ensure a brain row stays selected so goal operations keep context.
+                try:
+                    cached_target = getattr(panel, "_current_goal_target", None)
+                except Exception:
+                    cached_target = None
+
+                target_name: str | None = None
+                if isinstance(cached_target, tuple) and len(cached_target) == 2:
+                    target_type, name = cached_target
+                    if target_type == "brain" and isinstance(name, str) and name:
+                        target_name = name
+
+                selected_item = None
+                if target_name:
+                    for item in panel.tree.get_children():
+                        values = panel.tree.item(item).get("values", [])
+                        if values and str(values[0]) == target_name:
+                            selected_item = item
+                            break
+
+                if selected_item is None:
+                    children = panel.tree.get_children()
+                    if children:
+                        selected_item = children[0]
+
+                if selected_item is not None:
+                    try:
+                        panel.tree.selection_set(selected_item)
+                        panel.tree.focus(selected_item)
+                        panel.tree.see(selected_item)
+                    except Exception:
+                        pass
+                    try:
+                        panel._on_tree_select()
+                    except Exception:
+                        pass
             except Exception as ui_err:
                 logger.warning("Failed to apply brains data to UI: %s", ui_err)
 
         _run_on_main_thread(panel, apply_success)
 
-    except Exception as exc:
+    except Exception as err:
         tb = traceback.format_exc()
+        error_message = str(err)
 
         def apply_error() -> None:
             try:
-                panel._append_out(f"[brains] Refresh failed: {exc}")
+                panel._append_out(f"[brains] Refresh failed: {error_message}")
                 panel._append_out(tb)
                 try:
                     panel._brain_stats_cache = {}  # type: ignore[attr-defined]
@@ -270,12 +308,13 @@ def refresh_experts_data(panel: Any) -> None:
 
         _run_on_main_thread(panel, apply_success)
 
-    except Exception as exc:
+    except Exception as err:
         tb = traceback.format_exc()
+        error_message = str(err)
 
         def apply_error() -> None:
             try:
-                panel._append_out(f"[experts] Refresh failed: {exc}")
+                panel._append_out(f"[experts] Refresh failed: {error_message}")
                 panel._append_out(tb)
             except Exception as ui_err:
                 logger.warning("Failed to report experts refresh error: %s", ui_err)

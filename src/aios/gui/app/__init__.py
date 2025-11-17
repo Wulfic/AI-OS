@@ -314,13 +314,7 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
             # CRITICAL: Show window FIRST, then update to render the loading screen
             self.root.deiconify()
             if not start_minimized:
-                try:
-                    self.root.state('zoomed')  # Windows/Linux
-                except Exception:
-                    try:
-                        self.root.attributes('-zoomed', True)  # macOS
-                    except Exception:
-                        pass
+                self._maximize_startup_window()
             
             # NOW update to render the loading screen (window must be visible first)
             self.root.update_idletasks()
@@ -368,6 +362,55 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
         if not hasattr(self, '_main_loop_started'):
             self.root.mainloop()
     
+    def _maximize_startup_window(self, attempt: int = 0) -> None:
+        """Best-effort maximize to keep the loading overlay full screen."""
+
+        if getattr(self, "_start_minimized", False):
+            return
+
+        try:
+            self.root.state("zoomed")
+        except Exception:
+            pass
+
+        try:
+            self.root.attributes("-zoomed", True)
+        except Exception:
+            pass
+
+        try:
+            self.root.update_idletasks()
+        except Exception:
+            pass
+
+        try:
+            screen_w = self.root.winfo_screenwidth()
+            screen_h = self.root.winfo_screenheight()
+
+            current_w = self.root.winfo_width()
+            current_h = self.root.winfo_height()
+
+            if current_w <= 1 or current_h <= 1:
+                self.root.update_idletasks()
+                current_w = self.root.winfo_width()
+                current_h = self.root.winfo_height()
+
+            slack_w = max(48, int(screen_w * 0.05))
+            slack_h = max(48, int(screen_h * 0.05))
+
+            if current_w < (screen_w - slack_w) or current_h < (screen_h - slack_h):
+                geometry = f"{screen_w}x{screen_h}+0+0"
+                self.root.geometry(geometry)
+        except Exception:
+            pass
+
+        max_attempts = 2
+        if attempt < max_attempts:
+            try:
+                self.root.after(180, lambda: self._maximize_startup_window(attempt + 1))
+            except Exception:
+                pass
+
     def _bring_to_front_windows(self) -> None:
         """Best-effort Windows-specific foreground call using Win32 APIs."""
 

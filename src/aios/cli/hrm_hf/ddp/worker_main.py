@@ -51,7 +51,8 @@ def main(rank: int, world_size: int, init_file: str, config_dict: dict) -> None:
     
     # CRITICAL: Set CUDA allocator config FIRST, before any torch imports!
     # Note: expandable_segments not supported on Windows, but beneficial on Linux/Unix
-    os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128,expandable_segments:True,roundup_power2_divisions:4'
+    os.environ['PYTORCH_ALLOC_CONF'] = 'max_split_size_mb:128,expandable_segments:True,roundup_power2_divisions:4'
+    os.environ.pop('PYTORCH_CUDA_ALLOC_CONF', None)
     
     # Suppress expandable_segments warning on Windows
     warnings.filterwarnings("ignore", message=".*expandable_segments not supported.*", category=UserWarning)
@@ -74,7 +75,7 @@ def main(rank: int, world_size: int, init_file: str, config_dict: dict) -> None:
         if log_dir:
             from pathlib import Path
             Path(log_dir).mkdir(parents=True, exist_ok=True)
-            log_path = Path(log_dir) / f"rank{rank}.log"
+            log_path = Path(log_dir) / f"rank{rank}.out.log"
             
             import sys
             
@@ -99,6 +100,10 @@ def main(rank: int, world_size: int, init_file: str, config_dict: dict) -> None:
             fh = open(log_path, "a", encoding="utf-8", buffering=1)
             sys.stdout = Tee(sys.stdout, fh)
             sys.stderr = Tee(sys.stderr, fh)
+            try:
+                fh.write(f"[AIOS][rank={rank}] logging initialized (world={world_size})\n")
+            except Exception:
+                pass
     except Exception:
         pass
     
@@ -123,6 +128,12 @@ def main(rank: int, world_size: int, init_file: str, config_dict: dict) -> None:
     config.ddp = False  # Don't re-spawn
     config.world_size = None
     config.device = "cuda"  # Workers always use CUDA
+    # Route workers through the unified parallel training path so DDP uses the
+    # same chunk-tracker-aware implementation as all other modes.
+    try:
+        config.parallel_independent = True
+    except Exception:
+        pass
     
     from aios.cli.hrm_hf.train_actv1 import train_actv1_impl
     train_actv1_impl(config=config)

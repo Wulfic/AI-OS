@@ -46,7 +46,7 @@ Key parameters (selection):
 - Evaluation: `--eval-file`, `--eval-batches`, `--log-file`
 - Multi-GPU: `--ddp`, `--cuda-ids`, `--world-size`, `--parallel-independent`, `--strict`
 - DeepSpeed: `--zero-stage <none|zero1|zero2|zero3>`
-- MoE: `--use-moe`, `--num-experts`, `--num-experts-per-tok`, `--moe-capacity-factor`, `--auto-adjust-moe-lr`
+- MoE: `--use-moe`, `--num-experts`, `--num-experts-per-tok`, `--moe-capacity-factor`, `--auto-adjust-lr`
 - PEFT: `--use-peft`, `--peft-method`, `--lora-r`, `--lora-alpha`, `--lora-dropout`, `--lora-target-modules`
 - Precision/Quant: `--model-dtype fp32|fp16|bf16`, `--load-in-8bit`, `--load-in-4bit`
 - Inference hot‑reload: `--inference-device`, `--hot-reload-steps`

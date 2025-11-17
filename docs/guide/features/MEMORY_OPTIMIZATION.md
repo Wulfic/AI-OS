@@ -14,7 +14,7 @@ Status: Implemented (some items require verification)
 - ~40–50% memory reduction; 2–3x speedup
 
 ## 8-bit Optimizer
-- CLI: `--8bit-optimizer`; uses `bitsandbytes` if available
+- CLI: `--use-8bit-optimizer`; uses `bitsandbytes` if available
 - Quantizes optimizer states; large savings for 100M+ params
 - Fallback to AdamW if bnb unavailable
 
@@ -38,12 +38,12 @@ Status: Implemented (some items require verification)
 
 - Conservative VRAM profile:
 ```powershell
-aios hrm-hf train-actv1 --model gpt2 --dataset-file training_data/curated_datasets/test_sample.txt --steps 50 --batch-size 1 --gradient-accumulation-steps 8 --gradient-checkpointing --amp --8bit-optimizer --log-file artifacts/brains/actv1/metrics.jsonl
+aios hrm-hf train-actv1 --model gpt2 --dataset-file training_data/curated_datasets/test_sample.txt --steps 50 --batch-size 1 --gradient-accumulation-steps 8 --gradient-checkpointing --amp --use-8bit-optimizer --log-file artifacts/brains/actv1/metrics.jsonl
 ```
 
 - Long-context friendly (requires FA2-capable GPU or will fallback):
 ```powershell
-aios hrm-hf train-actv1 --model gpt2 --dataset-file training_data/curated_datasets/test_sample.txt --steps 50 --batch-size 1 --gradient-checkpointing --amp --8bit-optimizer --window-size 2048 --log-file artifacts/brains/actv1/metrics.jsonl
+aios hrm-hf train-actv1 --model gpt2 --dataset-file training_data/curated_datasets/test_sample.txt --steps 50 --batch-size 1 --gradient-checkpointing --amp --use-8bit-optimizer --window-size 2048 --log-file artifacts/brains/actv1/metrics.jsonl
 ```
 
 ## Verifying savings
@@ -51,8 +51,8 @@ aios hrm-hf train-actv1 --model gpt2 --dataset-file training_data/curated_datase
 - For FlashAttention, see the Flash Attention doc for how to confirm activation vs fallback.
 
 ## Troubleshooting
-- CUDA OOM: Reduce `--batch-size`, increase `--gradient-accumulation-steps`, or enable `--8bit-optimizer` and checkpointing.
-- bitsandbytes missing: Install the extra or run without `--8bit-optimizer` (it will fallback).
+- CUDA OOM: Reduce `--batch-size`, increase `--gradient-accumulation-steps`, or enable `--use-8bit-optimizer` and checkpointing.
+- bitsandbytes missing: Install the extra or run without `--use-8bit-optimizer` (it will fallback).
 - Unstable FP16: Try BF16 if supported (`--amp` selection is automatic) or temporarily `--no-amp`.
 
 Related: Core Training, Model Architecture

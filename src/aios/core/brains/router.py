@@ -71,47 +71,57 @@ class Router:
     def handle(self, task: Dict[str, Any]) -> Dict[str, Any]:
         modalities = task.get("modalities") or self.default_modalities
         payload = task.get("payload")
+        task_options = task.get("options") if isinstance(task.get("options"), dict) else {}
+        strict_master = bool(task.get("strict_master")) or (task_options.get("allow_fallback") is False)
         
-        # Check if there's a master brain for these modalities - use it directly if available
-        master_name = None
+        # Check if there's a master brain for these modalities - use it directly if available.
+        # Prioritise recently used masters (descending last_used) so the brain the user just loaded
+        # handles requests ahead of legacy entries that might be placeholders.
+        matching_masters: List[str] = []
+        master_errors: List[str] = []
         if self.registry.masters:
-            # Find first master matching these modalities
-            for m in sorted(self.registry.masters):
+            def _master_sort_key(name: str) -> tuple[float, str]:
+                usage = self.registry.usage.get(name, {})
+                last_used = float(usage.get("last_used", 0.0) or 0.0)
+                # Negative for descending and name for deterministic ordering
+                return (-last_used, name)
+
+            for m in sorted(self.registry.masters, key=_master_sort_key):
                 # Try to get or load the master brain to check its modalities
                 test_brain = self.registry.get(m)
                 if test_brain is None:
                     # Master not loaded and can't be loaded - skip it
                     continue
-                
+
                 # Get modalities from the loaded brain or usage record
-                if hasattr(test_brain, 'modalities'):
-                    m_mods = test_brain.modalities
+                if hasattr(test_brain, "modalities"):
+                    m_mods = getattr(test_brain, "modalities")
                 else:
                     m_mods = self.registry.usage.get(m, {}).get("modalities", [])
-                
+
                 if m_mods == list(modalities):
-                    master_name = m
-                    break
-        
-        # If we have a master, try to load it directly
-        if master_name:
+                    matching_masters.append(m)
+
+        # Try each matching master in priority order until one succeeds
+        for master_name in matching_masters:
+            load_error: Optional[str] = None
             brain = self.registry.get(master_name)
             if brain is None:
-                # Try to load master from disk (ACTV1 bundle)
+                # Try to load master from disk (ACTv1 bundle)
                 try:
                     if self.registry.store_dir:
                         brain_dir = os.path.join(self.registry.store_dir, "actv1", master_name)
                         checkpoint_path = os.path.join(brain_dir, "actv1_student.safetensors")
                         brain_json_path = os.path.join(brain_dir, "brain.json")
-                        
+
                         if os.path.exists(checkpoint_path) and os.path.exists(brain_json_path):
                             # Read brain.json to get configuration
                             with open(brain_json_path, "r", encoding="utf-8") as f:
                                 brain_data = json.load(f)
-                            
+
                             # Get max_seq_len from brain.json (this is the trained context length)
                             trained_max_seq_len = brain_data.get("max_seq_len", 2048)
-                            
+
                             # Create ACTv1 brain
                             brain = self.registry.create_actv1(
                                 name=master_name,
@@ -123,13 +133,50 @@ class Router:
                             )
                 except Exception as e:
                     logger.error(f"[Router] Failed to load master {master_name}: {e}")
-            if brain is not None:
+                    brain = None
+                    load_error = str(e)
+
+            if brain is None:
+                if load_error is None:
+                    load_error = "required files not found"
+                master_errors.append(f"{master_name}: {load_error}")
+                continue
+
+            try:
+                res = brain.run(task)
+                self.registry.record_use(master_name, list(modalities))
+                return res
+            except Exception as e:
+                logger.error(
+                    "[Router] Master brain '%s' failed during run and will be skipped: %s",
+                    master_name,
+                    e,
+                )
                 try:
-                    res = brain.run(task)
-                    self.registry.record_use(master_name, list(modalities))
-                    return res
-                except Exception as e:
-                    return {"ok": False, "error": str(e)}
+                    self.registry.brains.pop(master_name, None)
+                except Exception:
+                    pass
+                master_errors.append(f"{master_name}: {e}")
+                # Try next master (if any)
+                continue
+
+        if matching_masters:
+            error_msg = "; ".join(master_errors) if master_errors else "Master brain selection failed"
+            return {"ok": False, "error": error_msg}
+
+        if strict_master:
+            if self.registry.masters:
+                return {
+                    "ok": False,
+                    "error": (
+                        "No master brain available for requested modalities; fallback is disabled. "
+                        "Load the desired brain and ensure its modalities match."
+                    ),
+                }
+            return {
+                "ok": False,
+                "error": "No master brain configured. Load a brain before starting chat.",
+            }
         
         # Fallback to original behavior: hash-based or round-robin brain selection
         if self.strategy == "round_robin":

@@ -113,23 +113,46 @@ def create_general_settings_section(panel: "SettingsPanel", container: ttk.Frame
     general_frame = ttk.LabelFrame(container, text="General Settings", padding=8)
     general_frame.pack(fill="x", pady=(0, 8))
 
-    # Start at boot checkbox (Windows only)
+    # Start at login checkbox (platform aware)
+    from ...utils.startup import is_windows, is_linux
+
+    if is_windows():
+        startup_label = "Start AI-OS at Windows login"
+        startup_tooltip = (
+            "Automatically start AI-OS after Windows login.\n\n"
+            "When enabled, AI-OS launches automatically when you sign in.\n"
+            "This setting writes to the user-specific registry key:\n"
+            "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\n\n"
+            "Disable this option if you prefer to launch the application manually."
+        )
+    elif is_linux():
+        startup_label = "Start AI-OS when you log in"
+        startup_tooltip = (
+            "Automatically start AI-OS after your Linux desktop session begins.\n\n"
+            "When enabled, AI-OS creates ~/.config/autostart/ai-os.desktop\n"
+            "following the freedesktop.org autostart specification (tested on Ubuntu).\n\n"
+            "Remove that file or disable this option to stop launching on login."
+        )
+    else:
+        startup_label = "Start AI-OS when you log in"
+        startup_tooltip = (
+            "Autostart is currently supported on Windows and Ubuntu-based desktops.\n"
+            "On this platform, the option remains disabled."
+        )
+
     panel.startup_var = safe_variables.BooleanVar(value=False)
     startup_check = ttk.Checkbutton(
         general_frame,
-        text="Start AI-OS at Windows boot",
+        text=startup_label,
         variable=panel.startup_var,
         command=panel._on_startup_changed
     )
     startup_check.pack(anchor="w", pady=5)
+    panel.startup_check = startup_check
 
     add_tooltip(
         startup_check,
-        "Automatically start AI-OS when Windows starts up.\n\n"
-        "When enabled, AI-OS will launch automatically when you log in to Windows.\n"
-        "This setting modifies the Windows registry:\n"
-        "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\n\n"
-        "Note: Only works on Windows. On other platforms, this option has no effect."
+        startup_tooltip
     )
 
     # Startup status label
@@ -152,7 +175,7 @@ def create_general_settings_section(panel: "SettingsPanel", container: ttk.Frame
         "The application will launch silently in the background,\n"
         "showing only the tray icon. Double-click the tray icon\n"
         "to show the main window.\n\n"
-        "Works best when combined with 'Start at Windows boot'."
+        "Works best when combined with the autostart option above."
     )
 
     # Minimize to tray on close checkbox
@@ -214,12 +237,10 @@ def create_logging_section(panel: "SettingsPanel", container: ttk.Frame) -> None
     add_tooltip(
         log_level_combo,
         "Select the logging detail level:\n\n"
-        "• Normal: Shows only essential outputs and CRITICAL errors\n"
-        "  Best for regular use - shows training progress, chat responses,\n"
-        "  and important system messages without clutter.\n\n"
-        "• Advanced: Shows Normal outputs plus INFO and WARNING messages\n"
-        "  Good for troubleshooting - includes additional diagnostics,\n"
-        "  warnings about potential issues, and detailed status updates.\n\n"
+        "• Normal: Highlights essential system, training, chat, and dataset updates\n"
+        "  Shows INFO, WARNING, and ERROR logs from core features while hiding low-level noise.\n\n"
+        "• Advanced: Expands Normal mode to include INFO/WARNING logs from every category\n"
+        "  Useful when troubleshooting panels beyond the core workflows.\n\n"
         "• DEBUG: Shows absolutely everything\n"
         "  For developers and deep debugging - includes all internal\n"
         "  operations, API calls, and low-level system details.\n\n"
@@ -245,7 +266,7 @@ def create_logging_section(panel: "SettingsPanel", container: ttk.Frame) -> None
 
     # Info label explaining each level (using gray for better readability across all themes)
     level_info_text = (
-        "Normal: Essentials only  |  Advanced: +INFO & WARNING  |  DEBUG: Everything"
+        "Normal: Essentials (INFO+)  |  Advanced: All INFO/WARN  |  DEBUG: Everything"
     )
     level_info_label = ttk.Label(
         logging_frame,

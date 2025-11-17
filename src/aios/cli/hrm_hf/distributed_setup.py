@@ -59,11 +59,13 @@ def initialize_deepspeed(
             raise ImportError("deepspeed module not found in path")
         
         ds_version = getattr(deepspeed, "__version__", "unknown")
-        logger.info(f"DeepSpeed version: {ds_version}")
+        world_size = _infer_world_size(config)
+        logger.info(f"DeepSpeed version: {ds_version} (world_size={world_size})")
+        log_mode = "ddp_zero" if world_size > 1 else "single_process_zero"
         log_fn({
             "deepspeed": "import_success",
             "version": ds_version,
-            "note": "Using DeepSpeed without distributed launcher for single-GPU ZeRO"
+            "note": f"Using DeepSpeed in {log_mode} mode"
         })
         
         # Map zero_stage string to DeepSpeed config
@@ -84,7 +86,7 @@ def initialize_deepspeed(
         
         # Load and modify DeepSpeed config
         if Path(ds_config_path).exists():
-            with open(ds_config_path, 'r') as f:
+            with open(ds_config_path, 'r', encoding="utf-8") as f:
                 ds_config = json.load(f)
         else:
             # Create minimal config if file doesn't exist
@@ -99,14 +101,12 @@ def initialize_deepspeed(
                 "zero_optimization": {"stage": stage_num},
             }
         
-        # Update with current training config
-        gradient_accum_steps = getattr(config, 'gradient_accumulation_steps', 1)
-        ds_config["train_batch_size"] = config.batch_size * gradient_accum_steps  # Total effective batch size
-        ds_config["gradient_accumulation_steps"] = gradient_accum_steps
-        ds_config["optimizer"] = {
-            "type": "AdamW",
-            "params": {"lr": config.lr}
-        }
+        ds_config = _apply_runtime_overrides(
+            ds_config=ds_config,
+            config=config,
+            stage=zero_stage,
+            world_size=world_size,
+        )
         
         # Initialize DeepSpeed
         # For single-GPU ZeRO-3, we need torch.distributed even with 1 process
@@ -153,13 +153,24 @@ def initialize_deepspeed(
                     "fallback": "DeepSpeed will try to initialize itself"
                 })
         
-        log_fn({"deepspeed": "initializing", "mode": "single_gpu_zero", "stage": zero_stage})
+        init_mode = "ddp_zero" if world_size > 1 else "single_gpu_zero"
+        log_fn({"deepspeed": "initializing", "mode": init_mode, "stage": zero_stage, "world_size": world_size})
         
+        init_kwargs = {
+            "model": model,
+            "config": ds_config,
+        }
+
+        try:
+            params_fn = getattr(model, "parameters", None)
+            if callable(params_fn):
+                init_kwargs["model_parameters"] = params_fn()
+        except Exception:
+            # Fall back to DeepSpeed's internal parameter handling
+            pass
+
         # Let DeepSpeed handle distributed init if needed (default behavior)
-        model_engine, optimizer, _, _ = deepspeed.initialize(
-            model=model,
-            config=ds_config,
-        )
+        model_engine, optimizer, _, _ = deepspeed.initialize(**init_kwargs)
         
         log_fn({
             "deepspeed": "initialized",
@@ -168,6 +179,7 @@ def initialize_deepspeed(
             "train_batch_size": ds_config["train_batch_size"],
             "fp16": ds_config.get("fp16", {}).get("enabled", False),
             "bf16": ds_config.get("bf16", {}).get("enabled", False),
+            "world_size": world_size,
         })
         
         return model_engine, True
@@ -191,6 +203,135 @@ def initialize_deepspeed(
             "fallback": "Training without ZeRO optimization"
         })
         return None, False
+
+
+def _infer_world_size(config: "TrainingConfig") -> int:
+    """Best-effort inference of intended world size."""
+    try:
+        world_size = getattr(config, "world_size", None)
+        if world_size is not None and int(world_size) > 0:
+            return int(world_size)
+    except Exception:
+        pass
+
+    cuda_ids = getattr(config, "cuda_ids", None)
+    if cuda_ids:
+        try:
+            if isinstance(cuda_ids, str):
+                entries = [item.strip() for item in cuda_ids.split(",") if item.strip()]
+            else:
+                entries = [str(item).strip() for item in cuda_ids if str(item).strip()]
+            if entries:
+                return max(len(entries), 1)
+        except Exception:
+            pass
+
+    try:
+        if torch.distributed.is_initialized():
+            return max(torch.distributed.get_world_size(), 1)
+    except Exception:
+        pass
+
+    return 1
+
+
+def _apply_runtime_overrides(
+    *,
+    ds_config: dict,
+    config: "TrainingConfig",
+    stage: str,
+    world_size: int,
+) -> dict:
+    """Normalize DeepSpeed config values at runtime."""
+
+    def _safe_int(value: Any, default: int) -> int:
+        try:
+            return max(int(value), 1)
+        except Exception:
+            return default
+
+    def _safe_float(value: Any, default: float) -> float:
+        try:
+            return float(value)
+        except Exception:
+            return default
+
+    gradient_accum_steps = _safe_int(
+        getattr(config, "gradient_accumulation_steps", 1),
+        default=1,
+    )
+    micro_batch = _safe_int(getattr(config, "batch_size", 1), default=1)
+
+    steps_candidate = (
+        getattr(config, "num_train_steps", None)
+        or getattr(config, "steps", None)
+        or getattr(config, "max_steps", None)
+        or getattr(config, "total_steps", None)
+    )
+    total_steps = _safe_int(steps_candidate, default=gradient_accum_steps)
+    total_steps = max(total_steps, gradient_accum_steps)
+
+    lr = _safe_float(getattr(config, "lr", 1e-4), default=1e-4)
+    zero_stage_num = _safe_int(stage.lower().replace("zero", ""), default=1)
+
+    train_batch = micro_batch * gradient_accum_steps * max(world_size, 1)
+
+    ds_config["train_batch_size"] = train_batch
+    ds_config["train_micro_batch_size_per_gpu"] = micro_batch
+    ds_config["gradient_accumulation_steps"] = gradient_accum_steps
+
+    optimizer_cfg = ds_config.setdefault("optimizer", {})
+    optimizer_cfg.setdefault("type", "AdamW")
+    optimizer_params = optimizer_cfg.setdefault("params", {})
+    optimizer_params["lr"] = lr
+
+    scheduler_cfg = ds_config.get("scheduler")
+    if isinstance(scheduler_cfg, dict):
+        scheduler_params = scheduler_cfg.setdefault("params", {})
+        default_warmup = max(1, min(total_steps, int(max(total_steps * 0.1, 1))))
+        scheduler_params["warmup_max_lr"] = _safe_float(
+            scheduler_params.get("warmup_max_lr", lr),
+            default=lr,
+        )
+        scheduler_params["warmup_min_lr"] = _safe_float(
+            scheduler_params.get("warmup_min_lr", 0.0),
+            default=0.0,
+        )
+        scheduler_params["total_num_steps"] = _safe_int(
+            scheduler_params.get("total_num_steps", total_steps),
+            default=total_steps,
+        )
+        scheduler_params["warmup_num_steps"] = _safe_int(
+            scheduler_params.get("warmup_num_steps", default_warmup),
+            default=default_warmup,
+        )
+
+    model_dtype = str(getattr(config, "model_dtype", "fp32")).lower()
+    use_bf16 = model_dtype == "bf16"
+    use_amp = bool(getattr(config, "use_amp", False))
+    use_fp16 = use_amp and not use_bf16
+
+    if use_fp16:
+        ds_config.setdefault("fp16", {})["enabled"] = True
+    elif "fp16" in ds_config:
+        ds_config["fp16"]["enabled"] = False
+
+    if use_bf16:
+        ds_config.setdefault("bf16", {})["enabled"] = True
+    elif "bf16" in ds_config:
+        ds_config["bf16"]["enabled"] = False
+
+    zero_cfg = ds_config.setdefault("zero_optimization", {})
+    zero_cfg["stage"] = zero_stage_num
+
+    if zero_stage_num == 3:
+        zero_cfg.setdefault("stage3_prefetch_bucket_size", 5e8)
+        zero_cfg.setdefault("stage3_param_persistence_threshold", 1e6)
+        zero_cfg.setdefault("stage3_max_live_parameters", 1e9)
+        zero_cfg.setdefault("stage3_max_reuse_distance", 1e9)
+        zero_cfg.setdefault("stage3_gather_16bit_weights_on_model_save", True)
+
+    return ds_config
 
 
 def wrap_with_ddp(

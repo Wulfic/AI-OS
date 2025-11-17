@@ -35,7 +35,7 @@ See also:
 	- `--num-experts <int>` (default: 8)
 	- `--num-experts-per-tok <int>` (top-k, default: 2)
 	- `--moe-capacity-factor <float>` (default: 1.25)
-	- `--auto-adjust-moe-lr/--no-auto-adjust-moe-lr` (default: on; reduces LR for MoE stability)
+	- `--auto-adjust-lr/--no-auto-adjust-lr` (default: on; reduces LR for MoE stability)
 
 Example (small dry-run, logs expert usage):
 
@@ -57,7 +57,7 @@ Disable MoE (train dense FFN instead):
 
 Tips:
 - Lower `--num-experts-per-tok` to 1 to reduce active compute/memory on very constrained GPUs.
-- Keep `--auto-adjust-moe-lr` enabled unless you know what you’re doing; MoE routers can be unstable at higher LR.
+- Keep `--auto-adjust-lr` enabled unless you know what you’re doing; MoE routers can be unstable at higher LR.
 
 2) Train a standalone expert only (writes artifacts/experts and updates registry)
 - Trigger by passing `--expert-id <string>` to `train-actv1`.
@@ -101,7 +101,7 @@ Notes:
 ## Inputs and Outputs
 
 Inputs (training flags relevant to MoE/experts):
-- `--use-moe`, `--num-experts`, `--num-experts-per-tok`, `--moe-capacity-factor`, `--auto-adjust-moe-lr`
+- `--use-moe`, `--num-experts`, `--num-experts-per-tok`, `--moe-capacity-factor`, `--auto-adjust-lr`
 - Standard training knobs: `--max-seq-len`, `--batch-size`, `--steps`, `--lr`, `--amp`, `--gradient-checkpointing`, etc.
 - Expert-only mode: `--expert-id <id>` plus optional `--default-goal` to seed goal linkage.
 
@@ -134,7 +134,7 @@ Outputs (files and metrics):
 
 ## Troubleshooting
 - Training is unstable (NaNs/Inf) with MoE:
-	- Keep `--auto-adjust-moe-lr` enabled (default). It reduces LR for MoE automatically.
+	- Keep `--auto-adjust-lr` enabled (default). It reduces LR for MoE automatically.
 	- Lower base `--lr` and/or `--num-experts-per-tok`.
 	- Ensure AMP/precision settings are stable (`--amp` by default; try `--model-dtype bf16` on supported GPUs).
 - VRAM pressure with many experts:

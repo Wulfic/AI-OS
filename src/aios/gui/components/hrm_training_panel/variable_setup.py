@@ -30,6 +30,8 @@ def setup_variables(panel: HRMTrainingPanel) -> None:
     panel.model_var = safe_variables.StringVar(value="artifacts/hf_implant/base_model")
     panel.max_seq_var = safe_variables.StringVar(value="128")
     panel.batch_var = safe_variables.StringVar(value="4")
+    panel._batch_default_value = panel.batch_var.get()
+    panel._batch_state_loaded = False
     panel.gradient_accumulation_var = safe_variables.StringVar(value="1")
     panel.steps_var = safe_variables.StringVar(value="100")
     panel._auto_steps_calculating = False
@@ -82,7 +84,15 @@ def setup_variables(panel: HRMTrainingPanel) -> None:
     panel.linear_dataset_var = safe_variables.BooleanVar(value=True)
     
     # DeepSpeed ZeRO optimization
-    panel.zero_stage_var = safe_variables.StringVar(value="none")
+    if hasattr(panel, "zero_stage_var") and hasattr(panel.zero_stage_var, "get"):
+        try:
+            current = panel.zero_stage_var.get()
+            if current not in {"none", "zero1", "zero2", "zero3"}:
+                panel.zero_stage_var.set("none")
+        except Exception:
+            panel.zero_stage_var = safe_variables.StringVar(value="none")
+    else:
+        panel.zero_stage_var = safe_variables.StringVar(value="none")
     
     # DDP behavior toggles (always abort on DDP failure by default)
     panel.ddp_abort_on_fail_var = safe_variables.BooleanVar(value=True)

@@ -16,6 +16,16 @@ class AdvancedFields:
     # ============================================================================
     # Advanced Options
     # ============================================================================
+    kl: float = 0.0
+    """KL divergence scaling factor for KL-regularized objectives.
+
+    Default: 0.0 (disable KL regularization)."""
+
+    kl_temp: float = 1.0
+    """Temperature applied to KL term annealing schedules.
+
+    Default: 1.0 (no annealing)."""
+
     resume: bool = False
     """Resume training from last checkpoint.
     

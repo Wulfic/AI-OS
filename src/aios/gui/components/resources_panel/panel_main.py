@@ -37,6 +37,7 @@ class ResourcesPanel(ttk.LabelFrame):  # type: ignore[misc]
         save_state_fn: Optional[Callable[[], None]] = None,
         root: Any | None = None,
         worker_pool: Any | None = None,
+        post_to_ui: Optional[Callable[[Callable[..., None]], None]] = None,
     ) -> None:
         """Initialize ResourcesPanel.
         
@@ -68,6 +69,7 @@ class ResourcesPanel(ttk.LabelFrame):  # type: ignore[misc]
             except Exception:
                 self._tk_root = None
         self._worker_pool = worker_pool
+        self._post_to_ui = post_to_ui
         self._monitor_after_id = None
         self._caps_busy_count = 0
         self._detect_inflight = False
@@ -97,10 +99,12 @@ class ResourcesPanel(ttk.LabelFrame):  # type: ignore[misc]
         self.train_device_var = safe_variables.StringVar(value="auto")  # auto|cpu|cuda
         self.run_device_var = safe_variables.StringVar(value="auto")    # auto|cpu|cuda
         
-        # Training mode: "ddp" or "parallel" (Windows locked to parallel)
+        # Training mode: "ddp", "parallel", or "zero3" (Windows locked to parallel)
         default_mode = "parallel" if platform.system() == "Windows" else "ddp"
         self.training_mode_var = safe_variables.StringVar(value=default_mode)
+        self.zero_stage_var = safe_variables.StringVar(value="none")
         self.is_windows = platform.system() == "Windows"
+        self.is_linux = platform.system() == "Linux"
         self._active_os_label = platform.system().strip().lower()
         self._last_loaded_os: str | None = self._active_os_label
         self._last_selection_warning: str | None = None
@@ -113,14 +117,19 @@ class ResourcesPanel(ttk.LabelFrame):  # type: ignore[misc]
             try:
                 mode = self.training_mode_var.get()
                 logger.info(f"Training mode toggled: {mode}")
+                self._sync_zero_stage_with_mode()
+                self._notify_zero_stage_consumers()
             except Exception:
                 pass
         self.training_mode_var.trace_add("write", _on_training_mode_change)
+        self.zero_stage_var.trace_add("write", lambda *args: self._on_zero_stage_change())
         
         # Dynamic CUDA rows
         self._cuda_train_rows = []  # list of {id, name, enabled_var, mem_var, util_var, row_widgets}
         self._cuda_run_rows = []    # list of {id, name, enabled_var, mem_var, util_var, row_widgets}
         self._pending_gpu_settings: dict[str, Any] = {}
+        self._cuda_train_build_token: Any | None = None
+        self._cuda_run_build_token: Any | None = None
         
         # Storage caps variables
         self.dataset_cap_var = safe_variables.StringVar(value="")
@@ -138,6 +147,7 @@ class ResourcesPanel(ttk.LabelFrame):  # type: ignore[misc]
         # Initialize training mode toggle state (disabled until GPUs detected)
         from . import device_management
         device_management.update_training_mode_toggle_state(self)
+        self._sync_zero_stage_with_mode()
         
         # Setup auto-save on variable changes
         self._setup_autosave()
@@ -203,6 +213,7 @@ class ResourcesPanel(ttk.LabelFrame):  # type: ignore[misc]
         self.train_device_var.trace_add("write", _autosave)
         self.run_device_var.trace_add("write", _autosave)
         self.training_mode_var.trace_add("write", _autosave)
+        self.zero_stage_var.trace_add("write", _autosave)
         self.dataset_cap_var.trace_add("write", _autosave)
         self.max_performance_var.trace_add("write", _autosave)
         
@@ -543,6 +554,140 @@ class ResourcesPanel(ttk.LabelFrame):  # type: ignore[misc]
             info: Detection dict (same format as set_detected)
         """
         device_management.refresh_detected(self, info)
+
+    # Training mode helpers
+
+    def _selected_training_gpu_count(self) -> int:
+        """Return the number of GPUs currently enabled for training."""
+        rows = getattr(self, "_cuda_train_rows", [])
+        if not rows:
+            pending = getattr(self, "_pending_gpu_settings", {}).get("train_cuda_selected")
+            if isinstance(pending, (set, list, tuple)):
+                try:
+                    return len(pending)
+                except Exception:
+                    return 0
+            return 0
+
+        count = 0
+        for row in rows:
+            try:
+                enabled = row.get("enabled")
+                if enabled is not None and bool(enabled.get()):  # type: ignore[union-attr]
+                    count += 1
+            except Exception:
+                continue
+        return count
+
+    def _sync_zero_stage_with_mode(self, zero3_available: bool | None = None) -> None:
+        """Keep ZeRO stage selection consistent with training mode and platform."""
+        try:
+            mode = self.training_mode_var.get()
+        except Exception:
+            mode = "parallel"
+
+        selected_count = self._selected_training_gpu_count()
+
+        if self.is_windows:
+            if selected_count <= 1:
+                if mode != "none":
+                    with self.suspend_auto_apply():
+                        self.training_mode_var.set("none")
+                    mode = "none"
+            else:
+                if mode != "parallel":
+                    with self.suspend_auto_apply():
+                        self.training_mode_var.set("parallel")
+                    mode = "parallel"
+            if self.zero_stage_var.get() != "none":
+                with self.suspend_auto_apply():
+                    self.zero_stage_var.set("none")
+            return
+
+        if mode == "none":
+            if self.zero_stage_var.get() != "none":
+                with self.suspend_auto_apply():
+                    self.zero_stage_var.set("none")
+            return
+
+        if selected_count <= 1 and mode in {"ddp", "parallel", "zero3"}:
+            with self.suspend_auto_apply():
+                self.training_mode_var.set("none")
+            mode = "none"
+            if self.zero_stage_var.get() != "none":
+                with self.suspend_auto_apply():
+                    self.zero_stage_var.set("none")
+            return
+
+        if zero3_available is None:
+            zero3_available = self.is_linux and selected_count > 1
+        elif not zero3_available and not getattr(self, "_cuda_train_rows", []):
+            zero3_available = self.is_linux and selected_count > 1
+
+        zero_stage = self.zero_stage_var.get()
+
+        if zero_stage == "zero3" and mode != "zero3":
+            if zero3_available and self.is_linux and selected_count > 1:
+                with self.suspend_auto_apply():
+                    self.training_mode_var.set("zero3")
+                mode = "zero3"
+            else:
+                with self.suspend_auto_apply():
+                    self.zero_stage_var.set("none")
+                zero_stage = "none"
+
+        if mode == "zero3":
+            if zero3_available and self.is_linux and selected_count > 1:
+                if zero_stage != "zero3":
+                    with self.suspend_auto_apply():
+                        self.zero_stage_var.set("zero3")
+            else:
+                fallback = "ddp" if (self.is_linux and selected_count > 1) else "none"
+                with self.suspend_auto_apply():
+                    self.training_mode_var.set(fallback)
+                if zero_stage == "zero3":
+                    with self.suspend_auto_apply():
+                        self.zero_stage_var.set("none")
+            return
+
+        if zero_stage == "zero3":
+            with self.suspend_auto_apply():
+                self.zero_stage_var.set("none")
+
+    def _on_zero_stage_change(self) -> None:
+        """Notify dependent panels when ZeRO stage changes."""
+        try:
+            if self.is_windows and self.zero_stage_var.get() != "none":
+                with self.suspend_auto_apply():
+                    self.zero_stage_var.set("none")
+                return
+            if self.zero_stage_var.get() == "zero3" and self.training_mode_var.get() != "zero3":
+                self._sync_zero_stage_with_mode()
+        except Exception:
+            logger.debug("ZeRO stage validation failed", exc_info=True)
+
+        self._notify_zero_stage_consumers()
+
+    def _notify_zero_stage_consumers(self) -> None:
+        """Dispatch shared ZeRO stage updates to interested panels."""
+        callback = getattr(self, "_hrm_deepspeed_callback", None)
+        if not callable(callback):
+            return
+
+        def _invoke() -> None:
+            try:
+                callback()
+            except Exception:
+                logger.debug("HRM ZeRO callback failed", exc_info=True)
+
+        if self._post_to_ui is not None:
+            try:
+                self._post_to_ui(_invoke)
+                return
+            except Exception:
+                logger.debug("post_to_ui dispatch failed; running callback inline", exc_info=True)
+
+        _invoke()
     
     # State persistence methods
     
@@ -642,8 +787,9 @@ class ResourcesPanel(ttk.LabelFrame):  # type: ignore[misc]
             "run_cuda_selected": cuda_run_selected,
             "run_cuda_mem_pct": cuda_run_mem_pct or gp,
             "run_cuda_util_pct": cuda_run_util_pct,
-            # Training mode (DDP vs Parallel)
+            # Training mode (DDP | Parallel | Zero3 | None)
             "training_mode": self.training_mode_var.get(),
+            "zero_stage": self.zero_stage_var.get(),
             # Storage caps
             "dataset_cap": self.dataset_cap_var.get(),
             # Persist OS so we can warn when selections migrate across platforms
@@ -711,11 +857,18 @@ class ResourcesPanel(ttk.LabelFrame):  # type: ignore[misc]
             except Exception:
                 pass
             
-            # Training mode (DDP vs Parallel)
+            # Training mode (DDP vs Parallel vs None)
             try:
                 tm = vals.get("training_mode")
-                if isinstance(tm, str) and tm in {"ddp", "parallel"}:
+                if isinstance(tm, str) and tm in {"ddp", "parallel", "zero3", "none"}:
                     self.training_mode_var.set(tm)
+            except Exception:
+                pass
+
+            try:
+                zs = vals.get("zero_stage")
+                if isinstance(zs, str) and zs in {"none", "zero1", "zero2", "zero3"}:
+                    self.zero_stage_var.set(zs)
             except Exception:
                 pass
             
@@ -835,6 +988,16 @@ class ResourcesPanel(ttk.LabelFrame):  # type: ignore[misc]
                 self._last_caps_snapshot = tuple(sorted(snapshot_items))
         except Exception:
             pass
+
+        try:
+            device_management.update_training_mode_toggle_state(self)
+        except Exception:
+            logger.debug("Failed to refresh training mode toggles after config load", exc_info=True)
+
+        try:
+            self._sync_zero_stage_with_mode()
+        except Exception:
+            logger.debug("Failed to sync ZeRO stage after config load", exc_info=True)
 
     def set_state(self, state: dict) -> None:
         """Restore panel state from saved data (alias for set_values).

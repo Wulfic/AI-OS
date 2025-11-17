@@ -35,6 +35,7 @@ except Exception:  # pragma: no cover
 
 # Import safe Variable wrappers
 from ...utils import safe_variables
+from ...utils.theme_utils import compute_treeview_dimensions
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ...utils.resource_management.async_pool import AsyncWorkerPool
@@ -188,12 +189,12 @@ class HelpPanel(ttk.LabelFrame):  # type: ignore[misc]
         
         # Right pane: HTML preview
         right = ttk.Frame(self._pane)
-        self._pane.add(right, weight=3)
+        self._pane.add(right, weight=5)
         self._right_frame = right
         
         # Configure minimum sizes
         try:
-            self._pane.paneconfigure(self._left_frame, minsize=220)
+            self._pane.paneconfigure(self._left_frame, minsize=180)
             self._pane.paneconfigure(self._right_frame, minsize=300)
         except Exception:
             pass
@@ -211,13 +212,32 @@ class HelpPanel(ttk.LabelFrame):  # type: ignore[misc]
             parent: Parent widget
         """
         # Treeview with hidden metadata columns
+        tree_style = "HelpDocs.Treeview"
+        try:
+            style = ttk.Style()
+            row_height, _ = compute_treeview_dimensions("help-panel")
+            # Tight yet readable rows so more TOC items fit on screen
+            compact_row_height = max(row_height - 20, 15)
+            style.configure(tree_style, rowheight=compact_row_height, padding=(0, 0, 0, 0))
+        except Exception:
+            tree_style = "Treeview"
+
+        tree_container = ttk.Frame(parent)
+        tree_container.pack(fill="both", expand=True)
+
+        scrollbar = ttk.Scrollbar(tree_container, orient="vertical")
+        scrollbar.pack(side="right", fill="y")
+
         self.results = ttk.Treeview(
-            parent,
+            tree_container,
             columns=("path", "line"),
             show="tree",
             displaycolumns=(),  # Hide metadata columns
+            style=tree_style,
+            yscrollcommand=scrollbar.set,
         )
-        self.results.pack(fill="both", expand=True)
+        self.results.pack(side="left", fill="both", expand=True)
+        scrollbar.configure(command=self.results.yview)
         
         # Event bindings
         self.results.bind("<<TreeviewSelect>>", self._on_tree_single_click)
@@ -347,6 +367,14 @@ class HelpPanel(ttk.LabelFrame):  # type: ignore[misc]
                 logger.info("[HelpPanel] HtmlFrame instance created, packing...")
                 self.html_view.pack(fill="both", expand=True)
                 
+                # Tkhtml's forcefontmetrics can distort line spacing on some platforms.
+                try:
+                    if hasattr(self.html_view, "html") and self.html_view.html:
+                        self.html_view.html.configure(forcefontmetrics=False)
+                        logger.info("[HelpPanel] Disabled Tkhtml forcefontmetrics for accurate layout")
+                except Exception as config_err:
+                    logger.warning(f"[HelpPanel] Could not adjust forcefontmetrics: {config_err}")
+
                 # Force UI update to ensure widget is rendered
                 self.update_idletasks()
                 logger.info("[HelpPanel] HtmlFrame packed and UI updated")
@@ -921,7 +949,7 @@ class HelpPanel(ttk.LabelFrame):  # type: ignore[misc]
                 html_page = (
                     "<html><head><meta charset='utf-8'><style>"
                     f"body{{font-family:'Segoe UI', Arial, sans-serif; "
-                    f"background:{colors['bg']}; color:{colors['fg']}; padding:16px; line-height:1.6;}}"
+                    f"background:{colors['bg']}; color:{colors['fg']}; padding:16px; line-height:1.32em;}}"
                     "p{margin:0;}"
                     "</style></head><body><p>" + (msg or "") + "</p></body></html>"
                 )
@@ -1176,26 +1204,40 @@ class HelpPanel(ttk.LabelFrame):  # type: ignore[misc]
         """
         # Get theme colors
         colors = self._get_theme_colors()
+        # Keep base text metrics uniform so wrapped and single lines align visually.
+        line_height = "1.32em"
+        paragraph_spacing = "0.68em"
+        list_spacing = "0.55em"
         
         return (
             "<html><head><meta charset='utf-8'><style>"
             "body{font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', "
             "Helvetica, Arial, sans-serif, 'Apple Color Emoji','Segoe UI Emoji'; "
-            f"background:{colors['bg']}; color:{colors['fg']}; padding:16px; line-height:1.6;}}"
-            f"h1,h2,h3{{border-bottom:1px solid {colors['border']}; padding-bottom:.3em; margin-top:1.5em;}}"
-            f"pre{{background:{colors['code_bg']}; padding:12px; overflow:auto; border-radius:6px; "
-            f"border:1px solid {colors['border']};}}"
-            f"code{{background:{colors['code_bg']}; padding:2px 6px; border-radius:4px; "
-            "font-family:'Consolas','Monaco','Courier New',monospace; font-size:0.9em;}"
+            f"background:{colors['bg']}; color:{colors['fg']}; margin:0; padding:40px 60px 84px 60px; "
+            f"line-height:{line_height}; overflow-x:hidden;}}"
+            ".doc-container{width:100%; margin:0; padding:0;}"
+            f"p{{margin:0 0 {paragraph_spacing} 0; line-height:{line_height};}}"
+            f"li{{margin:0 0 {list_spacing} 0; line-height:{line_height}; padding-bottom:0;}}"
+            f".doc-container ul,.doc-container ol{{padding-left:2.2em; margin:0 0 {paragraph_spacing} 0;}}"
+            f"h1,h2,h3{{border-bottom:1px solid {colors['border']}; padding-bottom:.28em; margin-top:1.85em; "
+            "margin-bottom:0.65em; line-height:1.35em;}}"
+            "h1:first-of-type{margin-top:0;}"
+            f"pre{{background:{colors['code_bg']}; padding:14px; overflow:auto; border-radius:6px; "
+            f"border:1px solid {colors['border']}; margin:1.8em 0; max-width:100%;}}"
+            f"code{{background:{colors['code_bg']}; padding:2px 7px; border-radius:4px; "
+            "font-family:'Consolas','Monaco','Courier New',monospace; font-size:0.94em;}}"
             "pre code{background:transparent; padding:0; border:none;}"
-            "table{border-collapse:collapse; display:block; width:100%; overflow:auto;} "
-            f"td,th{{border:1px solid {colors['border']}; padding:6px 13px;}}"
-            f"a{{color:{colors['link']}; text-decoration:none; cursor:pointer;}} "
+            "table{border-collapse:collapse; width:100%; margin:1.8em 0; table-layout:auto;}"
+            f"td,th{{border:1px solid {colors['border']}; padding:8px 14px; vertical-align:top; "
+            "word-break:break-word;}}"
+            f"a{{color:{colors['link']}; text-decoration:none; cursor:pointer;}}"
             "a:hover{text-decoration:underline;}"
-            "ul,ol{padding-left:2em;}"
-            f".warn{{background:{colors['warn_bg']};border:1px solid {colors['warn_border']};padding:10px;"
-            "border-radius:6px;margin-bottom:12px;}"
-            "</style></head><body>" + html_content + "</body></html>"
+            "img,video{max-width:100%; height:auto; border-radius:4px;}"
+            f".warn{{background:{colors['warn_bg']};border:1px solid {colors['warn_border']};padding:12px;"
+            "border-radius:6px;margin-bottom:18px; line-height:1.35em;}"
+            "blockquote{border-left:4px solid rgba(128,128,128,0.35); margin:1.8em 0; padding:0.7em 1.3em; opacity:0.95;}"
+            "hr{border:0; border-top:1px solid rgba(128,128,128,0.35); margin:2.6em 0;}"
+            "</style></head><body><div class='doc-container'>" + html_content + "</div></body></html>"
         )
 
     # ========== Link Handling ==========
@@ -1344,7 +1386,7 @@ class HelpPanel(ttk.LabelFrame):  # type: ignore[misc]
             if not w or w <= 0:
                 w = self.winfo_width()
             if w and w > 0:
-                pos = int(w * 0.25)
+                pos = max(180, int(w * 0.18))
                 try:
                     self._pane.sashpos(0, pos)
                     self._sash_set_once = True
@@ -1367,7 +1409,7 @@ class HelpPanel(ttk.LabelFrame):  # type: ignore[misc]
                     w = 0
             
             if w and w > 0:
-                pos = int(w * 0.25)
+                pos = max(180, int(w * 0.18))
                 try:
                     self._pane.sashpos(0, pos)
                     self._sash_set_once = True
@@ -1391,7 +1433,7 @@ class HelpPanel(ttk.LabelFrame):  # type: ignore[misc]
         
         try:
             if (lw <= 140) and (pw > 0):
-                pos = max(200, int(pw * 0.25))
+                pos = max(180, int(pw * 0.18))
                 try:
                     self._pane.sashpos(0, pos)
                 except Exception:

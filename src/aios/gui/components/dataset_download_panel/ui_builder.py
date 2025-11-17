@@ -244,7 +244,7 @@ def _build_action_buttons(panel, parent):
         actions_frame,
         text="ℹ️ View Details",
         command=panel._view_dataset_details,
-        width=15
+        width=8
     )
     add_tooltip(details_btn, "View detailed information about selected dataset")
     details_btn.pack(side="left", padx=(0, 5))

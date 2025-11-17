@@ -95,13 +95,14 @@ def build_optimizations_section(panel: HRMTrainingPanel, parent: any) -> None:  
     ttk.Label(zero_row, text="DeepSpeed:", width=15, anchor="e", font=("TkDefaultFont", 9, "bold")).pack(side="left")
     ttk.Label(zero_row, text="ZeRO Stage:").pack(side="left", padx=(0, 2))
     zero_combo = ttk.Combobox(zero_row, textvariable=panel.zero_stage_var, width=8, state="readonly")
-    zero_combo['values'] = ('none', 'zero1', 'zero2', 'zero3')
+    zero_combo['values'] = ('none', 'zero1', 'zero2')
     zero_combo.pack(side="left")
     panel.zero_savings_lbl = ttk.Label(zero_row, text="")
     panel.zero_savings_lbl.pack(side="left", padx=(10, 0))
     
     # Store reference to zero_combo for dynamic state management
     panel.zero_combo = zero_combo
+    panel._zero_combo_base_values = ('none', 'zero1', 'zero2')
     
     # Row 6: MoE Learning Rate Auto-Adjust
     moe_lr_row = ttk.Frame(opt_frame)

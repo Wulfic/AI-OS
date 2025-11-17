@@ -4,11 +4,15 @@ from __future__ import annotations
 import logging
 import time
 import tkinter as tk
+import platform
 from collections import deque
 from typing import TYPE_CHECKING, Any, Sequence
 
 from .theme_constants import THEME_COLORS
-from aios.gui.utils.theme_utils import configure_global_dialogs
+from aios.gui.utils.theme_utils import (
+    configure_global_dialogs,
+    compute_treeview_dimensions,
+)
 
 if TYPE_CHECKING:
     from .panel_main import SettingsPanel
@@ -126,6 +130,61 @@ def _configure_button_style(
     )
 
 
+def _configure_toggle_styles(
+    style: "tkinter.ttk.Style",
+    *,
+    background: str,
+    foreground: str,
+    focuscolor: str | None = None,
+) -> None:
+    """Normalize checkbutton/radiobutton sizing across platforms."""
+
+    system = platform.system()
+    padding = (8, 4) if system != "Windows" else (6, 2)
+
+    base_kwargs = {
+        "background": background,
+        "foreground": foreground,
+        "padding": padding,
+    }
+    if focuscolor:
+        base_kwargs["focuscolor"] = focuscolor
+
+    check_kwargs = dict(base_kwargs)
+    radio_kwargs = dict(base_kwargs)
+
+    if system == "Linux":
+        # Larger indicator improves visibility on GTK-based themes
+        check_kwargs["indicatorsize"] = 18
+        check_kwargs["indicatormargin"] = 4
+        radio_kwargs["indicatorsize"] = 18
+        radio_kwargs["indicatormargin"] = 4
+
+    style.configure("TCheckbutton", **check_kwargs)
+    style.configure("TRadiobutton", **radio_kwargs)
+
+
+def _configure_treeview_metrics(style: "tkinter.ttk.Style") -> None:
+    """Normalize Treeview row/heading spacing so text never overlaps on HiDPI."""
+
+    row_height, heading_padding = compute_treeview_dimensions()
+
+    try:
+        style.configure("Treeview", rowheight=row_height)
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        logger.debug("Unable to set Treeview rowheight: %s", exc)
+
+    try:
+        style.configure("Treeview", padding=(4, 2))
+    except Exception:
+        pass
+
+    try:
+        style.configure("Treeview.Heading", padding=(8, heading_padding, 8, heading_padding))
+    except Exception:
+        pass
+
+
 def apply_theme(panel: "SettingsPanel", theme: str) -> None:
     """Apply the selected theme to the application.
     
@@ -189,8 +248,12 @@ def apply_theme(panel: "SettingsPanel", theme: str) -> None:
                 selectbackground=[("readonly", select_bg)],
                 selectforeground=[("readonly", fg_light)],
             )
-            style.configure("TCheckbutton", background=bg_dark, foreground=fg_light)
-            style.configure("TRadiobutton", background=bg_dark, foreground=fg_light)
+            _configure_toggle_styles(
+                style,
+                background=bg_dark,
+                foreground=fg_light,
+                focuscolor=select_bg,
+            )
             style.configure("TLabelframe", background=bg_dark, foreground=fg_light)
             style.configure("TLabelframe.Label", background=bg_dark, foreground=fg_light)
             style.configure("TNotebook", background=bg_dark)
@@ -260,8 +323,12 @@ def apply_theme(panel: "SettingsPanel", theme: str) -> None:
                 selectbackground=[("readonly", select_bg)],
                 selectforeground=[("readonly", accent_green)],
             )
-            style.configure("TCheckbutton", background=bg_black, foreground=fg_green)
-            style.configure("TRadiobutton", background=bg_black, foreground=fg_green)
+            _configure_toggle_styles(
+                style,
+                background=bg_black,
+                foreground=fg_green,
+                focuscolor=accent_green,
+            )
             style.configure("TLabelframe", background=bg_black, foreground=fg_green)
             style.configure("TLabelframe.Label", background=bg_black, foreground=accent_green)
             style.configure("TNotebook", background=bg_black, bordercolor=bg_black)
@@ -341,8 +408,12 @@ def apply_theme(panel: "SettingsPanel", theme: str) -> None:
                 selectbackground=[("readonly", select_bg)],
                 selectforeground=[("readonly", bg_black)],
             )
-            style.configure("TCheckbutton", background=bg_black, foreground=fg_light)
-            style.configure("TRadiobutton", background=bg_black, foreground=fg_light)
+            _configure_toggle_styles(
+                style,
+                background=bg_black,
+                foreground=fg_light,
+                focuscolor=accent_orange,
+            )
             style.configure("TLabelframe", background=bg_black, foreground=accent_orange)
             style.configure("TLabelframe.Label", background=bg_black, foreground=accent_orange)
             style.configure("TNotebook", background=bg_black, bordercolor=bg_black)
@@ -437,8 +508,12 @@ def apply_theme(panel: "SettingsPanel", theme: str) -> None:
                 selectbackground=[("readonly", select_bg)],
                 selectforeground=[("readonly", fg_white)],
             )
-            style.configure("TCheckbutton", background=bg_pink, foreground=fg_dark)
-            style.configure("TRadiobutton", background=bg_pink, foreground=fg_dark)
+            _configure_toggle_styles(
+                style,
+                background=bg_pink,
+                foreground=fg_dark,
+                focuscolor=select_bg,
+            )
             style.configure("TLabelframe", background=bg_pink, foreground=fg_dark)
             style.configure("TLabelframe.Label", background=bg_pink, foreground=select_bg)
             style.configure("TNotebook", background=bg_pink)
@@ -473,53 +548,92 @@ def apply_theme(panel: "SettingsPanel", theme: str) -> None:
                     style.theme_use("clam")
             except Exception:
                 style.theme_use("default")
+
+            bg = colors.get("bg", "white")
+            fg = colors.get("fg", "black")
+            button_bg = colors.get("button_bg", "#f0f0f0")
+            entry_bg = colors.get("entry_bg", "white")
+            select_bg = colors.get("select_bg", "#0078d7")
+            select_fg = colors.get("select_fg", "white")
+            border = colors.get("border", "#c8c8c8")
+            disabled_bg = colors.get("disabled_bg", "#e0e0e0")
+            disabled_fg = colors.get("disabled_fg", "#888888")
+
+            style.configure(".", background=bg, foreground=fg, fieldbackground=entry_bg)
+            style.configure("TFrame", background=bg)
+            style.configure("TLabel", background=bg, foreground=fg)
+            style.configure("TLabelframe", background=bg, foreground=fg)
+            style.configure("TLabelframe.Label", background=bg, foreground=fg)
+            style.configure("TEntry", fieldbackground=entry_bg, foreground=fg)
+            style.configure("TNotebook", background=bg, bordercolor=bg)
+            style.configure("TNotebook.Tab", background=button_bg, foreground=fg)
+            style.map(
+                "TNotebook.Tab",
+                background=[("selected", select_bg), ("active", "#e6e6e6")],
+                foreground=[("selected", fg)],
+            )
+            style.configure("TScrollbar", background=button_bg, troughcolor=bg)
+            style.configure("Treeview", background=entry_bg, foreground=fg, fieldbackground=entry_bg)
+            style.configure("Treeview.Heading", background=button_bg, foreground=fg)
             
             _configure_combobox_style(
                 style,
-                field_bg="white",
-                fg="black",
-                button_bg="#f0f0f0",
-                select_bg="#0078d7",
-                select_fg="white",
-                arrowcolor="black",
-                bordercolor="#c8c8c8",
+                field_bg=entry_bg,
+                fg=fg,
+                button_bg=button_bg,
+                select_bg=select_bg,
+                select_fg=select_fg,
+                arrowcolor=fg,
+                bordercolor=border,
                 lightcolor="#fdfdfd",
                 darkcolor="#c0c0c0",
-                insertcolor="black",
+                insertcolor=fg,
                 style_names=combobox_styles,
             )
             _configure_button_style(
                 style,
-                background="#f0f0f0",
-                foreground="black",
-                bordercolor="#c8c8c8",
-                focuscolor="#0078d7",
-                highlightcolor="#0078d7",
+                background=button_bg,
+                foreground=fg,
+                bordercolor=border,
+                focuscolor=select_bg,
+                highlightcolor=select_bg,
                 relief="raised",
+            )
+            _configure_toggle_styles(
+                style,
+                background=bg,
+                foreground=fg,
+                focuscolor=select_bg,
             )
             _map_combobox_states(
                 style,
                 style_names=combobox_styles,
-                fieldbackground=[("readonly", "white"), ("disabled", "#e0e0e0")],
-                foreground=[("readonly", "black"), ("disabled", "#888888")],
-                background=[("readonly", "#f0f0f0"), ("disabled", "#e0e0e0")],
-                selectbackground=[("readonly", "#0078d7")],
-                selectforeground=[("readonly", "white")],
+                fieldbackground=[("readonly", entry_bg), ("disabled", disabled_bg)],
+                foreground=[("readonly", fg), ("disabled", disabled_fg)],
+                background=[("readonly", button_bg), ("disabled", disabled_bg)],
+                selectbackground=[("readonly", select_bg)],
+                selectforeground=[("readonly", select_fg)],
             )
-            style.map("TButton", background=[("active", "#e1e1e1"), ("pressed", "#d0d0d0")])
+            style.map(
+                "TButton",
+                background=[("active", "#e6e6e6"), ("pressed", "#dcdcdc")],
+                foreground=[("disabled", disabled_fg)],
+            )
             
             try:
-                panel.parent.master.option_add("*TCombobox*Listbox*Background", "white")
-                panel.parent.master.option_add("*TCombobox*Listbox*Foreground", "black")
-                panel.parent.master.option_add("*TCombobox*Listbox*selectBackground", "#0078d7")
-                panel.parent.master.option_add("*TCombobox*Listbox*selectForeground", "white")
+                panel.parent.master.option_add("*TCombobox*Listbox*Background", entry_bg)
+                panel.parent.master.option_add("*TCombobox*Listbox*Foreground", fg)
+                panel.parent.master.option_add("*TCombobox*Listbox*selectBackground", select_bg)
+                panel.parent.master.option_add("*TCombobox*Listbox*selectForeground", select_fg)
                 # Schedule update asynchronously to avoid blocking
                 panel.parent.master.after_idle(lambda: panel.parent.master.update_idletasks())
             except Exception:
                 pass
             
-            _schedule_widget_recolor(panel, bg="white", fg="black", insertbackground="black")
+            _schedule_widget_recolor(panel, bg=bg, fg=fg, insertbackground=fg)
         
+        _configure_treeview_metrics(style)
+
         # Force update of notebook tabs immediately
         try:
             root = panel.parent

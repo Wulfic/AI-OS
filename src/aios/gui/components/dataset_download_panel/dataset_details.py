@@ -9,6 +9,7 @@ from tkinter import ttk, scrolledtext
 from typing import Dict, Any
 
 from .favorites_manager import is_favorited
+from aios.gui.utils.theme_utils import apply_theme_to_toplevel, get_theme_colors, compute_popup_dimensions
 
 
 def show_dataset_details_dialog(dataset: Dict[str, Any], parent_window: tk.Widget):
@@ -22,12 +23,34 @@ def show_dataset_details_dialog(dataset: Dict[str, Any], parent_window: tk.Widge
     # Create details dialog
     dialog = tk.Toplevel(parent_window)
     dialog.title(f"Dataset Details: {dataset.get('name', 'Unknown')}")
-    dialog.geometry("600x500")
     dialog.transient(parent_window)
+    apply_theme_to_toplevel(dialog)
+    min_width = 880
+    min_height = 620
+    width, height, pos_x, pos_y = compute_popup_dimensions(
+        parent_window,
+        width_ratio=0.5,
+        height_ratio=0.74,
+        min_width=min_width,
+        min_height=min_height,
+    )
+    dialog.geometry(f"{width}x{height}+{pos_x}+{pos_y}")
+    dialog.minsize(min_width, min_height)
+    dialog.resizable(True, True)
+    colors = get_theme_colors()
     
     # Create scrolled text for details
-    details_text = scrolledtext.ScrolledText(dialog, wrap="word", font=("Consolas", 9))
-    details_text.pack(fill="both", expand=True, padx=10, pady=10)
+    details_text = scrolledtext.ScrolledText(
+      dialog,
+      wrap="word",
+      font=("Consolas", 10),
+      bg=colors["entry_bg"],
+      fg=colors["fg"],
+      insertbackground=colors["insert_bg"],
+      selectbackground=colors["select_bg"],
+      selectforeground=colors["select_fg"],
+    )
+    details_text.pack(fill="both", expand=True, padx=12, pady=(10, 8))
     
     # Format details
     details = f"""Dataset: {dataset.get('full_name', dataset.get('name', 'Unknown'))}
@@ -61,4 +84,4 @@ ID: {dataset.get('id', 'N/A')}
     details_text.config(state="disabled")
     
     # Close button
-    ttk.Button(dialog, text="Close", command=dialog.destroy).pack(pady=10)
+    ttk.Button(dialog, text="Close", command=dialog.destroy).pack(pady=(0, 12))

@@ -108,6 +108,11 @@ def set_state(panel: HRMTrainingPanel, state: dict) -> None:
                     var.set(formatted)
                 else:
                     var.set(str(v))
+                if key == "batch":
+                    try:
+                        panel._batch_state_loaded = True
+                    except Exception:
+                        pass
         except Exception as e:
             logger.debug(f"Failed to set {key}: {e}")
     
@@ -199,6 +204,30 @@ def prefill_last_safe_batches(panel: HRMTrainingPanel) -> None:
         panel: The HRMTrainingPanel instance
     """
     try:
+        state_loaded = bool(getattr(panel, "_batch_state_loaded", False))
+
+        current_batch = ""
+        try:
+            current_batch = panel.batch_var.get().strip()
+        except Exception:
+            current_batch = ""
+
+        default_batch = getattr(panel, "_batch_default_value", "").strip()
+        if state_loaded and current_batch:
+            logger.debug(
+                "Skipping last safe batch prefill; batch restored from state as '%s'",
+                current_batch,
+            )
+            return
+
+        if current_batch and current_batch not in {"auto", default_batch, "0"}:
+            logger.debug(
+                "Skipping last safe batch prefill; batch already set to '%s' (default '%s')",
+                current_batch,
+                default_batch or "<unset>",
+            )
+            return
+
         base = os.path.join(panel._project_root, "artifacts", "brains", "actv1", "last_safe.json")
         if os.path.exists(base):
             import json

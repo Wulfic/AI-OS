@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 import time
 from collections import deque
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
-from .constants import tk, ttk, safe_variables
+from .constants import ttk, safe_variables
 
 if TYPE_CHECKING:
     from .panel_main import ResourcesPanel
@@ -83,6 +83,12 @@ def build_cuda_rows(panel: "ResourcesPanel", devices: list[dict], which: str) ->
     """Build GPU selection rows for training or inference without freezing UI."""
     logger.debug(f"Building CUDA rows for {which} mode with {len(devices) if devices else 0} devices")
     clear_cuda_rows(panel, which)
+    token_attr = "_cuda_train_build_token" if which == "train" else "_cuda_run_build_token"
+    build_token = object()
+    try:
+        setattr(panel, token_attr, build_token)
+    except Exception:
+        pass
     if not isinstance(devices, list) or not devices:
         logger.info(f"No CUDA devices to display for {which} mode")
         return
@@ -165,6 +171,10 @@ def build_cuda_rows(panel: "ResourcesPanel", devices: list[dict], which: str) ->
                 panel._on_apply_all()
             except Exception:
                 pass
+            try:
+                update_training_mode_toggle_state(panel)
+            except Exception:
+                logger.debug("Failed to refresh training mode after GPU toggle", exc_info=True)
 
         def _on_gpu_setting_change(*args):
             try:
@@ -195,8 +205,24 @@ def build_cuda_rows(panel: "ResourcesPanel", devices: list[dict], which: str) ->
             pass
 
     def _process_queue() -> None:
+        try:
+            current_token = getattr(panel, token_attr)
+        except Exception:
+            current_token = None
+        if current_token is not build_token:
+            logger.debug("Discarding stale %s GPU row build (token mismatch)", which)
+            queue.clear()
+            return
         processed = 0
         while queue and processed < batch_size:
+            try:
+                current_token = getattr(panel, token_attr)
+            except Exception:
+                current_token = None
+            if current_token is not build_token:
+                logger.debug("Stopping stale %s GPU row build mid-queue", which)
+                queue.clear()
+                return
             did, data = queue.popleft()
             logger.debug(f"Creating {which} row for GPU{did}: {data.get('name', 'Unknown')} ({data.get('total_mem_mb')}MB)")
             _create_row(did, data)
@@ -208,6 +234,13 @@ def build_cuda_rows(panel: "ResourcesPanel", devices: list[dict], which: str) ->
             except Exception:
                 pass
         else:
+            try:
+                current_token = getattr(panel, token_attr)
+            except Exception:
+                current_token = None
+            if current_token is not build_token:
+                logger.debug("Skipping completion for stale %s GPU row build", which)
+                return
             elapsed = time.perf_counter() - start
             total = len(panel._cuda_train_rows if which == 'train' else panel._cuda_run_rows)
             logger.info(f"Built {total} CUDA rows for {which} mode in {elapsed:.3f}s")
@@ -300,44 +333,135 @@ def update_training_mode_toggle_state(panel: "ResourcesPanel") -> None:
         # Count detected training GPUs
         gpu_count = len(getattr(panel, "_cuda_train_rows", []))
         has_multi_gpu = gpu_count > 1
-        
-        logger.debug(f"Updating training mode toggle state: {gpu_count} GPUs, Windows={panel.is_windows}")
-        
-        # Determine if toggle should be enabled
+        selected_gpu_count = 0
+        try:
+            selected_gpu_count = panel._selected_training_gpu_count()
+        except Exception:
+            selected_gpu_count = 0
+
+        logger.debug(
+            "Updating training mode toggle state: %d GPUs detected, %d selected, Windows=%s",
+            gpu_count,
+            selected_gpu_count,
+            panel.is_windows,
+        )
+
+        ddp_btn = widgets.get("ddp_btn")
+        parallel_btn = widgets.get("parallel_btn")
+        zero3_btn = widgets.get("zero3_btn")
+        none_btn = widgets.get("none_btn")
+
+        ddp_state = "disabled"
+        parallel_state = "disabled"
+        zero3_state = "disabled"
+        none_state = "normal"
+        lock_text = ""
+        tooltip = ""
+        current_mode = "none"
+        try:
+            current_mode = panel.training_mode_var.get()
+        except Exception:
+            current_mode = "none"
+
         if panel.is_windows:
-            # Windows: Always locked to Parallel
-            state = "disabled"
-            lock_text = "🔒 (Windows: Parallel only)"
-            tooltip = "Windows DDP is broken in PyTorch. Parallel Independent Training is automatically used."
-            logger.info("Training mode locked to Parallel on Windows (DDP not supported)")
+            if has_multi_gpu and selected_gpu_count > 1:
+                lock_text = "🔒 (Windows: Parallel only)"
+                tooltip = (
+                    "Windows DDP is unavailable. Parallel Independent Training is automatically used."
+                )
+                logger.info("Training mode locked to Parallel on Windows (DDP/ZeRO unavailable)")
+                parallel_state = "disabled"
+                none_state = "disabled"
+                if current_mode != "parallel":
+                    with panel.suspend_auto_apply():
+                        panel.training_mode_var.set("parallel")
+            elif has_multi_gpu:
+                lock_text = "(Select 2+ GPUs for Parallel)"
+                tooltip = "Enable Parallel mode by selecting more than one CUDA device."
+                if current_mode != "none":
+                    with panel.suspend_auto_apply():
+                        panel.training_mode_var.set("none")
+            else:
+                lock_text = "(Single GPU mode)"
+                tooltip = "Multi-GPU modes require detecting two or more CUDA devices."
+                if current_mode != "none":
+                    with panel.suspend_auto_apply():
+                        panel.training_mode_var.set("none")
         elif has_multi_gpu:
-            # Linux with multiple GPUs: Enable toggle
-            state = "normal"
-            lock_text = ""
-            tooltip = "DDP: Standard distributed training (Linux only)\nParallel: Independent block training (Windows-compatible)"
-            logger.info(f"Training mode toggle enabled: {gpu_count} GPUs detected")
+            if selected_gpu_count > 1:
+                ddp_state = "normal"
+                parallel_state = "normal"
+                zero3_state = "normal"
+                tooltip = (
+                    "DDP: Standard distributed training (Linux only)\n"
+                    "Parallel: Independent block training\n"
+                    "Zero3: DeepSpeed ZeRO Stage 3 with dedicated inference shard (Linux, 2+ GPUs)"
+                )
+                logger.info(
+                    "Training mode toggle enabled: %d GPUs detected, %d selected",
+                    gpu_count,
+                    selected_gpu_count,
+                )
+            else:
+                lock_text = "(Select 2+ GPUs for multi-GPU modes)"
+                tooltip = "Select at least two CUDA devices to enable DDP, Parallel, or ZeRO-3."
+                logger.info(
+                    "Training mode disabled: %d GPUs detected but only %d selected",
+                    gpu_count,
+                    selected_gpu_count,
+                )
+                if current_mode != "none":
+                    with panel.suspend_auto_apply():
+                        panel.training_mode_var.set("none")
         else:
-            # No multiple GPUs: Grey out toggle
-            state = "disabled"
-            lock_text = "(Requires 2+ GPUs)"
-            tooltip = "Multi-GPU training mode selection. Enable when 2 or more GPUs are detected."
-            logger.info("Training mode toggle disabled: insufficient GPUs")
-        
-        # Update button states
-        widgets["ddp_btn"].config(state=state)
-        widgets["parallel_btn"].config(state=state)
-        
-        # Update lock label
+            lock_text = "(Single GPU mode)"
+            tooltip = "Multi-GPU modes require detecting two or more CUDA devices."
+            logger.info("Training mode toggle disabled: insufficient GPUs for DDP/ZeRO")
+            if current_mode != "none":
+                with panel.suspend_auto_apply():
+                    panel.training_mode_var.set("none")
+
+        if ddp_btn is not None:
+            ddp_btn.config(state=ddp_state)
+        if parallel_btn is not None:
+            parallel_btn.config(state=parallel_state)
+        if zero3_btn is not None:
+            zero3_btn.config(state=zero3_state)
+        if none_btn is not None:
+            none_btn.config(state=none_state)
+
         widgets["lock_label"].config(text=lock_text)
-        
-        # Update tooltips
+
         try:
             from ..tooltips import add_tooltip
-            add_tooltip(widgets["label"], tooltip)
+            if tooltip:
+                add_tooltip(widgets["label"], tooltip)
             if lock_text:
                 add_tooltip(widgets["lock_label"], tooltip)
+            if zero3_btn is not None:
+                add_tooltip(
+                    zero3_btn,
+                    "Enable DeepSpeed ZeRO Stage 3 with inference shard (Linux, requires 2 or more CUDA GPUs)",
+                )
+            if none_btn is not None:
+                add_tooltip(
+                    none_btn,
+                    "Disable multi-GPU coordination and run in single-GPU mode.",
+                )
         except Exception:
             pass
+
+        try:
+            panel._sync_zero_stage_with_mode(zero3_state == "normal")
+        except Exception:
+            logger.debug("Failed to synchronize ZeRO state after toggle update", exc_info=True)
+
+        callback = getattr(panel, "_hrm_deepspeed_callback", None)
+        if callable(callback):
+            try:
+                callback()
+            except Exception:
+                logger.debug("HRM ZeRO callback failed", exc_info=True)
             
     except Exception as e:
         logger.error(f"Failed to update training mode toggle state: {e}")
@@ -383,14 +507,6 @@ def set_detected(panel: "ResourcesPanel", info: dict) -> None:
             pass
     except Exception:
         pass
-    
-    try:
-        nvsmi_list = info.get("nvidia_smi_devices")
-        nvsmi_has = isinstance(nvsmi_list, list) and len(nvsmi_list) > 0
-        cuda_ok = bool(info.get("cuda_available")) or nvsmi_has
-    except Exception as e:
-        logger.warning(f"Error checking CUDA availability: {e}")
-        cuda_ok = False
     
     # Build CUDA device rows for train and run
     device_count = 0

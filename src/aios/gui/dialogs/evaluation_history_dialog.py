@@ -43,7 +43,7 @@ class EvaluationHistoryDialog(tk.Toplevel):  # type: ignore[misc]
         
         # Configure window
         self.title("Evaluation History")
-        self.geometry("1100x600")
+        self.geometry("2200x1200")
         
         # Make dialog modal
         self.transient(parent)

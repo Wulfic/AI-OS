@@ -103,8 +103,8 @@ def configure_log_levels(app: Any, log_level_setting: str = "Normal") -> None:
     This affects both the Python logging system AND the debug panel display filter.
     
     Log Level Meanings:
-    - "Normal": Only errors (ERROR, CRITICAL) - for end users
-    - "Advanced": Informational messages (INFO, WARNING, ERROR, CRITICAL) - for power users  
+    - "Normal": INFO and above with UI filtering that highlights essential categories
+    - "Advanced": INFO and above across all categories for deeper troubleshooting  
     - "DEBUG": Everything including debug messages - for developers/troubleshooting
     
     Args:
@@ -116,7 +116,7 @@ def configure_log_levels(app: Any, log_level_setting: str = "Normal") -> None:
     
     # Map settings dropdown to Python logging levels
     level_map = {
-        "Normal": logging.ERROR,      # Only errors
+        "Normal": logging.INFO,       # Essential info and above
         "Advanced": logging.INFO,     # Info and above
         "DEBUG": logging.DEBUG,       # Everything
     }

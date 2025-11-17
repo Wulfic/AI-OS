@@ -128,8 +128,36 @@ def _attach_task_probes(task: asyncio.Task[Any], start: float, warn_after: float
             cancelled = True
         name = _describe_task(done)
         if exc is not None:
-            log_fn = _async_logger.warning if _should_downgrade_exception(exc) else _async_logger.error
-            log_fn("Task %s failed after %.3fs", name, duration, exc_info=(type(exc), exc, exc.__traceback__))
+            host = _extract_request_host(exc)
+            if isinstance(exc, httpx.TimeoutException) and host in _HF_DATASET_HOSTS:
+                _async_logger.info(
+                    "Task %s timed out contacting %s after %.3fs",
+                    name,
+                    host or "unknown host",
+                    duration,
+                )
+                return
+            if _should_downgrade_exception(exc):
+                status = None
+                if isinstance(exc, httpx.HTTPStatusError):
+                    try:
+                        status = exc.response.status_code
+                    except Exception:
+                        status = None
+                _async_logger.info(
+                    "Task %s received expected HTTP failure %s from %s after %.3fs",
+                    name,
+                    status if status is not None else "unknown",
+                    host or "unknown host",
+                    duration,
+                )
+            else:
+                _async_logger.error(
+                    "Task %s failed after %.3fs",
+                    name,
+                    duration,
+                    exc_info=(type(exc), exc, exc.__traceback__),
+                )
             return
         if cancelled:
             if duration >= warn_after:
@@ -167,11 +195,18 @@ def _should_downgrade_exception(exc: BaseException) -> bool:
     status = response.status_code
     if status not in _COMMON_SERVER_STATUS_CODES:
         return False
-    try:
-        host = request.url.host
-    except Exception:
-        host = None
+    host = _extract_request_host(exc)
     return host in _HF_DATASET_HOSTS
+
+
+def _extract_request_host(exc: BaseException) -> Optional[str]:
+    request = getattr(exc, "request", None)
+    if request is None:
+        return None
+    try:
+        return request.url.host
+    except Exception:
+        return None
 
 
 def _diagnostic_exception_handler(loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:

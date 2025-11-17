@@ -107,7 +107,7 @@ def build_memory_panels(panel: HRMTrainingPanel, parent: any) -> None:
     panel.vram_activations_lbl.pack(side="left", padx=(0, 12))
     
     ttk.Label(vram_frame, text="Total:").pack(side="left", padx=(0, 4))
-    panel.vram_total_lbl = ttk.Label(vram_frame, text="-", font=("TkDefaultFont", 10, "bold"))
+    panel.vram_total_lbl = ttk.Label(vram_frame, text="- (wip)", font=("TkDefaultFont", 10, "bold"))
     panel.vram_total_lbl.pack(side="left")
     
     # RAM estimation panel

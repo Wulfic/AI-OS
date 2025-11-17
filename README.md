@@ -6,7 +6,7 @@
 [![License](https://img.shields.io/badge/license-ANSL--v1.0-blue.svg)](LICENSE)
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/S6S31MS4TK)
 
-Production-ready HRM-sMoE training toolkit with a clean GUI, CLI, and installers. Future-facing architecture for OS-integrated autonomous assistance.
+HRM-sMoE LLM training toolkit with a clean GUI, CLI, and installers. Future-facing architecture for OS-integrated autonomous assistance.
 
 License: AI-OS Non‑Selling Attribution License (ANSL) v1.0. You may use, copy, modify, and redistribute this code, but you may not sell the Software or derivative works. All redistributions must retain attribution and link back to the original repository. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
@@ -14,13 +14,15 @@ License: AI-OS Non‑Selling Attribution License (ANSL) v1.0. You may use, copy,
 
 - Today: Train Hierarchical Reasoning Models (HRM) with Sparse Mixture‑of‑Experts (MoE) on consumer GPUs. Optimizations enable long context training on almost any sized card!
 - Tomorrow: Deeper OS integration and autonomous, idle‑time learning.
+- Tons more features! Check out the Planned_Features section
 
 Key features in v1.0.0:
 - Long-context training strategies and memory optimizations (experimental)
-- Multi‑GPU training (DDP/Parallel)
+- Multi‑GPU training (DDP/Parallel/Sharding)
 - GUI + CLI
-- End to End model creation, testing, and management.
+- End to End pipeline for HRM based models
 - Integration with huggingface
+- Base model with extremely basic english comprehension
 
 ## Authors Note
 While the minimum specs listed above will allow you to train and run models, please bare in mind, that training could take weeks on smaller/older cards.

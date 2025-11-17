@@ -21,10 +21,9 @@ from .reward_helpers import _compute_min_halt_steps, _exact_match_reward_from_pr
 from .carry_management import _compress_carry_state, _checkpoint_forward
 
 # Enable expandable segments to reduce memory fragmentation (PyTorch recommendation)
-os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')
-
-# Aggressive memory management settings
-os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'max_split_size_mb:128,expandable_segments:True')
+_ALLOCATOR_KEY = 'PYTORCH_ALLOC_CONF'
+os.environ.setdefault(_ALLOCATOR_KEY, 'max_split_size_mb:128,expandable_segments:True')
+os.environ.pop('PYTORCH_CUDA_ALLOC_CONF', None)
 
 
 def chunked_segment_rollout(

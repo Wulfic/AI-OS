@@ -558,7 +558,11 @@ class DebugAndTraceFilter(logging.Filter):
             self.level = level
 
     def filter(self, record: logging.LogRecord) -> bool:
-        has_trace = bool(record.exc_info) or bool(getattr(record, "stack_info", None))
+        has_trace = (
+            bool(record.exc_info)
+            or bool(getattr(record, "stack_info", None))
+            or bool(getattr(record, "exc_text", None))
+        )
         return record.levelno == self.level or has_trace
 
 
@@ -1185,16 +1189,24 @@ class NonBlockingTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHand
         restore_exc = False
         original_exc = None
         original_stack = None
+        original_exc_text = None
         has_stack_attr = hasattr(record, "stack_info")
+        has_exc_text_attr = hasattr(record, "exc_text")
 
         if not self.include_tracebacks:
-            if record.exc_info or (has_stack_attr and getattr(record, "stack_info")):
+            strip_trace = bool(record.exc_info) or (
+                has_stack_attr and bool(getattr(record, "stack_info", None))
+            ) or bool(getattr(record, "exc_text", None))
+            if strip_trace:
                 restore_exc = True
                 original_exc = record.exc_info
                 original_stack = getattr(record, "stack_info", None)
                 record.exc_info = None
                 if has_stack_attr:
                     record.stack_info = None
+                if has_exc_text_attr:
+                    original_exc_text = getattr(record, "exc_text", None)
+                    record.exc_text = None
 
         try:
             try:
@@ -1220,6 +1232,8 @@ class NonBlockingTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHand
                 record.exc_info = original_exc
                 if has_stack_attr:
                     record.stack_info = original_stack
+                if has_exc_text_attr:
+                    record.exc_text = original_exc_text
 
 
 class UTF8StreamHandler(logging.StreamHandler):
@@ -1238,16 +1252,24 @@ class UTF8StreamHandler(logging.StreamHandler):
         restore_exc = False
         original_exc = None
         original_stack = None
+        original_exc_text = None
         has_stack_attr = hasattr(record, "stack_info")
+        has_exc_text_attr = hasattr(record, "exc_text")
 
         if not self.include_tracebacks:
-            if record.exc_info or (has_stack_attr and getattr(record, "stack_info")):
+            strip_trace = bool(record.exc_info) or (
+                has_stack_attr and bool(getattr(record, "stack_info", None))
+            ) or bool(getattr(record, "exc_text", None))
+            if strip_trace:
                 restore_exc = True
                 original_exc = record.exc_info
                 original_stack = getattr(record, "stack_info", None)
                 record.exc_info = None
                 if has_stack_attr:
                     record.stack_info = None
+                if has_exc_text_attr:
+                    original_exc_text = getattr(record, "exc_text", None)
+                    record.exc_text = None
 
         try:
             try:
@@ -1280,3 +1302,5 @@ class UTF8StreamHandler(logging.StreamHandler):
                 record.exc_info = original_exc
                 if has_stack_attr:
                     record.stack_info = original_stack
+                if has_exc_text_attr:
+                    record.exc_text = original_exc_text

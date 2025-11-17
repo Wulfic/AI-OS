@@ -1,4 +1,4 @@
-"""Windows startup and registry management."""
+"""Startup preference management for platform autostart."""
 
 from __future__ import annotations
 import logging
@@ -17,47 +17,63 @@ def load_startup_status(panel: "SettingsPanel") -> None:
         panel: The settings panel instance
     """
     try:
-        from ...utils.startup import is_startup_enabled, get_startup_path, is_windows
-        from tkinter import ttk
-        
-        if not is_windows():
+        from ...utils.startup import (
+            is_startup_enabled,
+            get_startup_path,
+            is_windows,
+            is_linux,
+        )
+
+        checkbox = getattr(panel, "startup_check", None)
+        supported = is_windows() or is_linux()
+
+        if not supported:
+            panel.startup_var.set(False)
             panel.startup_info.config(
-                text="ℹ Not available on this platform (Windows only)",
+                text="ℹ Not available on this platform",
                 foreground="gray"
             )
-            # Disable checkbox on non-Windows
+            if checkbox:
+                try:
+                    checkbox.state(["disabled"])
+                except Exception:
+                    pass
+            return
+
+        if checkbox:
             try:
-                for child in panel.parent.winfo_children():
-                    if isinstance(child, ttk.LabelFrame) and "General Settings" in str(child.cget("text")):
-                        for widget in child.winfo_children():
-                            if isinstance(widget, ttk.Checkbutton):
-                                widget.config(state="disabled")
-                                break
-                        break
+                checkbox.state(["!disabled"])
             except Exception:
                 pass
-            return
-        
+
         enabled = is_startup_enabled()
         panel.startup_var.set(enabled)
-        
+
+        enabled_context = ""
+        disabled_context = ""
+        if is_windows():
+            enabled_context = " at Windows login"
+            disabled_context = " during Windows login"
+        elif is_linux():
+            enabled_context = " at login"
+            disabled_context = " after you log in"
+
         if enabled:
             path = get_startup_path()
             if path:
-                # Truncate path if too long
-                display_path = path if len(path) < 60 else path[:57] + "..."
+                display_path = path if len(path) <= 60 else path[:57] + "..."
                 panel.startup_info.config(
-                    text=f"✓ Enabled: {display_path}",
+                    text=f"✓ Enabled{enabled_context}: {display_path}",
                     foreground="green"
                 )
             else:
                 panel.startup_info.config(
-                    text="✓ Enabled",
+                    text=f"✓ Enabled{enabled_context}",
                     foreground="green"
                 )
         else:
             panel.startup_info.config(
-                text="○ Disabled - AI-OS will not start on boot",
+                text=f"○ Disabled - AI-OS will not launch automatically{disabled_context}",
                 foreground="gray"
             )
     except Exception as e:
@@ -74,56 +90,54 @@ def on_startup_changed(panel: "SettingsPanel") -> None:
         panel: The settings panel instance
     """
     try:
-        from ...utils.startup import set_startup_enabled, get_startup_path, verify_startup_command
-        
+        from ...utils.startup import (
+            set_startup_enabled,
+            verify_startup_command,
+            is_windows,
+            is_linux,
+        )
+
         enabled = panel.startup_var.get()
-        # Check if should start minimized
         minimized = panel.start_minimized_var.get()
-        
-        logger.info(f"User action: {'Enabling' if enabled else 'Disabling'} startup at Windows boot (minimized: {minimized})")
-        
+
+        context_suffix = ""
+        if is_windows():
+            context_suffix = " (Windows login)"
+        elif is_linux():
+            context_suffix = " (login)"
+
+        logger.info(
+            "User action: %s autostart%s (minimized: %s)",
+            "Enabling" if enabled else "Disabling",
+            context_suffix,
+            minimized,
+        )
+
         success = set_startup_enabled(enabled, minimized=minimized)
-        
+
         if success:
-            logger.info(f"Successfully {'enabled' if enabled else 'disabled'} startup at Windows boot")
             if enabled:
-                # Verify the command is valid
                 is_valid, message = verify_startup_command()
                 if is_valid:
-                    path = get_startup_path()
-                    if path:
-                        display_path = path if len(path) < 60 else path[:57] + "..."
-                        panel.startup_info.config(
-                            text=f"✓ Enabled: {display_path}",
-                            foreground="green"
-                        )
-                        logger.debug(f"Startup registry path: {path}")
-                    else:
-                        panel.startup_info.config(
-                            text="✓ Enabled successfully",
-                            foreground="green"
-                        )
+                    logger.info("Successfully enabled autostart%s", context_suffix)
+                    load_startup_status(panel)
                 else:
-                    logger.warning(f"Startup enabled but command validation failed: {message}")
+                    logger.warning("Autostart enabled but validation failed: %s", message)
                     panel.startup_info.config(
                         text=f"⚠ Warning: {message}",
                         foreground="orange"
                     )
             else:
-                panel.startup_info.config(
-                    text="○ Disabled - AI-OS will not start on boot",
-                    foreground="gray"
-                )
-            
-            # Save state
+                logger.info("Successfully disabled autostart%s", context_suffix)
+                load_startup_status(panel)
+
             if panel._save_state_fn:
                 panel._save_state_fn()
         else:
-            logger.error("Failed to modify Windows registry for startup setting - check permissions")
-            # Failed to set - revert checkbox
+            logger.error("Failed to update autostart setting - check permissions")
             panel.startup_var.set(not enabled)
             panel.startup_info.config(
-                text="⚠ Failed to modify Windows registry. Check permissions.",
+                text="⚠ Failed to update autostart setting. Check permissions.",
                 foreground="red"
             )
     except Exception as e:
@@ -151,8 +165,10 @@ def on_start_minimized_changed(panel: "SettingsPanel") -> None:
         if is_startup_enabled():
             # Re-set startup with updated minimized flag
             enabled = panel.startup_var.get()
-            set_startup_enabled(enabled, minimized=minimized)
-            logger.debug(f"Updated Windows startup command with minimized flag: {minimized}")
+            if set_startup_enabled(enabled, minimized=minimized):
+                logger.debug("Updated autostart command with minimized flag: %s", minimized)
+            else:
+                logger.warning("Failed to update autostart command with minimized flag")
         
         # Save state
         if panel._save_state_fn:
