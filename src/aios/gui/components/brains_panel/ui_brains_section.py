@@ -9,6 +9,7 @@ from __future__ import annotations
 from ...utils import safe_variables
 
 from typing import Any, cast
+import sys
 
 try:  # pragma: no cover
     import tkinter as tk  # type: ignore
@@ -29,7 +30,8 @@ def build_brains_section(parent: Any, panel: Any) -> None:
         return
     
     brains_frame = ttk.LabelFrame(parent, text="Brain Models Registry", padding=4)
-    brains_frame.pack(fill="both", expand=True, pady=(0, 8))
+    expand_brains = not sys.platform.startswith("win")
+    brains_frame.pack(fill="both", expand=expand_brains, pady=(0, 8))
     
     # Build table
     _build_brains_table(brains_frame, panel)
@@ -46,7 +48,10 @@ def _build_brains_table(parent: Any, panel: Any) -> None:
         panel: BrainsPanel instance
     """
     cols = ("name", "size_mb", "params_m", "pinned", "master", "child", "training_steps", "last_used")
-    panel.tree = ttk.Treeview(parent, columns=cols, show="headings", height=8)
+    tree_height = 8
+    if sys.platform.startswith("win"):
+        tree_height = 6
+    panel.tree = ttk.Treeview(parent, columns=cols, show="headings", height=tree_height)
     
     panel.tree.heading("name", text="Name")
     panel.tree.heading("size_mb", text="Size (MB)")

@@ -12,6 +12,7 @@ from pathlib import Path
 import json
 from datetime import datetime
 import logging
+import sys
 
 from aios.gui.utils.theme_utils import apply_theme_to_toplevel, get_spacing_multiplier
 
@@ -29,9 +30,12 @@ class ResumeDialog(tk.Toplevel):
         
         # Configure window
         self.title("Resume Training?")
-        # Dialog defaults were previously 600x400; double both dimensions for readability.
-        self.geometry("1200x800")
-        self.minsize(1200, 800)
+        width, height = 1200, 800
+        if sys.platform.startswith("win"):
+            width //= 2
+            height //= 2
+        self.geometry(f"{width}x{height}")
+        self.minsize(width, height)
         self.resizable(False, False)
         
         # Make modal

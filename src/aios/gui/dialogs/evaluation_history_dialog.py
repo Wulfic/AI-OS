@@ -10,6 +10,7 @@ import tkinter as tk
 from datetime import datetime
 from tkinter import messagebox, ttk
 from typing import Any, Callable, Optional
+import sys
 
 from aios.core.evaluation import EvaluationHistory
 from aios.gui.utils.model_display import get_model_display_name
@@ -43,7 +44,11 @@ class EvaluationHistoryDialog(tk.Toplevel):  # type: ignore[misc]
         
         # Configure window
         self.title("Evaluation History")
-        self.geometry("2200x1200")
+        width, height = 2200, 1200
+        if sys.platform.startswith("win"):
+            width = int(width * 0.7)
+            height = int(height * 0.7)
+        self.geometry(f"{width}x{height}")
         
         # Make dialog modal
         self.transient(parent)
