@@ -9,6 +9,11 @@ grade: devel
 confinement: classic
 icon: ../../AI-OS.png
 
+lint:
+  ignore:
+    - classic
+    - library
+
 apps:
   aios:
     command: bin/aios
@@ -143,22 +148,53 @@ parts:
         exit 1
       fi
 
-      python3 -m venv --copies "$install_root/venv"
-      "$install_root/venv/bin/python" -m pip install --upgrade pip setuptools wheel
+      lock_env="$CRAFT_PART_BUILD/aios-lockenv"
+      rm -rf "$lock_env"
+      python3 -m venv "$lock_env"
+      "$lock_env/bin/python" -m pip install --upgrade pip setuptools wheel >/dev/null
       old_pwd=$(pwd)
       cd "$install_root"
-      PIP_NO_CACHE_DIR=1 "$install_root/venv/bin/pip" install ".[ui]"
+      PIP_NO_CACHE_DIR=1 "$lock_env/bin/pip" install ".[ui]" >/dev/null
+      "$lock_env/bin/pip" freeze | grep -Ev '^(ai-os|ai_os)(==| @ )' > requirements-lock.txt
       cd "$old_pwd"
+      rm -rf "$lock_env"
+
+      if [ ! -s "$install_root/requirements-lock.txt" ]; then
+        echo "requirements-lock.txt generation failed" >&2
+        exit 1
+      fi
 
       mkdir -p "$CRAFT_PART_INSTALL/bin"
       cat <<'EOF' >"$CRAFT_PART_INSTALL/bin/aios"
       #!/usr/bin/env bash
       set -euo pipefail
       APP_ROOT="$SNAP/opt/ai-os"
-      VENV="$APP_ROOT/venv"
-      if [[ ! -x "$VENV/bin/python" ]]; then
-        echo "AI-OS virtual environment missing. Please reinstall the ai-os snap." >&2
+      VENV="${AIOS_VENV_DIR:-$SNAP_COMMON/venv}"
+      PYTHON_BIN="${AIOS_SYSTEM_PYTHON:-$SNAP/usr/bin/python3}"
+      if [[ ! -x "$PYTHON_BIN" ]]; then
+        PYTHON_BIN="$(command -v python3 || true)"
+      fi
+      if [[ -z "$PYTHON_BIN" ]]; then
+        echo "python3 is required to bootstrap AI-OS." >&2
         exit 1
+      fi
+      REQ_FILE="$APP_ROOT/requirements-lock.txt"
+      if [[ ! -f "$REQ_FILE" ]]; then
+        echo "AI-OS requirements lock file missing inside snap." >&2
+        exit 1
+      fi
+      if [[ ! -x "$VENV/bin/python" ]]; then
+        printf '[ai-os] Creating runtime virtual environment...\n' >&2
+        if [[ "$VENV" == */* ]]; then
+          mkdir -p "${VENV%/*}"
+        fi
+        "$PYTHON_BIN" -m venv "$VENV"
+        if [[ ! -x "$VENV/bin/pip" ]]; then
+          "$VENV/bin/python" -m ensurepip --upgrade
+        fi
+        PIP_NO_CACHE_DIR=1 "$VENV/bin/pip" install --upgrade pip setuptools wheel >/dev/null
+        PIP_NO_CACHE_DIR=1 "$VENV/bin/pip" install --requirement "$REQ_FILE" >/dev/null
+        PIP_NO_CACHE_DIR=1 "$VENV/bin/pip" install --no-deps "$APP_ROOT" >/dev/null
       fi
       export PYTHONPATH="$APP_ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
       export AIOS_HF_CACHE="${AIOS_HF_CACHE:-$SNAP_COMMON/hf_cache}"

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Debian package builder that stages AI-OS under /opt and installs dependencies
-# from an offline wheelhouse during post-install.
+# Debian package builder that stages AI-OS under /opt and records dependency
+# pins so the post-install step can fetch the exact versions from PyPI.
 
 log_info() { printf '[i] %s\n' "$*"; }
 log_error() { printf '[!] %s\n' "$*" >&2; }
@@ -28,8 +28,8 @@ export REPO_ROOT
 RELEASE_DIR="$REPO_ROOT/installers/releases"
 BUILD_ROOT="$SCRIPT_DIR/.deb-build"
 STAGING_ROOT="$BUILD_ROOT/pkg"
-WHEELHOUSE="$BUILD_ROOT/wheelhouse"
 TEMP_VENV="$BUILD_ROOT/.venv"
+LOCK_FILE="$BUILD_ROOT/requirements-lock.txt"
 KEEP_BUILD="false"
 PACKAGE_NAME="ai-os"
 VERSION=""
@@ -108,16 +108,23 @@ log_info "Building AI-OS Debian package v$VERSION ($ARCH)"
 
 rm -rf "$BUILD_ROOT"
 mkdir -p "$BUILD_ROOT" "$STAGING_ROOT/DEBIAN" "$RELEASE_DIR"
-mkdir -p "$WHEELHOUSE"
 
 python3 -m venv "$TEMP_VENV"
 source "$TEMP_VENV/bin/activate"
-# Build an offline wheelhouse so postinst can run without internet access.
-python -m pip install --upgrade pip wheel setuptools build >/dev/null
+# Record exact dependency versions to install during postinst.
+python -m pip install --upgrade pip wheel setuptools >/dev/null
 pushd "$REPO_ROOT" >/dev/null
-python -m pip wheel ".[ui]" pip setuptools wheel -w "$WHEELHOUSE"
+python -m pip install ".[ui]" >/dev/null
+python -m pip freeze | grep -Ev '^(ai-os|ai_os)(==| @ )' >"$LOCK_FILE.tmp"
 popd >/dev/null
+mv "$LOCK_FILE.tmp" "$LOCK_FILE"
 deactivate
+
+if [[ ! -s "$LOCK_FILE" ]]; then
+  die "requirements-lock.txt is empty; dependency capture failed"
+fi
+
+log_info "Captured dependency lock file $LOCK_FILE"
 
 mkdir -p "$STAGING_ROOT/opt/ai-os" "$STAGING_ROOT/usr/bin" "$STAGING_ROOT/usr/share/applications" "$STAGING_ROOT/usr/share/pixmaps"
 
@@ -167,9 +174,7 @@ rm -rf "$STAGING_ROOT/opt/ai-os/installers/_builds"
 rm -rf "$STAGING_ROOT/opt/ai-os/installers/releases"
 rm -rf "$STAGING_ROOT/opt/ai-os/logs"
 
-log_info "Bundling Python wheelhouse"
-mkdir -p "$STAGING_ROOT/opt/ai-os/wheels"
-cp -a "$WHEELHOUSE"/* "$STAGING_ROOT/opt/ai-os/wheels/"
+install -Dm644 "$LOCK_FILE" "$STAGING_ROOT/opt/ai-os/requirements-lock.txt"
 
 log_info "Creating runtime helper scripts"
 cat >"$STAGING_ROOT/usr/bin/aios" <<'EOF'
@@ -228,7 +233,7 @@ cat >"$STAGING_ROOT/DEBIAN/postinst" <<'EOF'
 set -euo pipefail
 APP_ROOT="/opt/ai-os"
 VENV="$APP_ROOT/venv"
-WHEEL_DIR="$APP_ROOT/wheels"
+REQ_FILE="$APP_ROOT/requirements-lock.txt"
 PYTHON_BIN="$(command -v python3 || true)"
 if [[ -z "$PYTHON_BIN" ]]; then
   echo "python3 is required to finish installing ai-os." >&2
@@ -241,9 +246,14 @@ fi
 if [[ ! -x "$VENV/bin/pip" ]]; then
   "$VENV/bin/python" -m ensurepip --upgrade
 fi
+if [[ ! -f "$REQ_FILE" ]]; then
+  echo "requirements-lock.txt missing; cannot install dependencies." >&2
+  exit 1
+fi
 printf '[ai-os] Installing Python dependencies...\n'
-"$VENV/bin/pip" install --no-index --find-links "$WHEEL_DIR" --upgrade pip setuptools wheel >/dev/null
-"$VENV/bin/pip" install --no-index --find-links "$WHEEL_DIR" --upgrade "ai-os[ui]" >/dev/null
+PIP_NO_CACHE_DIR=1 "$VENV/bin/pip" install --upgrade pip setuptools wheel >/dev/null
+PIP_NO_CACHE_DIR=1 "$VENV/bin/pip" install --requirement "$REQ_FILE" >/dev/null
+PIP_NO_CACHE_DIR=1 "$VENV/bin/pip" install --no-deps "$APP_ROOT" >/dev/null
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database -q || true
 fi

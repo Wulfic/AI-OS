@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Snap package builder that stages AI-OS under /opt/ai-os inside the snap and
-# bundles dependencies through the snapcraft.yaml in this directory.
+# Snap package builder that stages AI-OS under /opt/ai-os inside the snap.
 
 usage() {
   cat <<'EOF'
