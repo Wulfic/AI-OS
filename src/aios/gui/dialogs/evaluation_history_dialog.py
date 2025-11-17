@@ -46,8 +46,8 @@ class EvaluationHistoryDialog(tk.Toplevel):  # type: ignore[misc]
         self.title("Evaluation History")
         width, height = 2200, 1200
         if sys.platform.startswith("win"):
-            width = int(width * 0.7)
-            height = int(height * 0.7)
+            width //= 2
+            height //= 2
         self.geometry(f"{width}x{height}")
         
         # Make dialog modal

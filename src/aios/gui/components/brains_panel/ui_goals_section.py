@@ -9,6 +9,7 @@ from __future__ import annotations
 from ...utils import safe_variables
 
 from typing import Any, cast
+import sys
 
 try:  # pragma: no cover
     import tkinter as tk  # type: ignore
@@ -37,8 +38,9 @@ def build_goals_section(parent: Any, panel: Any) -> None:
     panel._last_goal_add_time = 0.0
     panel._last_goal_text = ""
     
-    goals_frame = ttk.LabelFrame(parent, text="Goals for Selected Brain / Expert", padding=8)
-    goals_frame.pack(fill="both", expand=True, pady=(12, 0))
+    is_windows = sys.platform.startswith("win")
+    goals_frame = ttk.LabelFrame(parent, text="Goals for Selected Brain / Expert", padding=6 if is_windows else 8)
+    goals_frame.pack(fill="both", expand=True, pady=(8 if is_windows else 12, 0))
     
     # Info label
     info_label = ttk.Label(
@@ -52,7 +54,8 @@ def build_goals_section(parent: Any, panel: Any) -> None:
     list_container = ttk.Frame(goals_frame)
     list_container.pack(fill="both", expand=True, pady=(0, 6))
     
-    panel.goals_list = tk.Listbox(list_container, height=6, selectmode="extended")
+    list_height = 4 if is_windows else 6
+    panel.goals_list = tk.Listbox(list_container, height=list_height, selectmode="extended")
     panel.goals_list.pack(side="left", fill="both", expand=True)
     
     goals_scrollbar = ttk.Scrollbar(list_container, orient="vertical", command=panel.goals_list.yview)

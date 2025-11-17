@@ -9,6 +9,7 @@ from __future__ import annotations
 from ...utils import safe_variables
 
 from typing import Any, cast
+import sys
 
 try:  # pragma: no cover
     import tkinter as tk  # type: ignore
@@ -46,7 +47,10 @@ def _build_experts_table(parent: Any, panel: Any) -> None:
         panel: BrainsPanel instance
     """
     expert_cols = ("name", "category", "status", "activations", "avg_weight", "goals", "hierarchy")
-    panel.experts_tree = ttk.Treeview(parent, columns=expert_cols, show="headings", height=6)
+    expert_height = 6
+    if sys.platform.startswith("win"):
+        expert_height = 4
+    panel.experts_tree = ttk.Treeview(parent, columns=expert_cols, show="headings", height=expert_height)
     
     panel.experts_tree.heading("name", text="Name")
     panel.experts_tree.heading("category", text="Category")
