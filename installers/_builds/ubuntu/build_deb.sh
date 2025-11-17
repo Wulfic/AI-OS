@@ -35,6 +35,17 @@ PACKAGE_NAME="ai-os"
 VERSION=""
 ARCH=""
 
+cleanup() {
+  if [[ -n "${VIRTUAL_ENV:-}" ]]; then
+    deactivate || true
+  fi
+  if [[ "$KEEP_BUILD" != "true" ]] && [[ -d "$BUILD_ROOT" ]]; then
+    rm -rf "$BUILD_ROOT"
+  fi
+}
+
+trap 'status=$?; trap - EXIT; cleanup; exit $status' EXIT
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version)
@@ -115,7 +126,14 @@ copy_item() {
   local src="$REPO_ROOT/$item"
   if [[ -d "$src" ]]; then
     log_info "Copying directory $item"
-    cp -a "$src" "$STAGING_ROOT/opt/ai-os/"
+    if [[ "$item" == "installers" ]]; then
+      tar -C "$REPO_ROOT" \
+        --exclude "installers/_builds" \
+        --exclude "installers/releases" \
+        -cf - "$item" | tar -C "$STAGING_ROOT/opt/ai-os" -xf -
+    else
+      cp -a "$src" "$STAGING_ROOT/opt/ai-os/"
+    fi
   elif [[ -f "$src" ]]; then
     log_info "Copying file $item"
     install -Dm644 "$src" "$STAGING_ROOT/opt/ai-os/$item"
@@ -280,9 +298,5 @@ dpkg-deb --build "$STAGING_ROOT" "$BUILD_ROOT/$DEB_NAME" >/dev/null
 
 mv "$BUILD_ROOT/$DEB_NAME" "$RELEASE_DIR/$DEB_NAME"
 log_info "Created $RELEASE_DIR/$DEB_NAME"
-
-if [[ "$KEEP_BUILD" != "true" ]]; then
-  rm -rf "$BUILD_ROOT"
-fi
 
 log_info "Done"

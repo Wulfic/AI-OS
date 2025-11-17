@@ -28,6 +28,17 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+snapcraft_args=("$@")
+has_destructive=false
+for arg in "${snapcraft_args[@]}"; do
+  if [[ "$arg" == "--destructive-mode" ]]; then
+    has_destructive=true
+    break
+  fi
+done
+if [[ "$has_destructive" == false ]]; then
+  snapcraft_args+=("--destructive-mode")
+fi
 
 if ! command -v snapcraft >/dev/null 2>&1; then
   printf '[!] snapcraft is required to build the snap. Install it with: snap install snapcraft --classic\n' >&2
@@ -46,8 +57,8 @@ while IFS= read -r line; do
   existing_snaps+=("$line")
 done < <(find . -maxdepth 1 -type f -name 'ai-os_*.snap' -printf '%P\n' 2>/dev/null || true)
 
-printf '[i] Running snapcraft %s\n' "$*"
-snapcraft "$@"
+printf '[i] Running snapcraft %s\n' "${snapcraft_args[*]}"
+snapcraft "${snapcraft_args[@]}"
 
 new_snap=""
 while IFS= read -r candidate; do
@@ -71,5 +82,18 @@ fi
 
 mv "$new_snap" "$RELEASE_DIR/$new_snap"
 printf '[i] Created %s/%s\n' "$RELEASE_DIR" "$new_snap"
+
+for old in "${existing_snaps[@]}"; do
+  if [[ -n "$old" && -f "$old" ]]; then
+    rm -f -- "$old"
+    printf '[i] Removed previous snap artifact %s\n' "$old"
+  fi
+done
+
+if snapcraft clean "${snapcraft_args[@]}" >/dev/null 2>&1; then
+  printf '[i] Cleaned snapcraft build artifacts.\n'
+else
+  printf '[w] Unable to clean snapcraft build artifacts automatically. Run "snapcraft clean" manually if needed.\n' >&2
+fi
 
 popd >/dev/null
