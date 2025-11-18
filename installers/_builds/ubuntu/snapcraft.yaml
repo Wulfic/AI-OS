@@ -143,6 +143,15 @@ parts:
         --exclude='installers/releases' \
         "$CRAFT_PART_SRC"/ "$install_root"/
 
+      brains_dir="$install_root/artifacts/brains"
+      if [ -d "$brains_dir" ]; then
+        printf '[i] Removing bundled brain artifacts from %s\n' "$brains_dir"
+        find "$brains_dir" -mindepth 1 -type d -exec rm -rf {} +
+        find "$brains_dir" -mindepth 1 -type f ! -name 'masters.json' ! -name 'pinned.json' -exec rm -f {} +
+        printf '[]\n' > "$brains_dir/masters.json"
+        printf '[]\n' > "$brains_dir/pinned.json"
+      fi
+
       if [ ! -d "$install_root/src" ]; then
         echo "Project copy is missing src/ directory" >&2
         exit 1

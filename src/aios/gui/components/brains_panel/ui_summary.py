@@ -77,6 +77,22 @@ def build_summary_row(parent: Any, panel: Any) -> None:
     # Force refresh (bypass throttling) when button clicked
     btn_refresh = ttk.Button(top, text="Refresh All", command=lambda: panel.refresh(force=True))
     btn_refresh.pack(side="right")
+
+    btn_export = ttk.Button(top, text="Export...", command=panel._on_export_brain)
+    btn_export.pack(side="right", padx=(0, 4))
+
+    btn_import = ttk.Button(top, text="Import...", command=panel._on_import_brain)
+    btn_import.pack(side="right", padx=(0, 4))
+
+    panel.transfer_progress_var = safe_variables.StringVar(value="")
+    panel.transfer_progress_label = ttk.Label(
+        top,
+        textvariable=panel.transfer_progress_var,
+        width=14,
+        anchor="e",
+        foreground="gray",
+    )
+    panel.transfer_progress_label.pack(side="right", padx=(0, 6))
     
     # Status indicator for loading state
     panel.status_var = safe_variables.StringVar(value="")
@@ -93,5 +109,8 @@ def build_summary_row(parent: Any, panel: Any) -> None:
         add_tooltip(lbl_params, "Approximate parameter count in millions (size_bytes / 4)")
         add_tooltip(val_params, "Estimated parameter total across all brains (millions)")
         add_tooltip(btn_refresh, "Re-scan brains directory and expert registry, update all stats + tables")
+        add_tooltip(btn_export, "Create a ZIP archive of the selected brain for transfer")
+        add_tooltip(btn_import, "Import a brain archive (.zip) into this workspace")
+        add_tooltip(panel.transfer_progress_label, "Shows progress while importing/exporting brains")
     except Exception:
         pass

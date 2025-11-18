@@ -58,14 +58,20 @@ test_results/
 # Project data/cache
 .cache/
 *.log
-# Note: Checkpoint files are tracked via Git LFS (see .gitattributes)
+artifacts/brains/
+artifacts/diagnostics/
+artifacts/experts/
+
 # Only ignore specific checkpoint patterns if they're temporary
 artifacts/checkpoints/*-step*-*.npz
 
 # Ignore all parallel checkpoint directories (training artifacts)
 **/parallel_checkpoints/
 
-# Note: Large model files (*.pt, *.safetensors) are now tracked via Git LFS
+# Generated halting-head weights
+artifacts/**/q_head.pt
+
+# Still track registry metadata if present
 !artifacts/brains/masters.json
 !artifacts/brains/pinned.json
 

@@ -153,6 +153,24 @@ foreach ($path in $prunePaths) {
 	}
 }
 
+$brainsDir = Join-Path $stagingDir "artifacts\brains"
+if (-not (Test-Path -LiteralPath $brainsDir)) {
+	New-Item -ItemType Directory -Path $brainsDir -Force | Out-Null
+}
+if (Test-Path -LiteralPath $brainsDir) {
+	Write-Info "Removing bundled brain artifacts from $brainsDir"
+	Get-ChildItem -Path $brainsDir -Directory -Force | ForEach-Object {
+		Remove-PathRobust -Path $_.FullName
+	}
+	Get-ChildItem -Path $brainsDir -File -Force | Where-Object { $_.Name -notin @('masters.json','pinned.json') } | ForEach-Object {
+		Remove-PathRobust -Path $_.FullName
+	}
+	@('masters.json','pinned.json') | ForEach-Object {
+		$target = Join-Path $brainsDir $_
+		Set-Content -Path $target -Value '[]' -Encoding ASCII
+	}
+}
+
 $stagingDir = (Resolve-Path $stagingDir).Path
 $repoRoot = (Resolve-Path $repoRoot).Path
 $releaseDir = (Resolve-Path $releaseDir).Path

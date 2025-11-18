@@ -5,6 +5,7 @@ The panel class delegates to builder functions and operation handlers.
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from typing import Any, Callable, Optional, cast
@@ -15,6 +16,9 @@ try:  # pragma: no cover
 except Exception:  # pragma: no cover
     tk = cast(Any, None)
     ttk = cast(Any, None)
+
+
+logger = logging.getLogger(__name__)
 
 
 class BrainsPanel(ttk.LabelFrame):  # type: ignore[misc]
@@ -202,6 +206,20 @@ class BrainsPanel(ttk.LabelFrame):  # type: ignore[misc]
         """Clear parent brain."""
         from .brain_operations import clear_parent_brain
         clear_parent_brain(self)
+
+    def _on_export_brain(self) -> None:
+        """Export selected brain to a portable archive."""
+        logger = logging.getLogger(__name__)
+        logger.info("User action: Export brain requested from Brains panel")
+        from .brain_operations import export_brain
+        export_brain(self)
+
+    def _on_import_brain(self) -> None:
+        """Import a brain archive into the local store."""
+        logger = logging.getLogger(__name__)
+        logger.info("User action: Import brain requested from Brains panel")
+        from .brain_operations import import_brain
+        import_brain(self)
 
     # === EXPERT OPERATION HANDLERS ===
 

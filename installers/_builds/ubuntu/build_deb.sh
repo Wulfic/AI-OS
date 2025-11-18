@@ -149,6 +149,20 @@ copy_item() {
   fi
 }
 
+sanitize_brains_directory() {
+  local brains_dir="$STAGING_ROOT/opt/ai-os/artifacts/brains"
+  if [[ ! -d "$brains_dir" ]]; then
+    return
+  fi
+  log_info "Removing bundled brain artifacts"
+  find "$brains_dir" -mindepth 1 -type d -exec rm -rf {} +
+  find "$brains_dir" -mindepth 1 -type f ! -name 'masters.json' ! -name 'pinned.json' -exec rm -f {} +
+  local json
+  for json in masters.json pinned.json; do
+    printf '[]\n' >"$brains_dir/$json"
+  done
+}
+
 PROJECT_ITEMS=(
   "artifacts"
   "config"
@@ -169,6 +183,8 @@ PROJECT_ITEMS=(
 for item in "${PROJECT_ITEMS[@]}"; do
   copy_item "$item"
 done
+
+sanitize_brains_directory
 
 rm -rf "$STAGING_ROOT/opt/ai-os/installers/_builds"
 rm -rf "$STAGING_ROOT/opt/ai-os/installers/releases"
