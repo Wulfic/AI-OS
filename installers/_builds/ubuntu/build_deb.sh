@@ -5,6 +5,7 @@ set -euo pipefail
 # pins so the post-install step can fetch the exact versions from PyPI.
 
 log_info() { printf '[i] %s\n' "$*"; }
+log_warn() { printf '[w] %s\n' "$*" >&2; }
 log_error() { printf '[!] %s\n' "$*" >&2; }
 die() { log_error "$1"; exit 1; }
 
@@ -205,6 +206,16 @@ for path in "${PRUNE_PATHS[@]}"; do
 done
 
 install -Dm644 "$LOCK_FILE" "$STAGING_ROOT/opt/ai-os/requirements-lock.txt"
+
+DOC_DIR="$STAGING_ROOT/usr/share/doc/$PACKAGE_NAME"
+mkdir -p "$DOC_DIR"
+for doc in LICENSE NOTICE; do
+  if [[ -f "$REPO_ROOT/$doc" ]]; then
+    install -Dm644 "$REPO_ROOT/$doc" "$DOC_DIR/$doc"
+  else
+    log_warn "Missing $doc; skipping doc install"
+  fi
+done
 
 log_info "Creating runtime helper scripts"
 cat >"$STAGING_ROOT/usr/bin/aios" <<'EOF'
