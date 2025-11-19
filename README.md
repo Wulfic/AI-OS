@@ -52,12 +52,14 @@ sudo apt install ai-os
 ### Ubuntu
 ```bash
 # From repo root
-./scripts/install_aios_on_ubuntu.sh install --yes
+sudo chmod a+x ./installers/scripts/install_aios_on_ubuntu.sh
+sudo ./installers/scripts/install_aios_on_ubuntu.sh install --yes
 ```
 ### Windows (PowerShell)
 ```powershell
-# From repo root
-./scripts/install_aios_on_windows.ps1 -Action install -Yes
+# From repo root(might need to run as admin)
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+./installers/scripts/install_aios_on_windows.ps1 -Action install -Yes
 ```
 ## Usage
 Use the shortcut to start the program or via terminal.

@@ -6,6 +6,7 @@ This single page gets you from zero to the GUI.
 
 ```powershell
 # From repo root
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ./installers/scripts/install_aios_on_windows.ps1 -Action install -Yes
 aios gui
 ```
@@ -22,6 +23,7 @@ aios gui
 ## Ubuntu
 
 ```bash
+chmod a+x ./installers/scripts/install_aios_on_ubuntu.sh
 ./installers/scripts/install_aios_on_ubuntu.sh install --yes
 aios gui
 ```

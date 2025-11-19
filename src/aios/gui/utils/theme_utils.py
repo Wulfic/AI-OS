@@ -141,6 +141,24 @@ THEME_COLORS: Dict[str, Dict[str, Any]] = {
 }
 
 
+def _normalize_style_value(value: Any) -> str:
+    """Convert Tk style lookup values (which may be Tcl objects) to plain strings."""
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            normalized = _normalize_style_value(item)
+            if normalized:
+                return normalized
+        return ""
+    if value is None:
+        return ""
+    if hasattr(value, "string"):
+        try:
+            return str(value.string)
+        except Exception:
+            pass
+    return str(value)
+
+
 def detect_current_theme() -> str:
     """Detect the current theme from TTK style settings.
     
@@ -150,8 +168,14 @@ def detect_current_theme() -> str:
     try:
         from tkinter import ttk
         style = ttk.Style()
-        bg = style.lookup(".", "background")
-        
+        bg = _normalize_style_value(style.lookup(".", "background")).strip()
+        if bg.startswith("{") and bg.endswith("}"):
+            bg = bg[1:-1]
+
+        if bg.lower().startswith("system"):
+            logger.debug("Theme lookup returned system color '%s'; assuming light mode", bg)
+            return "Light Mode"
+
         if bg and bg.startswith("#"):
             # Parse RGB values
             r = int(bg[1:3], 16)

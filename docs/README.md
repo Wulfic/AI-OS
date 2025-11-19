@@ -52,9 +52,15 @@ aios gui
 
 For installation, see scripts and installers documentation:
 
-- Windows: `scripts/install_aios_on_windows.ps1`
-- Ubuntu: `scripts/install_aios_on_ubuntu.sh`
-- Windows with Ubuntu via Docker: `scripts/install_aios_ubuntu_via_docker_on_windows.ps1`
+- Windows: `installers/scripts/install_aios_on_windows.ps1`
+- Ubuntu: `installers/scripts/install_aios_on_ubuntu.sh`
+- Windows with Ubuntu via Docker: `installers/scripts/install_aios_ubuntu_via_docker_on_windows.ps1`
+
+> **Installer prerequisites**
+> - PowerShell requires a per-process execution policy override before running the Windows script:
+>   `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`
+> - Ubuntu needs the installer script marked executable first:
+>   `chmod a+x ./installers/scripts/install_aios_on_ubuntu.sh`
 
 ## Basic Usage
 

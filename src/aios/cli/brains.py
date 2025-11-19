@@ -210,6 +210,7 @@ def delete(
     reg, _ = _mk_router(None, "brain", ["text"], {}, store_dir=store_dir)
     # Remove from memory
     ok = False
+    error_details: Optional[str] = None
     try:
         if name in reg.brains:
             del reg.brains[name]
@@ -235,7 +236,6 @@ def delete(
         except Exception:
             pass
         # Delete offloaded files and actv1 bundle dir
-        error_details = None
         try:
             import os, shutil
             from aios.core.brains.registry_storage import get_store_paths
@@ -277,11 +277,14 @@ def delete(
     except Exception as e:
         ok = False
         error_details = str(e)
-    
+
     result = {"ok": ok, "deleted": name}
     if error_details:
-        result["warning"] = error_details
+        key = "error" if not ok else "warning"
+        result[key] = error_details
     typer.echo(json.dumps(result))
+    if not ok:
+        raise typer.Exit(code=1)
 
 
 @app.command()

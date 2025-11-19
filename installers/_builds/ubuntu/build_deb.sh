@@ -186,9 +186,23 @@ done
 
 sanitize_brains_directory
 
-rm -rf "$STAGING_ROOT/opt/ai-os/installers/_builds"
-rm -rf "$STAGING_ROOT/opt/ai-os/installers/releases"
-rm -rf "$STAGING_ROOT/opt/ai-os/logs"
+PRUNE_PATHS=(
+  "$STAGING_ROOT/opt/ai-os/installers/_builds"
+  "$STAGING_ROOT/opt/ai-os/installers/releases"
+  "$STAGING_ROOT/opt/ai-os/logs"
+  "$STAGING_ROOT/opt/ai-os/.git"
+  "$STAGING_ROOT/opt/ai-os/.github"
+  "$STAGING_ROOT/opt/ai-os/.venv"
+  "$STAGING_ROOT/opt/ai-os/artifacts/evaluation"
+)
+
+for path in "${PRUNE_PATHS[@]}"; do
+  if [[ -e "$path" ]]; then
+    rel_path="${path#$STAGING_ROOT/}"
+    log_info "Pruning staged path $rel_path"
+    rm -rf "$path"
+  fi
+done
 
 install -Dm644 "$LOCK_FILE" "$STAGING_ROOT/opt/ai-os/requirements-lock.txt"
 
@@ -233,7 +247,7 @@ fi
 cat >"$STAGING_ROOT/usr/share/applications/ai-os.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
-Name=AI-OS GUI
+Name=AI-OS
 Comment=Launch the AI-OS graphical interface
 Exec=/usr/bin/aios-gui
 Icon=/usr/share/pixmaps/ai-os.ico

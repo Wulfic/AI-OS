@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import warnings
 from pathlib import Path
 
@@ -17,48 +18,53 @@ warnings.filterwarnings("ignore", message=".*TRANSFORMERS_CACHE.*", category=Fut
 
 
 def _get_hf_cache_dir() -> Path:
-    """
-    Get HF cache directory with intelligent defaults.
-    Priority:
-    1. AIOS_HF_CACHE environment variable (user override)
-    2. ~/.config/aios/hf_cache_path.txt config file
-    3. First available non-C data drive (D:, E:, F:, Z:)
-    4. Project directory/training_data/hf_cache (fallback)
-    """
-    # Check for user override via environment variable
+    """Determine a user-writable Hugging Face cache directory."""
+
+    def _first_writable(candidates: list[Path]) -> Path:
+        for candidate in candidates:
+            try:
+                candidate.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                continue
+            else:
+                return candidate
+        fallback = Path(tempfile.gettempdir()) / "aios" / "hf_cache"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
     env_override = os.environ.get("AIOS_HF_CACHE")
+    candidates: list[Path] = []
+
     if env_override:
-        p = Path(env_override)
-        if p.parent.exists() or p.exists():
-            return p
-    
-    # Check for saved configuration
+        candidates.append(Path(env_override).expanduser())
+
     try:
         config_dir = Path.home() / ".config" / "aios"
         config_file = config_dir / "hf_cache_path.txt"
         if config_file.exists():
             saved_path = config_file.read_text().strip()
             if saved_path:
-                p = Path(saved_path)
-                # Verify the path or its parent exists
-                if p.exists() or p.parent.exists():
-                    return p
+                candidates.append(Path(saved_path))
     except Exception:
         pass
-    
-    # Smart default: Try to find a non-C data drive
+
     for drive_letter in ["D", "E", "F", "Z"]:
         try:
             drive_path = Path(f"{drive_letter}:/")
             if drive_path.exists():
-                # Use a standard location on the data drive
-                cache_path = drive_path / "AI-OS-Data" / "hf_cache"
-                return cache_path
+                candidates.append(drive_path / "AI-OS-Data" / "hf_cache")
         except Exception:
             continue
-    
-    # Fallback: Use project directory
-    return Path.cwd() / "training_data" / "hf_cache"
+
+    candidates.extend(
+        [
+            Path.home() / ".cache" / "aios" / "hf_cache",
+            Path.home() / "AI-OS" / "hf_cache",
+            Path.cwd() / "training_data" / "hf_cache",
+        ]
+    )
+
+    return _first_writable(candidates)
 
 
 def _save_hf_cache_dir(cache_dir: Path) -> bool:
@@ -113,7 +119,6 @@ import logging
 import logging.config
 import sqlite3
 import shutil
-import tempfile
 import subprocess as _sp
 import shlex as _sh
 from pathlib import Path
