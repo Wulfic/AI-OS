@@ -43,17 +43,22 @@ TLDR; Have a fast ass GPU with lots of VRAM if you're impatient.
 ### Installers
 Find the official installers also in the [Releases section](https://github.com/Wulfic/AI-OS/releases).
 See [installers/README.md](installers/README.md) for Windows (.exe) and Ubuntu (.deb) info.
-### Windows (PowerShell)
-```powershell
-# From repo root
-./scripts/install_aios_on_windows.ps1 -Action install -Yes
+### APT
+```bash
+sudo add-apt-repository ppa:wulfic/ppa-aios
+sudo apt update
+sudo apt install ai-os
 ```
 ### Ubuntu
 ```bash
 # From repo root
 ./scripts/install_aios_on_ubuntu.sh install --yes
 ```
-
+### Windows (PowerShell)
+```powershell
+# From repo root
+./scripts/install_aios_on_windows.ps1 -Action install -Yes
+```
 ## Usage
 Use the shortcut to start the program or via terminal.
 
