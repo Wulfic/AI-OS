@@ -131,3 +131,4 @@ artifacts/diagnostics/device_info_cache.json
 training_datasets/huggingface_documentation-images/dataset_info.json
 training_datasets/huggingface_documentation-images/state.json
 installers/releases/ai-os_1.0.0_amd64.snap
+installers/releases/apt/pool/main/a/ai-os/ai-os_1.0.0_amd64.deb

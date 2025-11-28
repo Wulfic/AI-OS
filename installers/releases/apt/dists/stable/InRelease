@@ -1,0 +1,47 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Architectures: amd64
+Codename: stable
+Components: main
+Date: Fri, 28 Nov 2025 23:03:00 +0000
+Description: AI-OS apt repository
+Label: AI-OS
+Origin: AI-OS
+Suite: stable
+MD5Sum:
+ e1f2aa11f831e744b1392fcded24a9c5              168 Release
+ 0c5c189515b29a6889e53abffd653624              683 main/binary-amd64/Packages
+ ca5bdb43ddae838087e10b7e4f97c50e              495 main/binary-amd64/Packages.gz
+ a9e86401de7a7d69a93700b71daed984              568 main/binary-amd64/Packages.xz
+SHA1:
+ 5669b7befb7754dbcacf34d0722161e5853b143f              168 Release
+ 2f05583aac73f6c6ae8e7e6f67a6c93380b51027              683 main/binary-amd64/Packages
+ 222137dd2c22f1a5f09bdc2eac329ca7acd43fd9              495 main/binary-amd64/Packages.gz
+ 2e1d50d8f39d465bf6c587a20e89f0e9c991f16e              568 main/binary-amd64/Packages.xz
+SHA256:
+ c2b2cd1816fa82db3cd2abe0cb36aab522a91b3d9fb7d618c2cdacf0e4dd4e4a              168 Release
+ c0e9faebca7c4ccddd5f3da4776ccd79eeb7ed2bb53ac2137af9f56871e8706a              683 main/binary-amd64/Packages
+ 928e0f90355e47b73fa01691e2055ed81a20415fd0ea27febd27bb729f77b4d0              495 main/binary-amd64/Packages.gz
+ 13d801332ff51d0e7d324d2810c5d9de81158c8e55df3acd6ac0024926face96              568 main/binary-amd64/Packages.xz
+SHA512:
+ 6cc4dfc45af650bc1cc878e2661bce858fdcbc98458db3df023eee66cf3a355ecde6950fb38a14e5127cb73c2550c73940524e0dd14fd1669750e6681eac948e              168 Release
+ 08eb3d9c2114e867a8566f15f3d631035e8193cce075b6bde3e2d20374eeeb25c6039f33f1d41471409642112c1ff11e8fedb456062182a0962e826a1fe4c6a6              683 main/binary-amd64/Packages
+ 6fc6368206b9ad410672e81a7bd29d35918f0181567c5dee83185a4c31c49437d09e2b4b2ce66af745ba0e30685b82ae7fdc5fd625ffc69e00ef8c4cf0017f09              495 main/binary-amd64/Packages.gz
+ f90da86082b57cc8d0feb3cdf17b733808836b45068d43caed3411be91599f689f3733fd7c5fa9557e23270b6c0bca9a7fdcefc9deb0daadab60d6b3875bb787              568 main/binary-amd64/Packages.xz
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCgAdFiEE0wvdyBPGJ/XyWfozMoJDohDnutQFAmkqKiUACgkQMoJDohDn
+utTDlQ/9EKEFl8gnDCjXJ9sKqXyb9jg2ybA2PG3ILpfWdXIxi13CODfv9uZe3jar
+PL6CyfsWermFSIdtI8SRTBRNenhDHtZSxVoOeayX+Ilt18WmSPuBT/mCZApK6k8D
+caZs3HaoaD4ktcnO3IZyubvTnyaw9+99dr6dfxSwmRJZJfLCClOyNx8PT6sz9LBu
+u3f3zdu2xr6Q+1eflk2O5bejL0thTXWKrGSJ+X6iIX2TO5OS4K0ah5jB3TBQN2+k
+yU/rWZkTy4HscIb1W4G4ZtyyDS4cYBLaq00qIfujcO8lsaNgU92kbTZ938l8Qyrb
+/VJ9rG/2qQAvSQiGUreNuOMgA1oEV8m68ksgvXICNDMEnw7HzN8zXm88eX+JAUDV
+QOglytCYLNbDo3fNl9EaRKzpliCrkOnpWAbW5fCtl/fwVw7fDzCpJAl13qxeGB03
+axAS4deMOlXob/5W/D0W0vlN/e16IMfbsZCeY2VOsB2Dk3MSqxCHSJD4U/AHfGRT
+P6BpJ/VuIRcskWY761c5GcZZYimWjNxMj+xYnd6FuoG6SC3LwMogHgYs2WTAvgml
+WZ2Hqycxw26VHu1iIsHwcMQhjhJ+HF4q4EhTCbFyJAz7HInUrwsKuF/Qb6S6hzdZ
+WibB64UpMvZ4OwG0AzuwRBrZtD4jib0KR0Wo+RS7k7KcovsbTYA=
+=jgDE
+-----END PGP SIGNATURE-----
