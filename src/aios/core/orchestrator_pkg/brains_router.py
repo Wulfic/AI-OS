@@ -2,11 +2,26 @@ from __future__ import annotations
 
 import os
 import asyncio
+from pathlib import Path
 from typing import Any, Dict, Tuple
 
 from aios.core.brains import BrainRegistry, Router
 
+try:  # pragma: no cover
+    from aios.system import paths as system_paths
+except Exception:  # pragma: no cover
+    system_paths = None
+
 _WARMUP_PAYLOAD = {"modalities": ["text"], "payload": "__warmup__"}
+
+
+def _default_brains_root() -> Path:
+    if system_paths is not None:
+        try:
+            return system_paths.get_brains_root()
+        except Exception:
+            pass
+    return (Path(__file__).resolve().parents[3] / "artifacts" / "brains").resolve()
 
 
 def build_registry_and_router(
@@ -26,7 +41,7 @@ def build_registry_and_router(
         except Exception:
             pass
     registry = BrainRegistry(total_storage_limit_mb=lim_mb or None)
-    registry.store_dir = str(brains_cfg.get("store_dir", "artifacts/brains"))
+    registry.store_dir = str(brains_cfg.get("store_dir", str(_default_brains_root())))
     # modality caps (GB in config, convert to MB)
     caps = brains_cfg.get("storage_limits_gb_by_modality", {}) or {}
     try:

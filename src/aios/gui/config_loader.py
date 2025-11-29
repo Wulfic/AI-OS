@@ -12,6 +12,11 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+try:
+    from aios.system import paths as system_paths
+except Exception:  # pragma: no cover - fallback in early bootstrap
+    system_paths = None
+
 
 def get_config_path() -> Path:
     """Get the path to the user's config file, following same logic as CLI.
@@ -35,7 +40,16 @@ def get_config_path() -> Path:
         logger.warning(f"AIOS_CONFIG set to {env_path} but file doesn't exist")
     
     # Check user config directory (~/.config/aios/config.yaml)
-    user_config = Path.home() / ".config" / "aios" / "config.yaml"
+    if system_paths is not None:
+        try:
+            user_config_dir = system_paths.get_user_config_dir()
+        except Exception:
+            logger.debug("Failed to resolve user config dir via helper", exc_info=True)
+            user_config_dir = Path.home() / ".config" / "aios"
+    else:
+        user_config_dir = Path.home() / ".config" / "aios"
+
+    user_config = user_config_dir / "config.yaml"
     if user_config.exists():
         logger.debug(f"Using user config: {user_config}")
         return user_config

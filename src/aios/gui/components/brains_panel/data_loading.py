@@ -14,6 +14,11 @@ from typing import Any
 
 from ...services.brain_registry_service import get_brain_stats
 
+try:  # pragma: no cover - import guard for early bootstrap
+    from aios.system import paths as system_paths
+except Exception:  # pragma: no cover
+    system_paths = None
+
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +43,22 @@ def _run_on_main_thread(panel: Any, callback) -> None:
         else:
             logger.warning("Failed to schedule brains panel UI update: %s", schedule_err)
 
+def _detect_actv1_base(panel: Any) -> str:
+    candidates: list[str] = []
+    store_dir = getattr(panel, "_store_dir", None)
+    if store_dir:
+        candidates.append(os.path.join(store_dir, "actv1"))
+    project_root = getattr(panel, "_project_root", None)
+    if project_root:
+        candidates.append(os.path.join(project_root, "artifacts", "brains", "actv1"))
+    if system_paths is not None:
+        candidates.append(str(system_paths.get_brain_family_dir("actv1")))
+
+    for candidate in candidates:
+        if candidate and os.path.isdir(candidate):
+            return candidate
+    return candidates[0] if candidates else ""
+
 
 def refresh_brains_data(panel: Any) -> list[str]:
     """Fetch brains data and update the UI safely."""
@@ -56,7 +77,7 @@ def refresh_brains_data(panel: Any) -> list[str]:
             brains = {}
 
         try:
-            actv1_base = os.path.join(panel._project_root, "artifacts", "brains", "actv1")
+            actv1_base = _detect_actv1_base(panel)
             actv1_brains = scan_actv1_bundles(actv1_base)
             for entry, info in actv1_brains.items():
                 if entry not in brains:

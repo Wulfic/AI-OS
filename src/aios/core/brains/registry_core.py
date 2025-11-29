@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 import os
+from pathlib import Path
 import time
 
 from aios.core.brains.protocol import Brain
@@ -14,6 +15,15 @@ from aios.core.brains import registry_storage
 from aios.core.brains import registry_stats
 from aios.core.brains import registry_management
 
+try:
+    from aios.system import paths as system_paths
+except Exception:  # pragma: no cover - fallback for bootstrap
+    system_paths = None
+
+
+def _legacy_repo_brains_root() -> str:
+    return str((Path(__file__).resolve().parents[3] / "artifacts" / "brains").resolve())
+
 
 @dataclass
 class BrainRegistry:
@@ -22,13 +32,38 @@ class BrainRegistry:
     brains: Dict[str, Brain] = field(default_factory=dict)
     total_storage_limit_mb: Optional[float] = None
     storage_limit_mb_by_modality: Dict[str, float] = field(default_factory=dict)
-    store_dir: Optional[str] = field(default_factory=lambda: "artifacts/brains")  # Default store directory
+    store_dir: Optional[str] = field(default_factory=lambda: str(system_paths.get_brains_root()) if system_paths else _legacy_repo_brains_root())
     # usage stats
     usage: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     pinned: set[str] = field(default_factory=set)
     masters: set[str] = field(default_factory=set)
     parent: Dict[str, Optional[str]] = field(default_factory=dict)
     children: Dict[str, List[str]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.store_dir:
+            self.store_dir = self._normalize_store_dir(self.store_dir)
+
+    def __setattr__(self, key, value):
+        if key == "store_dir" and value is not None:
+            value = self._normalize_store_dir(value)
+        super().__setattr__(key, value)
+
+    @staticmethod
+    def _normalize_store_dir(value: str | None) -> str:
+        if not value:
+            if system_paths is not None:
+                return str(system_paths.get_brains_root())
+            return _legacy_repo_brains_root()
+        path = Path(value)
+        if path.is_absolute():
+            return str(path)
+        if system_paths is not None:
+            try:
+                return str(system_paths.resolve_artifact_path(path))
+            except Exception:
+                pass
+        return os.path.abspath(path)
 
     def _used_bytes(self) -> int:
         return sum(max(0, int(b.size_bytes())) for b in self.brains.values())

@@ -10,13 +10,29 @@ import os
 from pathlib import Path
 import yaml
 
+try:  # pragma: no cover - handles bootstrap contexts
+    from aios.system import paths as system_paths
+except Exception:  # pragma: no cover
+    system_paths = None
+
 app = typer.Typer(help="Manage and probe AI-OS sub-brains")
+
+
+def _default_brains_root() -> Path:
+    if system_paths is not None:
+        return system_paths.get_brains_root()
+    return (Path(__file__).resolve().parents[3] / "artifacts" / "brains").resolve()
+
+
+def _resolve_store_dir(store_dir: Optional[str]) -> str:
+    return store_dir or str(_default_brains_root())
 
 
 def _mk_router(storage_limit_mb: Optional[float], prefix: str, default_modalities: list[str], create_cfg: dict, strategy: str = "hash", modality_overrides: Optional[dict] = None, store_dir: Optional[str] = None, modality_caps_gb: Optional[dict] = None) -> tuple[BrainRegistry, Router]:
     reg = BrainRegistry(total_storage_limit_mb=storage_limit_mb)
-    if store_dir:
-        reg.store_dir = store_dir
+    resolved_store = _resolve_store_dir(store_dir)
+    if resolved_store:
+        reg.store_dir = resolved_store
         # Load any persisted pinned brains state
     reg.load_pinned()
     reg.load_masters()
@@ -47,7 +63,7 @@ def list_brains(
     if storage_limit_gb is not None:
         mb = float(storage_limit_gb) * 1024.0
     caps = json.loads(modality_caps_gb) if modality_caps_gb else None
-    reg, _ = _mk_router(mb, prefix, default_modalities, {}, store_dir=store_dir, modality_caps_gb=caps)
+    reg, _ = _mk_router(mb, prefix, default_modalities, {}, store_dir=_resolve_store_dir(store_dir), modality_caps_gb=caps)
     typer.echo(json.dumps({"brains": reg.list()}))
 
 
@@ -74,7 +90,16 @@ def route(
         ccfg["width_storage_limit_mb"] = float(per_brain_limit_gb) * 1024.0
         ccfg.setdefault("dynamic_width", True)
     caps = json.loads(modality_caps_gb) if modality_caps_gb else None
-    reg, router = _mk_router(mb, prefix, modalities, ccfg, strategy=strategy, modality_overrides=json.loads(modality_overrides), store_dir=store_dir, modality_caps_gb=caps)
+    reg, router = _mk_router(
+        mb,
+        prefix,
+        modalities,
+        ccfg,
+        strategy=strategy,
+        modality_overrides=json.loads(modality_overrides),
+        store_dir=_resolve_store_dir(store_dir),
+        modality_caps_gb=caps,
+    )
     before = reg.list()
     res = router.handle({"modalities": modalities, "payload": json.loads(payload or "{}")})
     after = reg.list()
@@ -94,7 +119,7 @@ def stats(
     if storage_limit_gb is not None:
         mb = float(storage_limit_gb) * 1024.0
     caps = json.loads(modality_caps_gb) if modality_caps_gb else None
-    reg, _ = _mk_router(mb, prefix, default_modalities, {}, store_dir=store_dir, modality_caps_gb=caps)
+    reg, _ = _mk_router(mb, prefix, default_modalities, {}, store_dir=_resolve_store_dir(store_dir), modality_caps_gb=caps)
     typer.echo(json.dumps(reg.stats()))
 
 
@@ -103,7 +128,7 @@ def pin(
     name: str = typer.Argument(..., help="Brain name to pin (prevent eviction)"),
     store_dir: Optional[str] = typer.Option(None, help="Directory to persist pinned list (recommended)"),
 ):
-    reg, _ = _mk_router(None, "brain", ["text"], {}, store_dir=store_dir)
+    reg, _ = _mk_router(None, "brain", ["text"], {}, store_dir=_resolve_store_dir(store_dir))
     # Ensure we load existing pins first (done in _mk_router), then add
     reg.pin(name)
     typer.echo(json.dumps({"ok": True, "pinned": sorted(list(reg.pinned))}))
@@ -114,7 +139,7 @@ def unpin(
     name: str = typer.Argument(..., help="Brain name to unpin"),
     store_dir: Optional[str] = typer.Option(None, help="Directory containing pinned.json"),
 ):
-    reg, _ = _mk_router(None, "brain", ["text"], {}, store_dir=store_dir)
+    reg, _ = _mk_router(None, "brain", ["text"], {}, store_dir=_resolve_store_dir(store_dir))
     # Prevent unpin if this is a master
     if name in reg.masters:
         typer.echo(json.dumps({"ok": False, "error": "cannot unpin master brain", "name": name}))
@@ -127,7 +152,7 @@ def unpin(
 def list_pinned(
     store_dir: Optional[str] = typer.Option(None, help="Directory containing pinned.json"),
 ):
-    reg, _ = _mk_router(None, "brain", ["text"], {}, store_dir=store_dir)
+    reg, _ = _mk_router(None, "brain", ["text"], {}, store_dir=_resolve_store_dir(store_dir))
     typer.echo(json.dumps({"pinned": sorted(list(reg.pinned))}))
 
 
@@ -146,7 +171,7 @@ def prune(
     if storage_limit_gb is not None:
         mb = float(storage_limit_gb) * 1024.0
     caps = json.loads(modality_caps_gb) if modality_caps_gb else None
-    reg, router = _mk_router(mb, prefix, default_modalities, {}, store_dir=store_dir, modality_caps_gb=caps)
+    reg, router = _mk_router(mb, prefix, default_modalities, {}, store_dir=_resolve_store_dir(store_dir), modality_caps_gb=caps)
     # warm up by creating one brain so stats are non-empty in demo
     router.handle({"modalities": default_modalities, "payload": {}})
     evicted = reg.prune(target_mb, offload=offload)
@@ -155,11 +180,10 @@ def prune(
 
 @app.command()
 def list_offloaded(
-    store_dir: str = typer.Option("artifacts/brains", help="Directory containing offloaded brains"),
+    store_dir: Optional[str] = typer.Option(None, help="Directory containing offloaded brains"),
 ):
-    import glob
     from pathlib import Path
-    p = Path(store_dir)
+    p = Path(_resolve_store_dir(store_dir))
     names = []
     if p.exists():
         for m in p.glob("*.json"):
@@ -170,10 +194,11 @@ def list_offloaded(
 @app.command()
 def load(
     name: str = typer.Argument(..., help="Brain name to load into memory"),
-    store_dir: str = typer.Option("artifacts/brains", help="Directory containing offloaded brains"),
+    store_dir: Optional[str] = typer.Option(None, help="Directory containing offloaded brains"),
     set_master: bool = typer.Option(True, help="Mark as master brain (default: true)"),
 ):
-    reg, _ = _mk_router(None, "brain", ["text"], {}, store_dir=store_dir)
+    resolved_store = _resolve_store_dir(store_dir)
+    reg, _ = _mk_router(None, "brain", ["text"], {}, store_dir=resolved_store)
     b = reg.get(name)
     ok = b is not None
     
@@ -204,10 +229,11 @@ def load(
 @app.command()
 def delete(
     name: str = typer.Argument(..., help="Brain name to delete (from memory and offloaded store)"),
-    store_dir: str = typer.Option("artifacts/brains", help="Directory containing offloaded brains"),
+    store_dir: Optional[str] = typer.Option(None, help="Directory containing offloaded brains"),
 ):
     """Delete a brain: remove from registry memory and delete offloaded files if present."""
-    reg, _ = _mk_router(None, "brain", ["text"], {}, store_dir=store_dir)
+    resolved_store = _resolve_store_dir(store_dir)
+    reg, _ = _mk_router(None, "brain", ["text"], {}, store_dir=resolved_store)
     # Remove from memory
     ok = False
     error_details: Optional[str] = None
@@ -245,7 +271,7 @@ def delete(
                 os.remove(npz)
             if os.path.exists(meta):
                 os.remove(meta)
-            bundle_dir = os.path.join(store_dir, "actv1", name)
+            bundle_dir = os.path.join(resolved_store, "actv1", name)
             if os.path.isdir(bundle_dir):
                 # Remove directory with proper error handling
                 try:
@@ -291,16 +317,17 @@ def delete(
 def rename(
     old: str = typer.Argument(..., help="Existing brain name"),
     new: str = typer.Argument(..., help="New brain name"),
-    store_dir: str = typer.Option("artifacts/brains", help="Directory containing offloaded brains"),
+    store_dir: Optional[str] = typer.Option(None, help="Directory containing offloaded brains"),
 ):
     """Rename a brain in memory and best-effort on disk (offloaded files)."""
-    reg, _ = _mk_router(None, "brain", ["text"], {}, store_dir=store_dir)
+    resolved_store = _resolve_store_dir(store_dir)
+    reg, _ = _mk_router(None, "brain", ["text"], {}, store_dir=resolved_store)
     ok = reg.rename(old, new)
     # Also rename ACTV1 brain bundle directory and update brain.json name
     try:
         import os, json as _json
-        ob = os.path.join(store_dir, "actv1", old)
-        nb = os.path.join(store_dir, "actv1", new)
+        ob = os.path.join(resolved_store, "actv1", old)
+        nb = os.path.join(resolved_store, "actv1", new)
         if os.path.isdir(ob) and not os.path.exists(nb):
             os.rename(ob, nb)
             meta = os.path.join(nb, "brain.json")
@@ -322,10 +349,10 @@ def rename(
 def set_master(
     name: str = typer.Argument(..., help="Brain name"),
     enabled: bool = typer.Option(True, "--enabled/--disabled", help="Mark/unmark as master"),
-    store_dir: str = typer.Option("artifacts/brains", help="Directory containing offloaded brains"),
+    store_dir: Optional[str] = typer.Option(None, help="Directory containing offloaded brains"),
 ):
     """Mark or unmark a brain as master (masters are always pinned)."""
-    reg, _ = _mk_router(None, "brain", ["text"], {}, store_dir=store_dir)
+    reg, _ = _mk_router(None, "brain", ["text"], {}, store_dir=_resolve_store_dir(store_dir))
     if enabled:
         reg.mark_master(name)
         ok = True
@@ -339,20 +366,20 @@ def set_master(
 def set_parent(
     child: str = typer.Argument(..., help="Child brain name"),
     parent: Optional[str] = typer.Argument(None, help="Parent brain name (omit to clear)"),
-    store_dir: str = typer.Option("artifacts/brains", help="Directory containing offloaded brains"),
+    store_dir: Optional[str] = typer.Option(None, help="Directory containing offloaded brains"),
 ):
     """Set or clear a brain's parent (master) relationship."""
-    reg, _ = _mk_router(None, "brain", ["text"], {}, store_dir=store_dir)
+    reg, _ = _mk_router(None, "brain", ["text"], {}, store_dir=_resolve_store_dir(store_dir))
     reg.set_parent(child, parent)
     typer.echo(json.dumps({"ok": True, "child": child, "parent": parent}))
 
 
 @app.command()
 def cleanup(
-    store_dir: str = typer.Option("artifacts/brains", help="Directory containing brains"),
+    store_dir: Optional[str] = typer.Option(None, help="Directory containing brains"),
 ):
     """Remove phantom brains (masters/pins with no actual brain files) and fix registry state."""
-    reg, _ = _mk_router(None, "brain", ["text"], {}, store_dir=store_dir)
+    reg, _ = _mk_router(None, "brain", ["text"], {}, store_dir=_resolve_store_dir(store_dir))
     
     removed = []
     

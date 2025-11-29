@@ -7,6 +7,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 import logging
 
+from .path_defaults import get_default_bundle_dir, get_default_model_base
+
 if TYPE_CHECKING:
     from .panel_main import HRMTrainingPanel
 
@@ -175,8 +177,9 @@ def build_training_config(panel: HRMTrainingPanel) -> Any:
     logger.debug(f"After ZeRO check: ddp={ddp}, world_size={world_size}, cuda_ids={cuda_ids}")
     
     # Build config
+    default_bundle = str(get_default_bundle_dir())
     config = TrainingConfig(
-        model=_str(panel.model_var, "artifacts/hf_implant/base_model"),
+        model=_str(panel.model_var, str(get_default_model_base())),
         dataset_file=dataset_file,
         dataset_chunk_size=_int(panel.dataset_chunk_size_var, 4000),
         max_seq_len=_int(panel.max_seq_var, 128),
@@ -187,7 +190,7 @@ def build_training_config(panel: HRMTrainingPanel) -> Any:
         auto_adjust_lr=panel.auto_adjust_lr_var.get(),
         device=device,
         halt_max_steps=_int(panel.halt_steps_var, 1),
-        save_dir=_str(panel.bundle_dir_var, "artifacts/brains/actv1"),
+        save_dir=_str(panel.bundle_dir_var, default_bundle),
         ascii_only=bool(panel.ascii_only_var.get()),
         linear_dataset=bool(panel.linear_dataset_var.get()),
         dataset_start_offset=0,  # GUI always starts from 0; resume handled by checkpoint loading
@@ -197,7 +200,7 @@ def build_training_config(panel: HRMTrainingPanel) -> Any:
         student_init=_str(panel.student_init_var) or None,
         brain_name=_str(panel.brain_name_var) or None,
         default_goal=_str(panel.default_goal_var) or None,
-        bundle_dir=_str(panel.bundle_dir_var, "artifacts/brains/actv1"),
+        bundle_dir=_str(panel.bundle_dir_var, default_bundle),
         h_layers=_int(panel.h_layers_var, 2),
         l_layers=_int(panel.l_layers_var, 2),
         hidden_size=_int(panel.hidden_size_var, 512),

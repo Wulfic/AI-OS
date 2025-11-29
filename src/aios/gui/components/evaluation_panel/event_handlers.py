@@ -17,6 +17,11 @@ from aios.gui.services import (
 )
 from .multi_gpu import MultiGpuEvaluationRunner
 
+try:  # pragma: no cover - runtime dependency
+    from aios.system import paths as system_paths
+except Exception:  # pragma: no cover
+    system_paths = None
+
 if TYPE_CHECKING:
     from aios.core.evaluation import EvaluationResult
     from .panel_main import EvaluationPanel
@@ -251,7 +256,7 @@ def start_evaluation(panel: "EvaluationPanel") -> None:
     # Determine model type - auto-detect if it's a brain or external model
     model_type = "hf"  # Default to HuggingFace
     brain_name = model
-    brain_path = Path(panel._project_root) / "artifacts" / "brains" / "actv1" / brain_name
+    brain_path = _resolve_brain_path(brain_name, panel._project_root)
     
     # Debug: Log the paths being checked
     panel._log(f"[eval] Checking for brain: {brain_name}")
@@ -312,6 +317,18 @@ def start_evaluation(panel: "EvaluationPanel") -> None:
             # Assume it's a HuggingFace model identifier
             panel._log(f"[eval] Treating as HuggingFace model identifier: {model}")
             model_type = "hf"
+
+
+def _resolve_brain_path(brain_name: str, project_root: str | Path | None) -> Path:
+    """Resolve the on-disk path for an ACTv1 brain bundle."""
+    if system_paths is not None:
+        try:
+            return system_paths.get_brain_family_dir("actv1") / brain_name
+        except Exception:
+            logger.debug("Failed to resolve ProgramData brain path", exc_info=True)
+
+    base = Path(project_root) if project_root else Path.cwd()
+    return base / "artifacts" / "brains" / "actv1" / brain_name
 
     model_kwargs = {
         "model_name": model,

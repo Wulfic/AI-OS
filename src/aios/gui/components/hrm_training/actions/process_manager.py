@@ -21,6 +21,7 @@ import queue
 
 from aios.python_exec import get_preferred_python_executable
 from ....utils.resource_management import submit_background
+from aios.gui.components.hrm_training_panel.path_defaults import get_default_bundle_dir
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ def _prepare_rank_log_dir(panel: Any, config: Any) -> str | None:
         base_candidate = (
             getattr(config, "save_dir", None)
             or getattr(config, "bundle_dir", None)
-            or "artifacts/brains/actv1"
+            or str(get_default_bundle_dir())
         )
         base_path = Path(base_candidate).expanduser()
         if base_path.suffix:

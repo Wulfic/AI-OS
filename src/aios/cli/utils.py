@@ -11,6 +11,7 @@ import io
 
 import yaml
 from aios.utils.async_logging import NonBlockingTimedRotatingFileHandler
+from aios.system.paths import get_logs_dir, get_user_config_dir
 
 # Global reference to UTF-8 wrapped streams for Windows
 _utf8_stdout = None
@@ -61,7 +62,8 @@ _is_debug_mode = False
 
 def load_config(path: Optional[str] = None) -> dict:
     env_path = os.environ.get("AIOS_CONFIG")
-    p = Path(path or env_path or Path.home() / ".config/aios/config.yaml")
+    default_path = get_user_config_dir() / "config.yaml"
+    p = Path(path or env_path or default_path)
     if not p.exists():
         # fall back to repo default if available
         repo_default = Path(__file__).resolve().parents[3] / "config" / "default.yaml"
@@ -125,6 +127,7 @@ def setup_logging(
     _logging_initialized = True
     
     cfg_path = cfg.get("logging", {}).get("config_path") if isinstance(cfg, dict) else None
+    logs_dir = get_logs_dir()
     
     # If cfg_path is relative, resolve it relative to the repo root
     if cfg_path and not Path(cfg_path).is_absolute():
@@ -322,7 +325,7 @@ def setup_logging(
                 "class": "aios.utils.async_logging.NonBlockingRotatingFileHandler",
                 "level": "DEBUG",
                 "formatter": "ultra_simple" if env_ultra_simple else "fast_debug",
-                "filename": "logs/aios_debug.log",
+                "filename": str(logs_dir / "aios_debug.log"),
                 "maxBytes": 20971520,  # 20 MB
                 "backupCount": 10,
                 "encoding": "utf-8",
@@ -378,6 +381,18 @@ def setup_logging(
     # Add file_rotating handler to root logger if it exists
     if "file_rotating" in conf["handlers"] and "file_rotating" not in conf["root"]["handlers"]:
         conf["root"]["handlers"].append("file_rotating")
+
+    # Resolve any relative log file paths against the user log directory to avoid Program Files writes
+    def _resolve_log_path(value: str) -> str:
+        path = Path(value)
+        if path.is_absolute():
+            return str(path)
+        return str(logs_dir / path)
+
+    for handler in conf["handlers"].values():
+        filename = handler.get("filename")
+        if filename:
+            handler["filename"] = _resolve_log_path(filename)
 
     # Install configuration (sys.stdout/stderr are already UTF-8 wrapped on Windows at module import time)
     logging.config.dictConfig(conf)
@@ -470,7 +485,7 @@ def setup_logging(
 
 
 def dml_cfg_path() -> Path:
-    return Path.home() / ".config/aios/dml_python.txt"
+    return get_user_config_dir() / "dml_python.txt"
 
 
 def shutdown_logging() -> None:

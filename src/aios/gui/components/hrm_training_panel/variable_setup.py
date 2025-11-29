@@ -9,6 +9,13 @@ import logging
 import tkinter as tk
 from typing import TYPE_CHECKING
 
+from .path_defaults import (
+    get_default_bundle_dir,
+    get_default_metrics_file,
+    get_default_model_base,
+    get_default_student_checkpoint,
+)
+
 # Import safe variable wrappers
 from ...utils import safe_variables
 
@@ -27,7 +34,7 @@ def setup_variables(panel: HRMTrainingPanel) -> None:
     # Core inputs
     panel.dataset_var = safe_variables.StringVar(value="training_data")
     panel.dataset_chunk_size_var = safe_variables.StringVar(value="4000")
-    panel.model_var = safe_variables.StringVar(value="artifacts/hf_implant/base_model")
+    panel.model_var = safe_variables.StringVar(value=str(get_default_model_base()))
     panel.max_seq_var = safe_variables.StringVar(value="128")
     panel.batch_var = safe_variables.StringVar(value="4")
     panel._batch_default_value = panel.batch_var.get()
@@ -61,11 +68,11 @@ def setup_variables(panel: HRMTrainingPanel) -> None:
     panel.eval_file_var = safe_variables.StringVar(value="")
     panel.eval_batches_var = safe_variables.StringVar(value="10")
     panel.stop_file_var = safe_variables.StringVar(value="training_data/actv1/STOP")
-    panel.log_file_var = safe_variables.StringVar(value="artifacts/brains/actv1/default/metrics.jsonl")
-    panel.student_init_var = safe_variables.StringVar(value="artifacts/brains/actv1/default/actv1_student.safetensors")
+    panel.log_file_var = safe_variables.StringVar(value=str(get_default_metrics_file()))
+    panel.student_init_var = safe_variables.StringVar(value=str(get_default_student_checkpoint()))
     panel.brain_name_var = safe_variables.StringVar(value="default")
     panel.default_goal_var = safe_variables.StringVar(value="")
-    panel.bundle_dir_var = safe_variables.StringVar(value="artifacts/brains/actv1")
+    panel.bundle_dir_var = safe_variables.StringVar(value=str(get_default_bundle_dir()))
     
     # Architecture knobs
     panel.h_layers_var = safe_variables.StringVar(value="2")

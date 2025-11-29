@@ -5,8 +5,21 @@ Checkpointing, logging, and file paths.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
+
+try:  # pragma: no cover - fallback for bootstrap contexts
+    from aios.system import paths as system_paths
+except Exception:  # pragma: no cover
+    system_paths = None
+
+
+def _default_bundle_dir() -> str:
+    if system_paths is not None:
+        return str(system_paths.get_brain_family_dir("actv1"))
+    fallback = Path(__file__).resolve().parents[6] / "artifacts" / "brains" / "actv1"
+    return str(fallback.resolve())
 
 
 @dataclass
@@ -68,7 +81,7 @@ class IOFields:
     If None (default), trains full HRM ACT-v1 model normally.
     """
     
-    bundle_dir: str = "artifacts/brains/actv1"
+    bundle_dir: str = field(default_factory=_default_bundle_dir)
     """Base directory for ACTV1 brain bundles.
     
     Brain-specific subdirectories are created here.

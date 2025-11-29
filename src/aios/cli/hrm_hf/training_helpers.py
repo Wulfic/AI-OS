@@ -5,16 +5,27 @@ from typing import Optional, Dict, Any
 import json
 from pathlib import Path
 
+try:  # pragma: no cover - guard for early bootstrap
+    from aios.system import paths as system_paths
+except Exception:  # pragma: no cover
+    system_paths = None
+
+
+def _bundle_dir() -> Path:
+    if system_paths is not None:
+        return system_paths.get_brain_family_dir("actv1")
+    return (Path(__file__).resolve().parents[3] / "artifacts" / "brains" / "actv1").resolve()
+
 
 def write_last_safe_batches(train_bs: Optional[int] = None) -> None:
     """Persist last safe batch size to help GUI pre-fill known-good defaults.
 
-    Writes to artifacts/brains/actv1/last_safe.json. Missing directories are created.
+    Writes to the shared ACTV1 bundle directory (last_safe.json). Missing directories are created.
     Silently ignores IO errors to avoid breaking training.
     """
     # Always write last_safe.json
     try:
-        base_dir = Path("artifacts/brains/actv1")
+        base_dir = _bundle_dir()
         base_dir.mkdir(parents=True, exist_ok=True)
         p = base_dir / "last_safe.json"
         data: dict = {}

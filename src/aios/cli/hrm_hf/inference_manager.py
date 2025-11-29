@@ -26,7 +26,7 @@ class InferenceModelManager:
         >>> manager = InferenceModelManager(
         ...     inference_device="cuda:1",
         ...     model_factory=lambda: build_actv1_model(...),
-        ...     checkpoint_dir=Path("artifacts/brains/actv1/MyBrain")
+        ...     checkpoint_dir=Path(r"C:/ProgramData/AI-OS/artifacts/brains/actv1/MyBrain")
         ... )
         >>> manager.initialize()
         >>> # During training...

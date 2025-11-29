@@ -8,7 +8,10 @@ import logging
 import os
 import json
 import time
+from pathlib import Path
 from typing import Dict, Any, Optional
+
+from ..hrm_training_panel.path_defaults import get_default_bundle_dir
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +52,8 @@ def create_brain_directory(
     safe_name = brain_name.replace(" ", "_")
     
     # Create brain directory
-    brain_dir = os.path.join(project_root, "artifacts", "brains", "actv1", safe_name)
+    brains_root = _resolve_actv1_root(project_root)
+    brain_dir = os.path.join(brains_root, safe_name)
     os.makedirs(brain_dir, exist_ok=True)
     logger.debug(f"Directory path: {brain_dir}")
     
@@ -115,6 +119,20 @@ def create_brain_directory(
     
     logger.info(f"Brain directory created successfully: {safe_name}")
     return brain_dir
+
+
+def _resolve_actv1_root(project_root: str | None) -> str:
+    """Return the preferred ACTv1 bundle root."""
+    try:
+        return str(get_default_bundle_dir("actv1"))
+    except Exception:
+        pass
+
+    if project_root:
+        return os.path.join(project_root, "artifacts", "brains", "actv1")
+
+    repo_root = Path(__file__).resolve().parents[5]
+    return str(repo_root / "artifacts" / "brains" / "actv1")
 
 
 def apply_preset_to_panel(panel: Any, preset: str) -> None:

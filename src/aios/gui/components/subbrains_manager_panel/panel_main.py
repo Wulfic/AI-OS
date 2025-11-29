@@ -12,8 +12,17 @@ from __future__ import annotations
 # Import safe variable wrappers
 from ...utils import safe_variables
 
+import logging
 import os
+from pathlib import Path
 from typing import Any, Callable, Optional, cast
+
+logger = logging.getLogger(__name__)
+
+try:  # pragma: no cover - module available at runtime
+    from aios.system import paths as system_paths
+except Exception:  # pragma: no cover
+    system_paths = None
 
 try:  # pragma: no cover - environment dependent
     import tkinter as tk  # type: ignore
@@ -81,9 +90,7 @@ class SubbrainsManagerPanel(ttk.LabelFrame):  # type: ignore[misc]
         
         # Detect project root
         self._project_root = self._detect_project_root()
-        self._registry_path = os.path.join(
-            self._project_root, "artifacts", "models", "expert_registry.json"
-        )
+        self._registry_path = self._resolve_registry_path()
         
         # Create UI state variables
         self.total_experts_var = safe_variables.StringVar(value="0")
@@ -149,6 +156,20 @@ class SubbrainsManagerPanel(ttk.LabelFrame):  # type: ignore[misc]
             return os.path.abspath(os.getcwd())
         except Exception:
             return os.path.abspath(os.getcwd())
+
+    def _resolve_registry_path(self) -> str:
+        """Return the expert registry path, preferring ProgramData storage."""
+        if system_paths is not None:
+            try:
+                registry_path = system_paths.get_artifacts_root() / "models" / "expert_registry.json"
+                registry_path.parent.mkdir(parents=True, exist_ok=True)
+                return str(registry_path)
+            except Exception:
+                logger.debug("Failed to resolve ProgramData expert registry path", exc_info=True)
+
+        fallback = Path(self._project_root) / "artifacts" / "models" / "expert_registry.json"
+        fallback.parent.mkdir(parents=True, exist_ok=True)
+        return str(fallback)
 
     def refresh(self) -> None:
         """Refresh expert registry data from disk."""

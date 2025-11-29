@@ -31,6 +31,11 @@ from ..services import (
 from ..utils.resource_management import submit_background
 from ..services.brain_registry_service import list_brains as list_available_brains
 
+try:  # pragma: no cover - fallback when system paths aren't available yet
+    from aios.system import paths as system_paths
+except Exception:  # pragma: no cover
+    system_paths = None
+
 logger = logging.getLogger(__name__)
 
 # Global persistent registry and router to keep models loaded across chat sessions
@@ -47,6 +52,15 @@ _chat_device_selection: DeviceSelectionResult | None = None
 _chat_device_signature: tuple[str, tuple[str, ...]] | None = None
 _chat_warning_tokens: set[str] = set()
 _chat_env_snapshot: dict[str, str] = {}
+
+
+def _default_brains_root() -> Path:
+    if system_paths is not None:
+        try:
+            return system_paths.get_brains_root()
+        except Exception:
+            pass
+    return (Path(__file__).resolve().parents[3] / "artifacts" / "brains").resolve()
 
 
 def prepare_tensor_parallel(devices: list[str]) -> None:
@@ -87,7 +101,7 @@ def setup_chat_operations(app: Any) -> None:
             logger.debug(f"Falling back to default brain store dir (config load failed): {exc}")
 
         if not configured:
-            configured = "artifacts/brains"
+            configured = str(_default_brains_root())
 
         candidate_path = Path(configured)
         if candidate_path.is_absolute():
@@ -115,6 +129,7 @@ def setup_chat_operations(app: Any) -> None:
             _add_base(root_hint.parent)
         _add_base(root_hint)
         _add_base(Path.cwd())
+        _add_base(_default_brains_root())
 
         fallback: Path | None = None
         for base in bases:
@@ -259,7 +274,8 @@ def setup_chat_operations(app: Any) -> None:
 
                 storage_limit_mb = float(brains_cfg.get("storage_limit_mb", 0) or 0) or None
                 _persistent_registry = BrainRegistry(total_storage_limit_mb=storage_limit_mb)
-                _persistent_registry.store_dir = str(brains_cfg.get("store_dir", "artifacts/brains"))
+                default_store_dir = str(_default_brains_root())
+                _persistent_registry.store_dir = str(brains_cfg.get("store_dir", default_store_dir))
 
                 try:
                     _persistent_registry.load_pinned()
@@ -503,7 +519,10 @@ def setup_chat_operations(app: Any) -> None:
                     app._log_router.log(f"Brain {brain_name} loaded and set as master for chat ({load_time:.2f}s)", LogCategory.CHAT, "INFO")
                     return f"✓ Brain '{brain_name}' loaded successfully and set as active for chat."
                 else:
-                    error_msg = f"Failed to load brain '{brain_name}' - brain not found or failed to load. Check that the brain exists in artifacts/brains/actv1/{brain_name}/"
+                    error_msg = (
+                        f"Failed to load brain '{brain_name}' - brain not found or failed to load. "
+                        f"Check that the brain exists in {_brain_store_dir}/actv1/{brain_name}/"
+                    )
                     logger.warning(f"Brain '{brain_name}' not found in registry")
                     app._log_router.log(error_msg, LogCategory.CHAT, "WARNING")
                     return error_msg
@@ -564,7 +583,7 @@ def setup_chat_operations(app: Any) -> None:
 
             # Fallback candidates: process CWD default and project root parent
             alt_candidates: list[str] = []
-            alt_candidates.append("artifacts/brains")
+            alt_candidates.append(str(_default_brains_root()))
 
             try:
                 alt_parent = Path(_brain_store_dir).resolve().parents[2]

@@ -8,6 +8,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ...utils.resource_management import submit_background
+from .path_defaults import get_default_brain_dir
 
 if TYPE_CHECKING:
     from .panel_main import HRMTrainingPanel
@@ -89,14 +90,15 @@ def on_optimize(panel: HRMTrainingPanel) -> None:
             # Try to resolve from brain name bundle
             bname = (panel.brain_name_var.get() or "").strip()
             if bname:
-                import os
-                bdir = os.path.join(panel._project_root, "artifacts", "brains", "actv1", bname)
-                cand = os.path.join(bdir, "actv1_student.safetensors")
-                if os.path.exists(cand) or os.path.isdir(bdir):
+                from pathlib import Path
+
+                bdir = get_default_brain_dir(bname)
+                cand_path = Path(bdir) / "actv1_student.safetensors"
+                if cand_path.exists() or Path(bdir).is_dir():
                     try:
-                        panel.student_init_var.set(cand)
-                        si = cand
-                        logger.debug(f"Resolved student from brain bundle: {si}")
+                        panel.student_init_var.set(str(cand_path))
+                        si = str(cand_path)
+                        logger.debug("Resolved student from brain bundle: %s", si)
                     except Exception:
                         pass
         if not si:

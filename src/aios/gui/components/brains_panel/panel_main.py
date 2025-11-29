@@ -8,7 +8,13 @@ from __future__ import annotations
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Any, Callable, Optional, cast
+
+try:  # pragma: no cover - available during runtime
+    from aios.system import paths as system_paths
+except Exception:  # pragma: no cover
+    system_paths = None
 
 try:  # pragma: no cover
     import tkinter as tk  # type: ignore
@@ -63,10 +69,8 @@ class BrainsPanel(ttk.LabelFrame):  # type: ignore[misc]
         from .helpers import find_project_root
         
         self._project_root = find_project_root()
-        self._store_dir = os.path.join(self._project_root, "artifacts", "brains")
-        self._registry_path = os.path.join(
-            self._project_root, "artifacts", "models", "expert_registry.json"
-        )
+        self._store_dir = self._resolve_store_dir()
+        self._registry_path = self._resolve_registry_path()
 
         # Build UI sections
         from .ui_summary import build_summary_row
@@ -264,3 +268,31 @@ class BrainsPanel(ttk.LabelFrame):  # type: ignore[misc]
         """Remove selected goals from the currently selected brain or expert."""
         from .goals_operations import remove_selected_goals
         remove_selected_goals(self)
+
+    def _resolve_store_dir(self) -> str:
+        """Return the brains storage directory, ensuring it exists."""
+        if system_paths is not None:
+            try:
+                store_dir = system_paths.get_brains_root()
+                store_dir.mkdir(parents=True, exist_ok=True)
+                return str(store_dir)
+            except Exception:
+                logger.debug("Failed to resolve ProgramData brains root", exc_info=True)
+
+        fallback = Path(self._project_root) / "artifacts" / "brains"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return str(fallback)
+
+    def _resolve_registry_path(self) -> str:
+        """Return the expert registry path adjacent to the brains store."""
+        if system_paths is not None:
+            try:
+                registry = system_paths.get_artifacts_root() / "models" / "expert_registry.json"
+                registry.parent.mkdir(parents=True, exist_ok=True)
+                return str(registry)
+            except Exception:
+                logger.debug("Failed to resolve ProgramData expert registry path", exc_info=True)
+
+        fallback = Path(self._project_root) / "artifacts" / "models" / "expert_registry.json"
+        fallback.parent.mkdir(parents=True, exist_ok=True)
+        return str(fallback)

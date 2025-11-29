@@ -175,6 +175,11 @@ $stagingDir = (Resolve-Path $stagingDir).Path
 $repoRoot = (Resolve-Path $repoRoot).Path
 $releaseDir = (Resolve-Path $releaseDir).Path
 
+$payloadBytes = (Get-ChildItem -LiteralPath $stagingDir -Recurse -File -ErrorAction SilentlyContinue |
+	Measure-Object -Property Length -Sum).Sum
+if (-not $payloadBytes) { $payloadBytes = 0 }
+$payloadBytes = [long]$payloadBytes
+
 function Find-InnoSetupCompiler {
 	$candidates = @()
 	try {
@@ -222,6 +227,7 @@ $issContent = @"
 #define SourceRoot "$stagingDir"
 #define OutputRoot "$releaseDir"
 #define RepoRoot "$repoRoot"
+#define CorePayloadBytes $payloadBytes
 
 [Setup]
 AppId=$appId
@@ -241,12 +247,13 @@ ArchitecturesInstallIn64BitMode=x64
 PrivilegesRequired=admin
 ChangesEnvironment=yes
 WizardStyle=modern
-LicenseFile={#RepoRoot}\LICENSE
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
+Source: "{#SourceRoot}\installers\scripts\install_aios_on_windows.ps1"; DestDir: "{tmp}"; Flags: dontcopy
+Source: "{#SourceRoot}\LICENSE"; DestDir: "{tmp}"; Flags: dontcopy
 Source: "{#SourceRoot}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Run]
@@ -262,6 +269,301 @@ Filename: "powershell.exe"; \
   RunOnceId: "AIOSUninstall"; \
   Flags: waituntilterminated
 "@
+
+$codeBlock = @'
+[Code]
+const
+	PreflightPayloadBytes = {#CorePayloadBytes};
+	PreflightScriptName = 'install_aios_on_windows.ps1';
+	PreflightOutputName = 'aios_preflight.txt';
+	LicenseFileName = 'LICENSE';
+
+var
+	LicensePage: TWizardPage;
+	LicenseViewer: TRichEditViewer;
+	LicenseAcceptCheck: TNewCheckBox;
+	DiskSummaryLabel: TNewStaticText;
+	DiskDetailLabel: TNewStaticText;
+	DiskRetryButton: TNewButton;
+	PreflightOk: Boolean;
+	PreflightRunning: Boolean;
+	PreflightCoreBytes: Int64;
+	PreflightDepBytes: Int64;
+	PreflightBufferBytes: Int64;
+	PreflightTotalBytes: Int64;
+	PreflightMode: string;
+	PreflightNote: string;
+
+procedure StartPreflight(const ShowErrors: Boolean); forward;
+
+function FormatBytes(Value: Int64): string;
+begin
+	if Value <= 0 then
+		Result := '0 B'
+	else if Value >= 1073741824 then
+		Result := Format('%.2f GB', [Value / 1073741824.0])
+	else if Value >= 1048576 then
+		Result := Format('%.1f MB', [Value / 1048576.0])
+	else
+		Result := Format('%d KB', [Value div 1024]);
+end;
+
+function GetPowerShellPath: string;
+begin
+	Result := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+	if not FileExists(Result) then
+		Result := 'powershell.exe';
+end;
+
+procedure UpdateNextButtonState;
+begin
+	if (LicensePage = nil) or (WizardForm = nil) then
+		Exit;
+	if WizardForm.CurPageID = LicensePage.ID then
+		WizardForm.NextButton.Enabled :=
+			LicenseAcceptCheck.Checked and PreflightOk and (not PreflightRunning);
+end;
+
+procedure LicenseAcceptChanged(Sender: TObject);
+begin
+	UpdateNextButtonState;
+end;
+
+procedure SetDiskStatus(const Summary, Detail: string; ErrorState: Boolean);
+begin
+	DiskSummaryLabel.Caption := Summary;
+	DiskDetailLabel.Caption := Detail;
+	if ErrorState then
+		DiskSummaryLabel.Font.Color := clRed
+	else
+		DiskSummaryLabel.Font.Color := clWindowText;
+end;
+
+procedure ResetPreflightValues;
+begin
+	PreflightCoreBytes := 0;
+	PreflightDepBytes := 0;
+	PreflightBufferBytes := 0;
+	PreflightTotalBytes := 0;
+	PreflightMode := '';
+	PreflightNote := '';
+end;
+
+function LoadPreflightOutput(const FileName: string): Boolean;
+var
+	Lines: TStringList;
+	I, P: Integer;
+	Key, Value: string;
+begin
+	Result := False;
+	if not FileExists(FileName) then
+		Exit;
+	ResetPreflightValues;
+	Lines := TStringList.Create;
+	try
+		Lines.LoadFromFile(FileName);
+		for I := 0 to Lines.Count - 1 do
+		begin
+			P := Pos('=', Lines[I]);
+			if P <= 0 then
+				Continue;
+			Key := Trim(Copy(Lines[I], 1, P - 1));
+			Value := Trim(Copy(Lines[I], P + 1, MaxInt));
+			if Key = 'core_bytes' then
+				PreflightCoreBytes := StrToInt64Def(Value, 0)
+			else if Key = 'dependency_bytes' then
+				PreflightDepBytes := StrToInt64Def(Value, 0)
+			else if Key = 'buffer_bytes' then
+				PreflightBufferBytes := StrToInt64Def(Value, 0)
+			else if Key = 'total_bytes' then
+				PreflightTotalBytes := StrToInt64Def(Value, 0)
+			else if Key = 'mode' then
+				PreflightMode := Value
+			else if Key = 'note' then
+				PreflightNote := Value;
+		end;
+		if PreflightTotalBytes = 0 then
+			PreflightTotalBytes := PreflightCoreBytes + PreflightDepBytes + PreflightBufferBytes;
+		Result := PreflightTotalBytes > 0;
+	finally
+		Lines.Free;
+	end;
+end;
+
+procedure ShowPreflightSuccess;
+var
+	Detail: string;
+begin
+	Detail :=
+		Format('Core files: %s  |  Dependencies: %s  |  Buffer: %s%sMode: %s%s%s',
+			[FormatBytes(PreflightCoreBytes),
+			 FormatBytes(PreflightDepBytes),
+			 FormatBytes(PreflightBufferBytes),
+			 #13#10,
+			 PreflightMode,
+			 #13#10,
+			 PreflightNote]);
+	SetDiskStatus(
+		Format('Estimated total required: %s', [FormatBytes(PreflightTotalBytes)]),
+		Detail,
+		False);
+end;
+
+procedure StartPreflight(const ShowErrors: Boolean);
+var
+	PSExe, ScriptPath, OutputPath, Params: string;
+	ResultCode: Integer;
+begin
+	PreflightRunning := True;
+	PreflightOk := False;
+	DiskRetryButton.Enabled := False;
+	SetDiskStatus('Measuring disk usage...',
+		'Gathering GPU + dependency footprint. This may take up to a minute.',
+		False);
+	UpdateNextButtonState;
+	ExtractTemporaryFile(PreflightScriptName);
+	ScriptPath := ExpandConstant('{tmp}\') + PreflightScriptName;
+	OutputPath := ExpandConstant('{tmp}\') + PreflightOutputName;
+	DeleteFile(OutputPath);
+	PSExe := GetPowerShellPath;
+	Params := Format('-ExecutionPolicy Bypass -NoLogo -NonInteractive -WindowStyle Hidden -File "%s" -Action preflight -Quiet -Gpu auto -PayloadBytes %d -PreflightOutput "%s"',
+		[ScriptPath,
+		 PreflightPayloadBytes,
+		 OutputPath]);
+	if not Exec(PSExe, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+	begin
+		SetDiskStatus('Unable to launch PowerShell preflight.',
+			'Ensure Windows PowerShell is available, then click Recalculate.',
+			True);
+		if ShowErrors then
+			MsgBox('PowerShell could not be launched to compute disk usage.', mbError, MB_OK);
+	end
+	else if ResultCode <> 0 then
+	begin
+		SetDiskStatus(
+			Format('Preflight exited with code %d.', [ResultCode]),
+			'Review installer.log for errors, then click Recalculate.',
+			True);
+		if ShowErrors then
+			MsgBox('Disk usage estimation failed. Check your execution policy and retry.', mbError, MB_OK);
+	end
+	else if not LoadPreflightOutput(OutputPath) then
+	begin
+		SetDiskStatus('Preflight did not return usable data.',
+			'The helper script finished without writing metrics. Click Recalculate to try again.',
+			True);
+		if ShowErrors then
+			MsgBox('Disk usage estimation returned no data.', mbError, MB_OK);
+	end
+	else
+	begin
+		PreflightOk := True;
+		ShowPreflightSuccess;
+	end;
+	PreflightRunning := False;
+	DiskRetryButton.Enabled := True;
+	UpdateNextButtonState;
+end;
+
+procedure DiskRetryButtonClick(Sender: TObject);
+begin
+	StartPreflight(True);
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+	if (LicensePage <> nil) and (CurPageID <> LicensePage.ID) then
+		WizardForm.NextButton.Enabled := True
+	else
+		UpdateNextButtonState;
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+	Result := True;
+	if (LicensePage <> nil) and (CurPageID = LicensePage.ID) then
+	begin
+		if not LicenseAcceptCheck.Checked then
+		begin
+			MsgBox('You must accept the AI-OS license agreement before continuing.', mbError, MB_OK);
+			Result := False;
+			Exit;
+		end;
+		if not PreflightOk then
+		begin
+			MsgBox('Wait for the disk usage estimate to finish (or click Recalculate) before continuing.', mbError, MB_OK);
+			Result := False;
+			Exit;
+		end;
+	end;
+end;
+
+procedure InitializeWizard;
+var
+	LicensePath: string;
+begin
+	LicensePage :=
+		CreateCustomPage(
+			wpWelcome,
+			'License & Disk Usage',
+			'Read the AI-OS terms and confirm there is enough free space before installing.');
+	LicenseViewer := TRichEditViewer.Create(LicensePage.Surface);
+	LicenseViewer.Parent := LicensePage.Surface;
+	LicenseViewer.Left := 0;
+	LicenseViewer.Top := 0;
+	LicenseViewer.Width := LicensePage.SurfaceWidth;
+	LicenseViewer.Height := ScaleY(150);
+	LicenseViewer.ScrollBars := ssVertical;
+	LicenseViewer.BorderStyle := bsSingle;
+	LicenseViewer.ReadOnly := True;
+	ExtractTemporaryFile(LicenseFileName);
+	LicensePath := ExpandConstant('{tmp}\') + LicenseFileName;
+	if FileExists(LicensePath) then
+		LicenseViewer.Lines.LoadFromFile(LicensePath)
+	else
+		LicenseViewer.Lines.Text := 'License file missing from installer payload.';
+
+	LicenseAcceptCheck := TNewCheckBox.Create(LicensePage.Surface);
+	LicenseAcceptCheck.Parent := LicensePage.Surface;
+	LicenseAcceptCheck.Caption := 'I accept the AI-OS License Agreement';
+	LicenseAcceptCheck.Left := 0;
+	LicenseAcceptCheck.Top := LicenseViewer.Top + LicenseViewer.Height + ScaleY(8);
+	LicenseAcceptCheck.Width := LicensePage.SurfaceWidth;
+	LicenseAcceptCheck.OnClick := @LicenseAcceptChanged;
+
+	DiskSummaryLabel := TNewStaticText.Create(LicensePage.Surface);
+	DiskSummaryLabel.Parent := LicensePage.Surface;
+	DiskSummaryLabel.Left := 0;
+	DiskSummaryLabel.Top := LicenseAcceptCheck.Top + LicenseAcceptCheck.Height + ScaleY(12);
+	DiskSummaryLabel.Width := LicensePage.SurfaceWidth;
+	DiskSummaryLabel.AutoSize := False;
+	DiskSummaryLabel.Height := ScaleY(36);
+	DiskSummaryLabel.WordWrap := True;
+	DiskSummaryLabel.Font.Style := [fsBold];
+
+	DiskDetailLabel := TNewStaticText.Create(LicensePage.Surface);
+	DiskDetailLabel.Parent := LicensePage.Surface;
+	DiskDetailLabel.Left := 0;
+	DiskDetailLabel.Top := DiskSummaryLabel.Top + DiskSummaryLabel.Height + ScaleY(4);
+	DiskDetailLabel.Width := LicensePage.SurfaceWidth;
+	DiskDetailLabel.Height := ScaleY(60);
+	DiskDetailLabel.AutoSize := False;
+	DiskDetailLabel.WordWrap := True;
+
+	DiskRetryButton := TNewButton.Create(LicensePage.Surface);
+	DiskRetryButton.Parent := LicensePage.Surface;
+	DiskRetryButton.Caption := '&Recalculate';
+	DiskRetryButton.Width := ScaleX(110);
+	DiskRetryButton.Left := 0;
+	DiskRetryButton.Top := DiskDetailLabel.Top + DiskDetailLabel.Height + ScaleY(4);
+	DiskRetryButton.OnClick := @DiskRetryButtonClick;
+
+	StartPreflight(False);
+	UpdateNextButtonState;
+end;
+'@
+
+$issContent += $codeBlock
 
 Set-Content -Path $issPath -Value $issContent -Encoding ASCII
 

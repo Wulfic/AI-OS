@@ -85,6 +85,17 @@ except Exception:
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+try:  # pragma: no cover - handles bootstrap contexts
+    from aios.system import paths as system_paths
+except Exception:  # pragma: no cover
+    system_paths = None
+
+
+def _default_brain_family_dir() -> Path:
+    if system_paths is not None:
+        return system_paths.get_brain_family_dir("actv1")
+    return (Path(__file__).resolve().parents[3] / "artifacts" / "brains" / "actv1").resolve()
+
 import torch
 import typer
 from rich import print
@@ -717,8 +728,7 @@ def train_actv1_impl(
             if getattr(config, 'linear_dataset', False):
                 from .chunk_tracker import ChunkTracker as _ChunkTracker
                 # Save tracker state alongside training artifacts
-                from pathlib import Path as _P
-                state_dir = _P(config.save_dir) if config.save_dir else _P("artifacts/brains/actv1")
+                state_dir = Path(config.save_dir) if config.save_dir else _default_brain_family_dir()
                 tracker_state_file = state_dir / "chunk_tracker_state.json"
                 tracker_obj = _ChunkTracker(state_file=tracker_state_file)
                 if (not is_distributed) or (rank_id == 0):
@@ -753,8 +763,7 @@ def train_actv1_impl(
         if getattr(config, 'linear_dataset', False):
             try:
                 from .chunk_tracker import ChunkTracker as _ChunkTracker
-                from pathlib import Path as _P
-                state_dir = _P(config.save_dir) if config.save_dir else _P("artifacts/brains/actv1")
+                state_dir = Path(config.save_dir) if config.save_dir else _default_brain_family_dir()
                 tracker_state_file = state_dir / "chunk_tracker_state.json"
                 tracker_obj = _ChunkTracker(state_file=tracker_state_file)
                 if (not is_distributed) or (rank_id == 0):

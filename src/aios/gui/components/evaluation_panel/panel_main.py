@@ -5,9 +5,9 @@ import logging
 import os
 import time
 import tkinter as tk
+from pathlib import Path
 from tkinter import ttk, messagebox, filedialog
 from typing import Any, Callable, Optional
-from pathlib import Path
 
 # Import safe variable wrappers
 from ...utils import safe_variables
@@ -23,6 +23,11 @@ from .config_persistence import (
     merge_config_with_defaults,
     save_evaluation_to_config,
 )
+
+try:  # pragma: no cover - runtime dependency
+    from aios.system import paths as system_paths
+except Exception:  # pragma: no cover
+    system_paths = None
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +102,7 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         # History will be initialized asynchronously during startup
         # and set via _set_history() on main thread
         self._history: Optional[EvaluationHistory] = None
-        self._history_db_path = str(Path(self._project_root) / "artifacts" / "evaluation" / "history.db")
+        self._history_db_path = str(self._resolve_history_db_path())
         logger.debug(f"Evaluation history database: {self._history_db_path}")
 
         self._active_eval_runner = None  # Multi-GPU orchestration handle
@@ -140,7 +145,7 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
             'batch_size': 'auto',
             'limit': '0',
             'num_fewshot': '5',
-            'output_path': 'artifacts/evaluation',
+            'output_path': str(self._default_output_dir()),
             'log_samples': False,
             'cache_requests': True,
             'check_integrity': False,
@@ -577,7 +582,8 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
             self.batch_size_var.set(state.get("batch_size", "auto"))
             self.limit_var.set(state.get("limit", ""))
             self.num_fewshot_var.set(state.get("num_fewshot", "5"))
-            self.output_path_var.set(state.get("output_path", "artifacts/evaluation"))
+            default_output = str(self._default_output_dir())
+            self.output_path_var.set(state.get("output_path", default_output))
             self.log_samples_var.set(state.get("log_samples", False))
             self.cache_requests_var.set(state.get("cache_requests", True))
             self.check_integrity_var.set(state.get("check_integrity", False))
@@ -643,3 +649,31 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         self._active_eval_runner = None
         self._reset_progress_tracker()
         logger.info("Evaluation Panel cleanup complete")
+
+    def _resolve_history_db_path(self) -> Path:
+        """Return the history database path under the writable artifacts tree."""
+        if system_paths is not None:
+            try:
+                history_dir = system_paths.get_artifacts_root() / "evaluation"
+                history_dir.mkdir(parents=True, exist_ok=True)
+                return history_dir / "history.db"
+            except Exception:
+                logger.debug("Failed to resolve ProgramData evaluation history path", exc_info=True)
+
+        fallback = Path(self._project_root) / "artifacts" / "evaluation"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback / "history.db"
+
+    def _default_output_dir(self) -> Path:
+        """Return the default directory for evaluation outputs."""
+        if system_paths is not None:
+            try:
+                output_dir = system_paths.get_artifacts_root() / "evaluation"
+                output_dir.mkdir(parents=True, exist_ok=True)
+                return output_dir
+            except Exception:
+                logger.debug("Failed to resolve ProgramData evaluation output path", exc_info=True)
+
+        fallback = Path(self._project_root) / "artifacts" / "evaluation"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback

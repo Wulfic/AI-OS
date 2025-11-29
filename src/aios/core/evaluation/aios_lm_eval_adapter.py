@@ -45,7 +45,7 @@ class AIOSBrainModel(LM):
         """Initialize the AI-OS brain model.
         
         Args:
-            brain_path: Path to the brain directory (e.g., artifacts/brains/actv1/English-v1)
+            brain_path: Path to the brain directory (e.g., C:/ProgramData/AI-OS/artifacts/brains/actv1/English-v1)
             device: Device to run on (cuda, cpu, etc.)
             batch_size: Batch size for evaluation
             **kwargs: Additional arguments

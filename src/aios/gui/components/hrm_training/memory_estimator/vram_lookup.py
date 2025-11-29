@@ -17,6 +17,11 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional, Dict, Tuple
 
+try:  # pragma: no cover - available at runtime
+    from aios.system import paths as system_paths
+except Exception:  # pragma: no cover
+    system_paths = None
+
 # Constants
 GB = 1024 ** 3
 
@@ -63,16 +68,28 @@ class HybridVRAMEstimator:
             lookup_table_path: Path to vram_lookup_table.json, or None for default
         """
         if lookup_table_path is None:
-            # Try default locations in priority order
+            default_paths: list[Path] = []
+
+            if system_paths is not None:
+                try:
+                    default_paths.append(system_paths.get_artifacts_root() / "memory_estimation" / "vram_lookup_table.json")
+                except Exception:
+                    pass
+                try:
+                    default_paths.append(system_paths.get_logs_dir().parent / "memory_tests" / "vram_lookup_table.json")
+                except Exception:
+                    pass
+
             project_root = Path(__file__).parent.parent.parent.parent.parent.parent
-            default_paths = [
+            default_paths.extend([
                 project_root / "logs" / "memory_tests" / "vram_lookup_table.json",
                 project_root / "artifacts" / "memory_estimation" / "vram_lookup_table.json",
                 Path("Z:/AI-OS-Data/memory_test_results/vram_lookup_table.json"),  # Legacy fallback
-            ]
-            for path in default_paths:
-                if path.exists():
-                    lookup_table_path = str(path)
+            ])
+
+            for candidate in default_paths:
+                if candidate.exists():
+                    lookup_table_path = str(candidate)
                     break
         
         if lookup_table_path is None or not Path(lookup_table_path).exists():

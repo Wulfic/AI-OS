@@ -179,7 +179,7 @@ def scan_actv1_bundles(actv1_base: str) -> dict[str, dict[str, Any]]:
     ACTV1 bundles are directories containing actv1_student.safetensors or other model files.
     
     Args:
-        actv1_base: Path to artifacts/brains/actv1 directory
+        actv1_base: Path to the ACTV1 brain storage directory
         
     Returns:
         Dictionary mapping brain names to metadata dicts with at least 'size_bytes' key

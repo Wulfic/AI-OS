@@ -1,6 +1,6 @@
 """Brain scanning logic for discovering existing HRM student models.
 
-This module scans the artifacts/brains/actv1 directory to find existing
+This module scans the configured ACTV1 brain storage directory to find existing
 trained/training brain checkpoints.
 """
 
@@ -8,22 +8,30 @@ from __future__ import annotations
 import os
 from typing import Dict
 
+from aios.gui.components.hrm_training_panel.path_defaults import get_default_bundle_dir
 
-def scan_existing_brains(project_root: str) -> Dict[str, str]:
-    """
-    Scan artifacts/brains/actv1 for existing brain directories.
+
+def _resolve_brain_root(project_root: str | None) -> str:
+    if project_root:
+        candidate = os.path.join(project_root, "artifacts", "brains", "actv1")
+        if os.path.isdir(candidate):
+            return candidate
+    return str(get_default_bundle_dir())
+
+
+def scan_existing_brains(project_root: str | None) -> Dict[str, str]:
+    """Scan the ACTV1 brain storage directory for existing brain bundles.
     
     Args:
-        project_root: Path to project root directory
+        project_root: Optional project root directory (used as fallback only)
     
     Returns:
         Dictionary mapping brain names to their directory paths.
-        Example: {"my_brain_v1": "/path/to/artifacts/brains/actv1/my_brain_v1"}
     """
     name_to_dir: Dict[str, str] = {}
     
     try:
-        base = os.path.join(project_root, "artifacts", "brains", "actv1")
+        base = _resolve_brain_root(project_root)
         if not os.path.isdir(base):
             return name_to_dir
         

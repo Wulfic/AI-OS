@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Optional
+from pathlib import Path
 
 import typer
 
@@ -13,6 +14,40 @@ from .hrm_hf.starter_brain import (
 from .hrm_hf.arch_summary import arch_summary_impl as _arch_summary_impl
 from .hrm_hf.train_actv1 import train_actv1_impl as _train_actv1_impl
 from .hrm_hf.preprocess_dataset_cmd import preprocess_dataset_cmd as _preprocess_dataset_cmd
+
+try:  # pragma: no cover - fallback for bootstrapping
+    from aios.system import paths as system_paths
+except Exception:  # pragma: no cover
+    system_paths = None
+
+
+def _resolve_artifact(relative: str) -> str:
+    if system_paths is not None:
+        return str(system_paths.resolve_artifact_path(relative))
+    return relative
+
+
+def _default_bundle_dir() -> str:
+    if system_paths is not None:
+        return str(system_paths.get_brain_family_dir("actv1"))
+    fallback = Path(__file__).resolve().parents[3] / "artifacts" / "brains" / "actv1"
+    return str(fallback.resolve())
+
+
+def _default_model_dir() -> str:
+    return _resolve_artifact("hf_implant/base_model")
+
+
+def _default_implant_save_dir() -> str:
+    return _resolve_artifact("hf_implant")
+
+
+def _default_starter_dir() -> str:
+    return _resolve_artifact("hf_starter")
+
+
+def _default_training_save_dir() -> str:
+    return _resolve_artifact("training_data/actv1")
 
 
 app = typer.Typer(help="Implant a pretrained HF LLM as the HRM 'brain' and adapt it.")
@@ -27,7 +62,7 @@ def implant_brain(
     steps: int = typer.Option(100, "--steps", help="Optimization steps"),
     lr: float = typer.Option(5e-5, "--lr", help="Learning rate"),
     device: str = typer.Option("auto", "--device", help="Device: auto|cpu|cuda"),
-    save_dir: Optional[str] = typer.Option("artifacts/hf_implant", "--save-dir", help="Where to save adapter (and model if fine-tuned)"),
+    save_dir: Optional[str] = typer.Option(_default_implant_save_dir(), "--save-dir", help="Where to save adapter (and model if fine-tuned)"),
     train_lm: bool = typer.Option(False, "--train-lm/--freeze-lm", help="If true, fine-tune the base LM too (VRAM heavy)"),
     halt_max_steps: int = typer.Option(1, "--halt-max-steps", help="Max ACT segments during training"),
     # LoRA knobs
@@ -60,7 +95,7 @@ def implant_brain(
 @app.command("save-starter-brain")
 def save_starter_brain(
     model: str = typer.Option("base_model", "--model", help="HF model name or path (or existing fine-tuned dir)"),
-    out_dir: str = typer.Option("artifacts/hf_starter", "--out-dir", help="Output dir for starter brain"),
+    out_dir: str = typer.Option(_default_starter_dir(), "--out-dir", help="Output dir for starter brain"),
     max_seq_len: int = typer.Option(128, "--max-seq-len"),
     halt_max_steps: int = typer.Option(1, "--halt-max-steps"),
     save_model: bool = typer.Option(False, "--include-model/--no-include-model"),
@@ -129,7 +164,7 @@ def arch_summary(
 
 @app.command("train-actv1")
 def train_actv1(
-    model: str = typer.Option("artifacts/hf_implant/base_model", "--model", help="HF model name or local dir for tokenizer"),
+    model: str = typer.Option(_default_model_dir(), "--model", help="HF model name or local dir for tokenizer"),
     dataset_file: Optional[str] = typer.Option(None, "--dataset-file", help="Text/CSV/archive/dir to sample lines from"),
     dataset_chunk_size: int = typer.Option(4000, "--dataset-chunk-size", help="Samples per training cycle in iterate mode. Smaller=less VRAM (2000), default=balanced (4000), larger=faster (8000+). Adjust based on VRAM."),
     max_seq_len: int = typer.Option(128, "--max-seq-len"),
@@ -146,7 +181,7 @@ def train_actv1(
     lr: float = typer.Option(2e-4, "--lr"),
     device: str = typer.Option("auto", "--device", help="auto|cpu|cuda|xpu|mps|dml"),
     halt_max_steps: int = typer.Option(2, "--halt-max-steps"),
-    save_dir: str = typer.Option("training_data/actv1", "--save-dir"),
+    save_dir: str = typer.Option(_default_training_save_dir(), "--save-dir"),
     ascii_only: bool = typer.Option(False, "--ascii-only/--no-ascii-only", help="Filter dataset to ASCII-only lines for English focus"),
     eval_file: Optional[str] = typer.Option(None, "--eval-file", help="Held-out file/dir for final evaluation after training"),
     eval_batches: int = typer.Option(10, "--eval-batches", help="Max eval batches for final evaluation (0=disabled)"),
@@ -157,7 +192,7 @@ def train_actv1(
     # Brain bundle
     brain_name: Optional[str] = typer.Option(None, "--brain-name", help="Optional brain bundle name; when provided, saves to --bundle-dir/<brain-name>"),
     default_goal: Optional[str] = typer.Option(None, "--default-goal", help="Default training goal/directive for this brain. This goal guides what the brain learns during training."),
-    bundle_dir: str = typer.Option("artifacts/brains/actv1", "--bundle-dir", help="Base directory for ACTV1 brain bundles"),
+    bundle_dir: str = typer.Option(_default_bundle_dir(), "--bundle-dir", help="Base directory for ACTV1 brain bundles"),
     # Expert training
     expert_id: Optional[str] = typer.Option(None, "--expert-id", help="Train a specific expert module (FeedForward network) instead of full HRM model. Saves to artifacts/experts/<expert-id>/"),
     # Architecture knobs

@@ -15,22 +15,23 @@ Use these examples to configure MoE in your own training or inference code.
 # Python example (loading a trained ACTv1 brain)
 """
 from aios.core.brains import BrainRegistry
+from aios.system import paths as system_paths
 
 # Create registry
 registry = BrainRegistry(
     total_storage_limit_mb=4096,
-    store_dir="artifacts/brains"
+    store_dir=str(system_paths.get_brains_root())
 )
 
 # Load a trained ACTv1 brain (automatically detects from actv1/ subdirectory)
-brain = registry.get("English-v1")  # Loads from artifacts/brains/actv1/English-v1/
+brain = registry.get("English-v1")  # Loads from ProgramData/AI-OS/artifacts/brains/actv1/English-v1
 
 # Or explicitly create an ACTv1 brain
 brain = registry.create_actv1(
     name="my_brain",
     modalities=["text"],
-    checkpoint_path="artifacts/brains/actv1/my_brain/actv1_student.safetensors",
-    brain_config_path="artifacts/brains/actv1/my_brain/brain.json",
+    checkpoint_path=str(system_paths.get_brain_family_dir("actv1") / "my_brain" / "actv1_student.safetensors"),
+    brain_config_path=str(system_paths.get_brain_family_dir("actv1") / "my_brain" / "brain.json"),
     max_seq_len=2048,  # Optional override
 )
 """
@@ -38,10 +39,11 @@ brain = registry.create_actv1(
 # Direct brain creation example with router
 """
 from aios.core.brains import BrainRegistry, Router
+from aios.system import paths as system_paths
 
 registry = BrainRegistry(
     total_storage_limit_mb=4096,
-    store_dir="artifacts/brains"
+    store_dir=str(system_paths.get_brains_root())
 )
 
 # Mark a brain as master so router uses it for text modality

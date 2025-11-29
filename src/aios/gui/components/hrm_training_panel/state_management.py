@@ -7,7 +7,10 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from .path_defaults import get_default_bundle_dir
 
 if TYPE_CHECKING:
     from .panel_main import HRMTrainingPanel
@@ -228,7 +231,7 @@ def prefill_last_safe_batches(panel: HRMTrainingPanel) -> None:
             )
             return
 
-        base = os.path.join(panel._project_root, "artifacts", "brains", "actv1", "last_safe.json")
+        base = _resolve_last_safe_file(panel)
         if os.path.exists(base):
             import json
             with open(base, "r", encoding="utf-8") as f:
@@ -264,3 +267,16 @@ def prefill_last_safe_batches(panel: HRMTrainingPanel) -> None:
                         logger.debug("Could not dispatch last safe batch size update to UI thread")
     except Exception:
         logger.debug("Failed to prefill last safe batches", exc_info=True)
+
+def _resolve_last_safe_file(panel: HRMTrainingPanel) -> str:
+    """Return the path to the last_safe.json bundle state file."""
+    try:
+        path = get_default_bundle_dir("actv1") / "last_safe.json"
+        return str(path)
+    except Exception:
+        pass
+
+    project_root = getattr(panel, "_project_root", None)
+    if project_root:
+        return str(Path(project_root) / "artifacts" / "brains" / "actv1" / "last_safe.json")
+    return "last_safe.json"

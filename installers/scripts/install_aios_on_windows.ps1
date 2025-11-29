@@ -1,15 +1,35 @@
 param(
-  [ValidateSet('install','uninstall')]
+  [ValidateSet('install','uninstall','preflight')]
   [string]$Action = 'install',
   [switch]$Yes,
   # GPU preference: auto (detect), cuda, dml, cpu
   [ValidateSet('auto','cuda','dml','cpu')]
   [string]$Gpu = 'auto',
   # Internal: elevated sub-process to perform admin-only steps
-  [switch]$ElevatedSubprocess
+  [switch]$ElevatedSubprocess,
+  # Suppress Write-Host output for quiet automation flows
+  [switch]$Quiet,
+  # Optional file target for preflight key=value output
+  [string]$PreflightOutput,
+  # Optional override for core payload size (bytes)
+  [long]$PayloadBytes = 0
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($Quiet) {
+  function Write-Host {
+    param(
+      [Parameter(ValueFromPipeline = $true)]
+      [object]$Object,
+      [Parameter(ValueFromRemainingArguments = $true)]
+      [object[]]$Objects,
+      [ConsoleColor]$ForegroundColor,
+      [ConsoleColor]$BackgroundColor,
+      [switch]$NoNewline
+    )
+  }
+}
 
 function Resolve-RepoRoot {
   param([string]$StartDirectory)
@@ -238,6 +258,106 @@ function Install-FlashAttentionWheel([string]$pipPath, [string]$pythonPath, [swi
     }
     return $false
   }
+}
+
+function Get-CorePayloadBytes([long]$ProvidedBytes) {
+  if ($ProvidedBytes -gt 0) { return [int64]$ProvidedBytes }
+  try {
+    $pyprojectPath = Join-Path $repoRoot 'pyproject.toml'
+    if (-not (Test-Path -LiteralPath $pyprojectPath)) { return [int64]$ProvidedBytes }
+    $sum = Get-ChildItem -LiteralPath $repoRoot -Recurse -File -ErrorAction Stop |
+      Measure-Object -Property Length -Sum
+    if ($sum -and $sum.Sum) {
+      return [int64]$sum.Sum
+    }
+  } catch {}
+  return [int64]$ProvidedBytes
+}
+
+function Get-DependencyFootprint([string]$GpuPref) {
+  $resolved = $GpuPref
+  if ($resolved -eq 'auto') {
+    $gpuInfo = Get-GpuInfo
+    if ($gpuInfo.HasNvidia) {
+      $resolved = 'cuda'
+    } elseif ($gpuInfo.Vendor -match 'AMD|Intel') {
+      $resolved = 'dml'
+    } else {
+      $resolved = 'cpu'
+    }
+  }
+
+  $oneGiB = 1GB
+  switch ($resolved) {
+    'cuda' {
+      $deps = 9 * $oneGiB # torch + CUDA wheels + nv libs + FlashAttention cache
+      $buffer = 2 * $oneGiB
+      $note = 'CUDA build (PyTorch + NVIDIA runtime + FlashAttention cache)'
+    }
+    'dml' {
+      $deps = 6 * $oneGiB # CPU baseline + DirectML packages
+      $buffer = 2 * $oneGiB
+      $note = 'DirectML build (CPU baseline + torch-directml + shader cache)'
+    }
+    default {
+      $deps = 4 * $oneGiB # CPU-only PyTorch + evaluation stack
+      $buffer = 1 * $oneGiB
+      $note = 'CPU build (PyTorch CPU + evaluation/runtime extras)'
+      $resolved = 'cpu'
+    }
+  }
+
+  return [ordered]@{
+    Mode = $resolved
+    DependencyBytes = [int64]$deps
+    BufferBytes = [int64]$buffer
+    Note = $note
+  }
+}
+
+function Write-PreflightResult {
+  param(
+    [hashtable]$Data
+  )
+
+  $lines = @()
+  foreach ($entry in $Data.GetEnumerator()) {
+    $lines += ("{0}={1}" -f $entry.Key, $entry.Value)
+  }
+
+  if ([string]::IsNullOrWhiteSpace($PreflightOutput)) {
+    $lines | ForEach-Object { Write-Output $_ }
+    return
+  }
+
+  $dir = Split-Path -Parent $PreflightOutput
+  if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+  }
+
+  Set-Content -Path $PreflightOutput -Value $lines -Encoding UTF8
+}
+
+function Invoke-Preflight {
+  $coreBytes = Get-CorePayloadBytes -ProvidedBytes $PayloadBytes
+  $footprint = Get-DependencyFootprint -GpuPref $Gpu
+  if (-not $footprint) {
+    throw "Unable to determine dependency footprint for GPU preference '$Gpu'."
+  }
+  $totalBytes = $coreBytes + $footprint.DependencyBytes + $footprint.BufferBytes
+
+  $result = [ordered]@{
+    status = 'ok'
+    mode = $footprint.Mode
+    core_bytes = [int64]$coreBytes
+    dependency_bytes = [int64]$footprint.DependencyBytes
+    buffer_bytes = [int64]$footprint.BufferBytes
+    total_bytes = [int64]$totalBytes
+    note = $footprint.Note
+    timestamp = (Get-Date -Format 'o')
+  }
+
+  Write-PreflightResult -Data $result
 }
 
 # Prerequisite Check Functions
@@ -635,6 +755,21 @@ function Uninstall-Aios() {
 
 # Main Script Body
 function Main() {
+  if ($Action -eq 'preflight') {
+    try {
+      Invoke-Preflight
+    } catch {
+      if ($Quiet) {
+        Write-Error $_
+      } else {
+        Write-Host "[!!!] Preflight failed:" -ForegroundColor Red
+        Write-Host $_ -ForegroundColor Red
+      }
+      exit 1
+    }
+    return
+  }
+
   # Elevate if required for future admin tasks (placeholder for now)
   if (-not (Test-IsAdmin) -and -not $ElevatedSubprocess) {
       # This section can be enabled if admin rights are needed, e.g., for firewall rules

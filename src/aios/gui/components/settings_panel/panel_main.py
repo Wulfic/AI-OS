@@ -12,6 +12,25 @@ import tkinter as tk
 from . import ui_builders, theme_manager, startup_settings, cache_management
 from ...utils.resource_management import submit_background
 
+try:
+    from aios.system import paths as system_paths
+except Exception:  # pragma: no cover - GUI fallback
+    system_paths = None
+
+
+def _resolve_log_dir() -> str:
+    if system_paths is not None:
+        try:
+            return str(system_paths.get_logs_dir())
+        except Exception:
+            logger = logging.getLogger(__name__)
+            logger.debug("Failed to resolve logs dir via helper", exc_info=True)
+    return "logs"
+
+
+LOG_DIR = _resolve_log_dir()
+os.makedirs(LOG_DIR, exist_ok=True)
+
 logger = logging.getLogger(__name__)
 
 
@@ -341,9 +360,9 @@ class SettingsPanel:
 
                     if not has_standard:
                         # Make sure the primary timed rotating file handler remains reachable via the listener queue.
-                        os.makedirs("logs", exist_ok=True)
+                        os.makedirs(LOG_DIR, exist_ok=True)
                         standard = NonBlockingTimedRotatingFileHandler(
-                            filename="logs/aios.log",
+                            filename=os.path.join(LOG_DIR, "aios.log"),
                             when="midnight",
                             interval=1,
                             backupCount=10,
@@ -418,7 +437,7 @@ class SettingsPanel:
                         return
                     else:
                         debug_base = NonBlockingRotatingFileHandler(
-                            filename="logs/aios_debug.log",
+                            filename=os.path.join(LOG_DIR, "aios_debug.log"),
                             maxBytes=20971520,
                             backupCount=10,
                         )
@@ -449,7 +468,11 @@ class SettingsPanel:
                         self._debug_file_handler = debug_base
                         action = "added"
                         elapsed = time.perf_counter() - start_time
-                        logger.info(f"Added debug file handler in {elapsed:.3f}s: logs/aios_debug.log")
+                        logger.info(
+                            "Added debug file handler in %.3fs: %s",
+                            elapsed,
+                            os.path.join(LOG_DIR, "aios_debug.log"),
+                        )
                         return
                 else:
                     if debug_handlers:
@@ -472,9 +495,9 @@ class SettingsPanel:
             if enable_debug:
                 debug_handler = existing_handler or self._debug_file_handler
                 if debug_handler is None:
-                    os.makedirs("logs", exist_ok=True)
+                    os.makedirs(LOG_DIR, exist_ok=True)
                     debug_handler = NBHandler(
-                        filename="logs/aios_debug.log",
+                        filename=os.path.join(LOG_DIR, "aios_debug.log"),
                         maxBytes=20971520,
                         backupCount=10,
                     )

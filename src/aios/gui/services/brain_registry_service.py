@@ -11,9 +11,15 @@ import os
 import re
 import threading
 import time
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
 from aios.core.brains.registry_core import BrainRegistry
+
+try:
+    from aios.system import paths as system_paths
+except Exception:  # pragma: no cover - fallback for early init
+    system_paths = None
 
 __all__ = [
     "list_brains",
@@ -46,9 +52,18 @@ _SYSTEM_NAMES = {
 }
 
 
+def _legacy_repo_brains_root() -> Path:
+    return Path(__file__).resolve().parents[3] / "artifacts" / "brains"
+
+
 def _normalize_store_dir(store_dir: str | None) -> str:
-    base = store_dir or "artifacts/brains"
-    return os.path.abspath(base)
+    if store_dir:
+        base_path = Path(store_dir)
+    elif system_paths is not None:
+        base_path = system_paths.get_brains_root()
+    else:
+        base_path = _legacy_repo_brains_root()
+    return os.path.abspath(str(base_path))
 
 
 def _build_registry(store_dir: str) -> BrainRegistry:

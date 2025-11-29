@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, TYPE_CHECKING
 import logging
 import json
+import shutil
 import threading
 from pathlib import Path
 
@@ -17,6 +18,103 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+try:
+    from aios.system import paths as system_paths
+except Exception:  # pragma: no cover - fallback for early boot
+    system_paths = None
+
+
+def _legacy_state_candidates(project_root: Path) -> tuple[Path, ...]:
+    """Return possible locations where legacy GUI state files may live."""
+    return (
+        project_root / "gui_state.json",
+        project_root / "src" / "gui_state.json",
+    )
+
+
+def _find_legacy_state_file(project_root: Path, target_path: Path) -> Path | None:
+    for candidate in _legacy_state_candidates(project_root):
+        try:
+            if candidate.resolve() == target_path.resolve():
+                continue
+        except Exception:
+            if candidate == target_path:
+                continue
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _migrate_legacy_state_file(project_root: Path, target_path: Path) -> None:
+    """Copy a legacy gui_state.json to the new user data location if needed."""
+    legacy_file = _find_legacy_state_file(project_root, target_path)
+    if legacy_file is None or target_path.exists():
+        return
+
+    try:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(legacy_file, target_path)
+        logger.info("Migrated legacy GUI state from %s to %s", legacy_file, target_path)
+
+        backup_path = target_path.with_suffix(target_path.suffix + ".bak")
+        try:
+            if not backup_path.exists():
+                shutil.copy2(legacy_file, backup_path)
+                logger.info("Backed up legacy GUI state to %s", backup_path)
+        except Exception:
+            logger.warning("Failed to create GUI state backup at %s", backup_path, exc_info=True)
+    except Exception:
+        logger.error("Failed to migrate legacy GUI state from %s", legacy_file, exc_info=True)
+
+
+def _project_state_fallback(project_root: Path) -> Path:
+    """Return the fallback state path used when system paths are unavailable."""
+    return project_root / "gui_state.json"
+
+
+def _normalize_artifacts_path(raw_value: str) -> str:
+    if system_paths is None or not isinstance(raw_value, str):
+        return raw_value
+
+    normalized = raw_value.replace("\\", "/")
+    marker = "artifacts/"
+    idx = normalized.lower().find(marker)
+    if idx == -1:
+        return raw_value
+
+    rel = normalized[idx + len(marker):]
+    resolved = system_paths.get_artifacts_root() / Path(rel)
+    return str(resolved)
+
+
+def _normalize_state_paths(state: dict[str, Any]) -> bool:
+    if not isinstance(state, dict):
+        return False
+
+    mutated = False
+    hrm_state = state.get("hrm_training")
+    if isinstance(hrm_state, dict):
+        for key in ("model", "log_file", "student_init", "bundle_dir"):
+            value = hrm_state.get(key)
+            if not isinstance(value, str):
+                continue
+            updated = _normalize_artifacts_path(value)
+            if updated != value:
+                hrm_state[key] = updated
+                mutated = True
+
+    return mutated
+
+
+def _persist_normalized_state(state_file: Path, state: dict[str, Any]) -> None:
+    try:
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(state_file, 'w', encoding='utf-8') as f:
+            json.dump(state, f, indent=2)
+        logger.info("Persisted normalized GUI state to %s", state_file)
+    except Exception as err:
+        logger.warning("Failed to persist normalized GUI state to %s: %s", state_file, err)
 
 
 def initialize_state(app: Any, project_root: Path) -> None:
@@ -28,7 +126,20 @@ def initialize_state(app: Any, project_root: Path) -> None:
         project_root: Path to project root directory
     """
     logger.info("Initializing state management system")
-    app._state_file = project_root / "gui_state.json"
+    state_file = None
+    if system_paths is not None:
+        try:
+            state_file = system_paths.get_state_file_path()
+        except Exception:
+            logger.debug("Failed to resolve user state path, falling back to project root", exc_info=True)
+
+    if state_file is None:
+        state_file = _project_state_fallback(project_root)
+
+    _migrate_legacy_state_file(project_root, state_file)
+
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    app._state_file = state_file
     logger.info(f"State file path: {app._state_file}")
     app._state = {}
     app._state_restored = False  # Flag to prevent saving before restoration
@@ -52,6 +163,11 @@ def load_state(app: Any) -> dict:
         with open(app._state_file, 'r', encoding='utf-8') as f:
             state = json.load(f)
         logger.debug(f"State sections loaded: {len(state)}")
+
+        if _normalize_state_paths(state):
+            logger.info("Normalizing GUI state paths to new artifacts directory")
+            _persist_normalized_state(app._state_file, state)
+
         logger.info("State validation passed")
         logger.info(f"Loaded state from {app._state_file}")
         return state

@@ -37,6 +37,12 @@ import time
 import signal
 import sys
 import threading
+from pathlib import Path
+
+try:
+    from aios.system import paths as system_paths
+except Exception:  # pragma: no cover - fallback for bootstrap
+    system_paths = None
 
 # Import platform-specific file locking
 if os.name == 'nt':
@@ -77,7 +83,31 @@ _SESSION_SET_COUNT = 0
 _SESSION_ENV_VAR = "AIOS_SESSION_NUMBER"
 _SESSION_RUN_ENV_VAR = "AIOS_SESSION_RUN_ID"
 _SESSION_DATE_ENV_VAR = "AIOS_SESSION_DATE"
-_SESSION_STATE_FILE = os.path.join("logs", ".session_state.json")
+
+
+def _resolve_logs_dir() -> str:
+    if system_paths is not None:
+        try:
+            return str(system_paths.get_logs_dir())
+        except Exception:
+            logging.getLogger(__name__).debug("Failed to resolve logs dir via helper", exc_info=True)
+    return os.path.join(os.getcwd(), "logs")
+
+
+LOG_DIR = _resolve_logs_dir()
+os.makedirs(LOG_DIR, exist_ok=True)
+
+if system_paths is not None:
+    try:
+        _SESSION_STATE_FILE = str(system_paths.get_session_state_file())
+        _LOCK_ROOT = Path(system_paths.get_session_lock_dir())
+    except Exception:
+        logging.getLogger(__name__).debug("Failed to resolve session files via helper", exc_info=True)
+        _SESSION_STATE_FILE = os.path.join(LOG_DIR, ".session_state.json")
+        _LOCK_ROOT = Path(LOG_DIR)
+else:
+    _SESSION_STATE_FILE = os.path.join(LOG_DIR, ".session_state.json")
+    _LOCK_ROOT = Path(LOG_DIR)
 
 
 def _cleanup_old_lock_files_at_import() -> None:
@@ -88,7 +118,7 @@ def _cleanup_old_lock_files_at_import() -> None:
         if os.environ.get(_SESSION_RUN_ENV_VAR):
             return
 
-        lock_pattern = "logs/.session_*.lock"
+        lock_pattern = str(_LOCK_ROOT / ".session_*.lock")
         lock_files = glob.glob(lock_pattern)
         for lock_file in lock_files:
             try:
@@ -144,10 +174,10 @@ def _get_session_lock_file(date_str: str, run_id: str = None) -> str:
             print(f"[LOCK FILE] Generated new RUN ID: {_SESSION_RUN_ID} (PID: {os.getpid()})", file=sys.stderr)
         run_id = _SESSION_RUN_ID
     
-    lock_path = os.path.join("logs", f".session_{date_str}_{run_id}.lock")
+    lock_path = _LOCK_ROOT / f".session_{date_str}_{run_id}.lock"
     import sys
     print(f"[LOCK FILE] Using lock file: {lock_path} (PID: {os.getpid()})", file=sys.stderr)
-    return lock_path
+    return str(lock_path)
 
 
 def _read_session_from_lock(lock_file: str) -> Optional[int]:
@@ -359,7 +389,7 @@ def get_next_session_number(base_filename: str) -> int:
 
                 if run_id is None:
                     session_num = 1
-                    log_dir = "logs"
+                    log_dir = LOG_DIR
                     if os.path.exists(log_dir):
                         pattern = os.path.join(log_dir, f"*_{today}_*.log")
                         existing_files = glob.glob(pattern)

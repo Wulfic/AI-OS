@@ -35,13 +35,13 @@ def create_model_selection(panel: "EvaluationPanel") -> None:
     )
     add_tooltip(panel.brain_combo, 
                 "Model to Evaluate:\n\n"
-                "• Select a trained brain from your artifacts/brains folder\n"
+                "• Select a trained brain from your AI-OS brain storage folder\n"
                 "• Or enter a HuggingFace model name (e.g., 'gpt2', 'meta-llama/Llama-2-7b-hf')\n\n"
                 "AI-OS brains are automatically detected and use the native adapter.\n"
                 "External models are loaded through HuggingFace transformers.")
     panel.brain_combo.pack(side="left", padx=(6, 0), fill="x", expand=True)
     panel.refresh_brains_btn = ttk.Button(brain_row, text="🔄", command=panel._refresh_brains, width=3)
-    add_tooltip(panel.refresh_brains_btn, "Refresh list of available brains from artifacts/brains folder")
+    add_tooltip(panel.refresh_brains_btn, "Refresh the list of brains from the AI-OS storage folder")
     panel.refresh_brains_btn.pack(side="left", padx=(4, 0))
     
     # Don't load brains here - will be loaded async after panel creation

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json as _json
 from typing import Optional
+from pathlib import Path
 
 import typer
 
@@ -14,6 +15,20 @@ from aios.core.brains import BrainRegistry, Router
 from aios.core.communicator import format_status_summary
 from aios.core.directives import list_directives
 from aios.memory.store import get_db, init_db
+
+try:  # pragma: no cover - fallback for bootstrap contexts
+    from aios.system import paths as system_paths
+except Exception:  # pragma: no cover
+    system_paths = None
+
+
+def _default_brains_root() -> str:
+    if system_paths is not None:
+        try:
+            return str(system_paths.get_brains_root())
+        except Exception:
+            pass
+    return str((Path(__file__).resolve().parents[3] / "artifacts" / "brains").resolve())
 
 
 def chat(
@@ -29,7 +44,8 @@ def chat(
             # Build a lightweight registry/router using config overrides
             storage_limit_mb = float(brains_cfg.get("storage_limit_mb", 0) or 0) or None
             reg = BrainRegistry(total_storage_limit_mb=storage_limit_mb)
-            reg.store_dir = str(brains_cfg.get("store_dir", "artifacts/brains"))
+            default_store = _default_brains_root()
+            reg.store_dir = str(brains_cfg.get("store_dir", default_store))
             # Load persisted pins/masters for consistent behavior across sessions
             try:
                 reg.load_pinned()
