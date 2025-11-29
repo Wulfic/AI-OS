@@ -1,17 +1,17 @@
 Package: ai-os
-Version: 1.0.0
+Version: 1.0.1+really1.0.0
 Architecture: amd64
 Maintainer: Wulfic <support@ai-os.invalid>
-Installed-Size: 58132
+Installed-Size: 58136
 Depends: python3 (>= 3.10), python3-venv, python3-pip, python3-tk, libgdk-pixbuf2.0-0, libgl1, libsndfile1, ffmpeg
-Filename: pool/main/a/ai-os/ai-os_1.0.0_amd64.deb
-Size: 10964754
-MD5sum: e763192a914e43f65d5b98da487d1ac9
-SHA1: 940cae6d378aa2c1c9250a464ddec6b4b44edec4
-SHA256: 4430ec25d296d25707c8dc17a31c371442fa528dd0156bfe6f6eefcb8198f0bd
+Filename: pool/main/a/ai-os/ai-os_1.0.1+really1.0.0_amd64.deb
+Size: 10964698
+MD5sum: e7f6eb5ececfdc92b9f9f04d82c2238a
+SHA1: 6f061c187dfbe8b717c4d34aa9b4f866c70f3409
+SHA256: e43daf0352943d57b5dbe93f6cc4f1c0182f52ade68b5470833778dcdcb9a632
 Section: utils
 Priority: optional
 Homepage: https://github.com/Wulfic/AI-OS
-Description: AI-OS human resource manager agent with GUI and CLI interfaces
- AI-OS provides CLI and GUI workflows for managing autonomous HRM agents.
+Description: HRM-sMoE LLM training toolkit with a clean GUI, CLI, and installers
+ Future-facing architecture for OS-integrated autonomous assistance.
 

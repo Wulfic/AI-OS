@@ -13,12 +13,13 @@ usage() {
   cat <<'EOF'
 AI-OS .deb builder for Ubuntu
 
-Usage: ./build_deb.sh [--version <version>] [--arch <arch>] [--keep-build]
+Usage: ./build_deb.sh [--version <version>] [--arch <arch>] [--keep-build] [--refresh-lock]
 
 Options:
   --version <version>  Override package version (defaults to pyproject version)
   --arch <arch>        Target architecture (defaults to dpkg --print-architecture)
   --keep-build         Preserve temporary build directory
+  --refresh-lock       Regenerate installers/requirements-lock.txt before build
   --help               Show this help message
 EOF
 }
@@ -31,10 +32,12 @@ BUILD_ROOT="$SCRIPT_DIR/.deb-build"
 STAGING_ROOT="$BUILD_ROOT/pkg"
 TEMP_VENV="$BUILD_ROOT/.venv"
 LOCK_FILE="$BUILD_ROOT/requirements-lock.txt"
+DEFAULT_LOCK_FILE="$REPO_ROOT/installers/requirements-lock.txt"
 KEEP_BUILD="false"
 PACKAGE_NAME="ai-os"
 VERSION=""
 ARCH=""
+REFRESH_LOCK="false"
 
 cleanup() {
   if [[ -n "${VIRTUAL_ENV:-}" ]]; then
@@ -61,6 +64,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --keep-build)
       KEEP_BUILD="true"
+      shift
+      ;;
+    --refresh-lock)
+      REFRESH_LOCK="true"
       shift
       ;;
     --help|-h)
@@ -110,22 +117,25 @@ log_info "Building AI-OS Debian package v$VERSION ($ARCH)"
 rm -rf "$BUILD_ROOT"
 mkdir -p "$BUILD_ROOT" "$STAGING_ROOT/DEBIAN" "$RELEASE_DIR"
 
-python3 -m venv "$TEMP_VENV"
-source "$TEMP_VENV/bin/activate"
-# Record exact dependency versions to install during postinst.
-python -m pip install --upgrade pip wheel setuptools >/dev/null
-pushd "$REPO_ROOT" >/dev/null
-python -m pip install ".[ui]" >/dev/null
-python -m pip freeze | grep -Ev '^(ai-os|ai_os)(==| @ )' >"$LOCK_FILE.tmp"
-popd >/dev/null
-mv "$LOCK_FILE.tmp" "$LOCK_FILE"
-deactivate
+generate_lock_file() {
+  python3 -m venv "$TEMP_VENV"
+  source "$TEMP_VENV/bin/activate"
+  python -m pip install --upgrade pip wheel setuptools >/dev/null
+  pushd "$REPO_ROOT" >/dev/null
+  python -m pip install ".[ui]" >/dev/null
+  python -m pip freeze | grep -Ev '^(ai-os|ai_os)(==| @ )' >"$LOCK_FILE.tmp"
+  popd >/dev/null
+  mv "$LOCK_FILE.tmp" "$LOCK_FILE"
+  deactivate
+  install -Dm644 "$LOCK_FILE" "$DEFAULT_LOCK_FILE"
+  log_info "Refreshed dependency lock file at $DEFAULT_LOCK_FILE"
+}
 
-if [[ ! -s "$LOCK_FILE" ]]; then
-  die "requirements-lock.txt is empty; dependency capture failed"
+if [[ "$REFRESH_LOCK" == "true" ]]; then
+  generate_lock_file
+elif [[ ! -s "$DEFAULT_LOCK_FILE" ]]; then
+  die "Missing installers/requirements-lock.txt; run build_deb.sh --refresh-lock once"
 fi
-
-log_info "Captured dependency lock file $LOCK_FILE"
 
 mkdir -p "$STAGING_ROOT/opt/ai-os" "$STAGING_ROOT/usr/bin" "$STAGING_ROOT/usr/share/applications" "$STAGING_ROOT/usr/share/pixmaps"
 
@@ -205,7 +215,7 @@ for path in "${PRUNE_PATHS[@]}"; do
   fi
 done
 
-install -Dm644 "$LOCK_FILE" "$STAGING_ROOT/opt/ai-os/requirements-lock.txt"
+install -Dm644 "$DEFAULT_LOCK_FILE" "$STAGING_ROOT/opt/ai-os/requirements-lock.txt"
 
 DOC_DIR="$STAGING_ROOT/usr/share/doc/$PACKAGE_NAME"
 mkdir -p "$DOC_DIR"
@@ -339,8 +349,8 @@ Depends: python3 (>= 3.10), python3-venv, python3-pip, python3-tk, libgdk-pixbuf
 Maintainer: Wulfic <support@ai-os.invalid>
 Installed-Size: $INSTALLED_SIZE
 Homepage: https://github.com/Wulfic/AI-OS
-Description: AI-OS human resource manager agent with GUI and CLI interfaces
- AI-OS provides CLI and GUI workflows for managing autonomous HRM agents.
+Description: HRM-sMoE LLM training toolkit with a clean GUI, CLI, and installers
+ Future-facing architecture for OS-integrated autonomous assistance.
 EOF
 
 log_info "Building .deb archive"
