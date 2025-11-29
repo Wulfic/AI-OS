@@ -243,7 +243,7 @@ OutputBaseFilename=AI-OS-{#MyAppVersion}-Setup
 SetupIconFile={#RepoRoot}\installers\AI-OS.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
-ArchitecturesInstallIn64BitMode=x64
+ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 ChangesEnvironment=yes
 WizardStyle=modern
@@ -268,6 +268,7 @@ Filename: "powershell.exe"; \
   Parameters: "-ExecutionPolicy Bypass -NoLogo -NonInteractive -File ""{app}\installers\scripts\install_aios_on_windows.ps1"" -Action uninstall -Yes"; \
   RunOnceId: "AIOSUninstall"; \
   Flags: waituntilterminated
+
 "@
 
 $codeBlock = @'
@@ -395,14 +396,14 @@ var
 	Detail: string;
 begin
 	Detail :=
-		Format('Core files: %s  |  Dependencies: %s  |  Buffer: %s%sMode: %s%s%s',
-			[FormatBytes(PreflightCoreBytes),
-			 FormatBytes(PreflightDepBytes),
-			 FormatBytes(PreflightBufferBytes),
-			 #13#10,
-			 PreflightMode,
-			 #13#10,
-			 PreflightNote]);
+		Format('Core files: %s  |  Dependencies: %s  |  Buffer: %s%sMode: %s%s%s', [
+			FormatBytes(PreflightCoreBytes),
+			FormatBytes(PreflightDepBytes),
+			FormatBytes(PreflightBufferBytes),
+			(#13#10),
+			PreflightMode,
+			(#13#10),
+			PreflightNote]);
 	SetDiskStatus(
 		Format('Estimated total required: %s', [FormatBytes(PreflightTotalBytes)]),
 		Detail,
@@ -426,10 +427,10 @@ begin
 	OutputPath := ExpandConstant('{tmp}\') + PreflightOutputName;
 	DeleteFile(OutputPath);
 	PSExe := GetPowerShellPath;
-	Params := Format('-ExecutionPolicy Bypass -NoLogo -NonInteractive -WindowStyle Hidden -File "%s" -Action preflight -Quiet -Gpu auto -PayloadBytes %d -PreflightOutput "%s"',
-		[ScriptPath,
-		 PreflightPayloadBytes,
-		 OutputPath]);
+	Params := Format('-ExecutionPolicy Bypass -NoLogo -NonInteractive -WindowStyle Hidden -File "%s" -Action preflight -Quiet -Gpu auto -PayloadBytes %d -PreflightOutput "%s"', [
+		ScriptPath,
+		PreflightPayloadBytes,
+		OutputPath]);
 	if not Exec(PSExe, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
 	begin
 		SetDiskStatus('Unable to launch PowerShell preflight.',
@@ -563,7 +564,7 @@ begin
 end;
 '@
 
-$issContent += $codeBlock
+$issContent += "`r`n" + $codeBlock
 
 Set-Content -Path $issPath -Value $issContent -Encoding ASCII
 
