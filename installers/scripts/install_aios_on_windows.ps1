@@ -11,6 +11,8 @@ param(
   [switch]$Quiet,
   # Optional file target for preflight key=value output
   [string]$PreflightOutput,
+  # Optional log destination for installer orchestration
+  [string]$InstallerLog,
   # Optional override for core payload size (bytes)
   [long]$PayloadBytes = 0
 )
@@ -60,6 +62,42 @@ function Resolve-RepoRoot {
 
 $repoRoot = Resolve-RepoRoot -StartDirectory $PSScriptRoot
 $script:PyTorchBuild = 'cpu'
+$script:InstallerLogInitialized = $false
+
+function Initialize-InstallerLog {
+  if ([string]::IsNullOrWhiteSpace($InstallerLog)) { return }
+  try {
+    $dir = Split-Path -Parent $InstallerLog
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+      New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    New-Item -ItemType File -Path $InstallerLog -Force -Value '' | Out-Null
+    $script:InstallerLogInitialized = $true
+  } catch {
+    # Ignore log initialization failures; script can continue without log
+  }
+}
+
+function Write-InstallerLog {
+  param([string]$Message)
+
+  if ([string]::IsNullOrWhiteSpace($InstallerLog)) { return }
+  if (-not $script:InstallerLogInitialized) {
+    Initialize-InstallerLog
+  }
+  if (-not $script:InstallerLogInitialized) { return }
+
+  $timestamp = (Get-Date -Format 'HH:mm:ss')
+  $line = "[{0}] {1}" -f $timestamp, $Message
+  try {
+    Add-Content -Path $InstallerLog -Value $line -Encoding UTF8
+  } catch {
+    # Suppress logging exceptions to avoid blocking installer
+  }
+}
+
+Initialize-InstallerLog
+Write-InstallerLog ("Helper invoked with action '{0}'" -f $Action)
 
 # Helper Functions
 function Test-IsAdmin() {
@@ -339,25 +377,36 @@ function Write-PreflightResult {
 }
 
 function Invoke-Preflight {
-  $coreBytes = Get-CorePayloadBytes -ProvidedBytes $PayloadBytes
-  $footprint = Get-DependencyFootprint -GpuPref $Gpu
-  if (-not $footprint) {
-    throw "Unable to determine dependency footprint for GPU preference '$Gpu'."
-  }
-  $totalBytes = $coreBytes + $footprint.DependencyBytes + $footprint.BufferBytes
+  Write-InstallerLog 'Starting disk usage preflight check.'
+  try {
+    $coreBytes = Get-CorePayloadBytes -ProvidedBytes $PayloadBytes
+    Write-InstallerLog ("Core payload bytes resolved to {0}" -f $coreBytes)
+    $footprint = Get-DependencyFootprint -GpuPref $Gpu
+    if (-not $footprint) {
+      Write-InstallerLog 'Unable to compute dependency footprint.'
+      throw "Unable to determine dependency footprint for GPU preference '$Gpu'."
+    }
+    Write-InstallerLog ("Dependency footprint: mode={0} deps={1} buffer={2}" -f $footprint.Mode, $footprint.DependencyBytes, $footprint.BufferBytes)
+    $totalBytes = $coreBytes + $footprint.DependencyBytes + $footprint.BufferBytes
 
-  $result = [ordered]@{
-    status = 'ok'
-    mode = $footprint.Mode
-    core_bytes = [int64]$coreBytes
-    dependency_bytes = [int64]$footprint.DependencyBytes
-    buffer_bytes = [int64]$footprint.BufferBytes
-    total_bytes = [int64]$totalBytes
-    note = $footprint.Note
-    timestamp = (Get-Date -Format 'o')
-  }
+    $result = [ordered]@{
+      status = 'ok'
+      mode = $footprint.Mode
+      core_bytes = [int64]$coreBytes
+      dependency_bytes = [int64]$footprint.DependencyBytes
+      buffer_bytes = [int64]$footprint.BufferBytes
+      total_bytes = [int64]$totalBytes
+      note = $footprint.Note
+      timestamp = (Get-Date -Format 'o')
+    }
 
-  Write-PreflightResult -Data $result
+    Write-PreflightResult -Data $result
+    Write-InstallerLog ("Total requirement computed: {0}" -f $totalBytes)
+    Write-InstallerLog 'Disk usage preflight completed successfully.'
+  } catch {
+    Write-InstallerLog ("Disk usage preflight failed: {0}" -f $_)
+    throw
+  }
 }
 
 # Prerequisite Check Functions

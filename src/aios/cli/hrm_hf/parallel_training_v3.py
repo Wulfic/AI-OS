@@ -177,14 +177,20 @@ def train_gpu_worker(
         # Don't exit immediately - let the process finish gracefully
         # sys.exit(1)
     
-    try:
-        signal.signal(signal.SIGTERM, signal_handler)
-        signal.signal(signal.SIGINT, signal_handler)
-        if hasattr(signal, 'SIGBREAK'):  # Windows
-            signal.signal(signal.SIGBREAK, signal_handler)
-        print(f"[GPU {tracker_id}] Signal handlers installed", flush=True)
-    except Exception as e:
-        print(f"[GPU {tracker_id}] Failed to install signal handlers: {e}", flush=True)
+    if threading.current_thread() is threading.main_thread():
+        try:
+            signal.signal(signal.SIGTERM, signal_handler)
+            signal.signal(signal.SIGINT, signal_handler)
+            if hasattr(signal, 'SIGBREAK'):  # Windows
+                signal.signal(signal.SIGBREAK, signal_handler)
+            print(f"[GPU {tracker_id}] Signal handlers installed", flush=True)
+        except Exception as e:
+            print(f"[GPU {tracker_id}] Failed to install signal handlers: {e}", flush=True)
+    else:
+        print(
+            f"[GPU {tracker_id}] Skipping signal handlers (thread {threading.current_thread().name})",
+            flush=True,
+        )
     
     def _ack_immediate_stop() -> None:
         if stop_ack_event is None:

@@ -6,6 +6,11 @@ import tempfile
 import warnings
 from pathlib import Path
 
+try:  # pragma: no cover - import guard for bootstrap contexts
+    from aios.system import paths as system_paths
+except Exception:  # pragma: no cover
+    system_paths = None
+
 # Suppress the deprecation warning about TRANSFORMERS_CACHE early
 warnings.filterwarnings("ignore", message=".*TRANSFORMERS_CACHE.*", category=FutureWarning)
 
@@ -121,7 +126,6 @@ import sqlite3
 import shutil
 import subprocess as _sp
 import shlex as _sh
-from pathlib import Path
 from typing import Optional, List
 
 import typer
@@ -168,6 +172,29 @@ cleanup = typer.Typer(help="Housekeeping commands (vendor removal, cache cleanup
 app.add_typer(modelcard, name="modelcard")
 app.add_typer(hrm, name="hrm")
 app.add_typer(cleanup, name="cleanup")
+
+
+def _ensure_core_paths_writable() -> None:
+    """Abort early if critical data directories are not writable."""
+
+    if system_paths is None:
+        return
+
+    issues = system_paths.check_core_paths_writable()
+    if not issues:
+        return
+
+    typer.secho("AI-OS cannot start because required data directories are not writable:", fg="red")
+    for label, path, error in issues:
+        location = str(path) if path is not None else "<unresolved>"
+        typer.secho(f"  • {label}: {location}", fg="red")
+        typer.secho(f"    Reason: {error}", fg="red")
+
+    typer.secho("How to fix:", fg="yellow")
+    typer.echo("  • Launch AI-OS using the Administrator shortcut on Windows or adjust permissions for the paths above.")
+    typer.echo("  • Override the locations via AIOS_PROGRAM_DATA / AIOS_USER_DATA / AIOS_CACHE_DIR if you prefer different writable folders.")
+    typer.echo("  • Ensure antivirus or backup tools are not locking the paths before retrying.")
+    raise typer.Exit(code=2)
 @app.callback(invoke_without_command=True)
 def _default(
     ctx: typer.Context,
@@ -178,6 +205,7 @@ def _default(
     log_file: Optional[str] = typer.Option(None, "--log-file", help="Path to log file"),
 ):
     """If no subcommand, start the interactive CLI menu for convenience."""
+    _ensure_core_paths_writable()
     # Initialize logging early for all subcommands so DEBUG shows in VS Code Debug Console
     try:
         cfg = load_config(None)

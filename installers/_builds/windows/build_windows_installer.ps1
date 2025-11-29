@@ -277,7 +277,45 @@ const
 	PreflightPayloadBytes = {#CorePayloadBytes};
 	PreflightScriptName = 'install_aios_on_windows.ps1';
 	PreflightOutputName = 'aios_preflight.txt';
+	PreflightLogName = 'aios_preflight.log';
 	LicenseFileName = 'LICENSE';
+	ProcessPollIntervalMs = 150;
+	WAIT_OBJECT_0 = $00000000;
+	WAIT_TIMEOUT = $00000102;
+	WAIT_FAILED = $FFFFFFFF;
+	SEE_MASK_NOCLOSEPROCESS = $00000040;
+	PM_REMOVE = $0001;
+
+type
+	TShellExecuteInfo = record
+		cbSize: DWORD;
+		fMask: Cardinal;
+		Wnd: HWND;
+		lpVerb: string;
+		lpFile: string;
+		lpParameters: string;
+		lpDirectory: string;
+		nShow: Integer;
+		hInstApp: THandle;
+		lpIDList: DWORD;
+		lpClass: string;
+		hkeyClass: THandle;
+		dwHotKey: DWORD;
+		hMonitor: THandle;
+		hProcess: THandle;
+	end;
+	TWinPoint = record
+		X: Longint;
+		Y: Longint;
+	end;
+	TMsg = record
+		hwnd: HWND;
+		message: UINT;
+		wParam: Longint;
+		lParam: Longint;
+		time: DWORD;
+		pt: TWinPoint;
+	end;
 
 var
 	LicensePage: TWizardPage;
@@ -286,6 +324,8 @@ var
 	DiskSummaryLabel: TNewStaticText;
 	DiskDetailLabel: TNewStaticText;
 	DiskRetryButton: TNewButton;
+	LogLabel: TNewStaticText;
+	LogViewer: TRichEditViewer;
 	PreflightOk: Boolean;
 	PreflightRunning: Boolean;
 	PreflightCoreBytes: Int64;
@@ -294,6 +334,23 @@ var
 	PreflightTotalBytes: Int64;
 	PreflightMode: string;
 	PreflightNote: string;
+
+function ShellExecuteEx(var lpExecInfo: TShellExecuteInfo): BOOL;
+	external 'ShellExecuteExW@shell32.dll stdcall';
+function WaitForSingleObject(hHandle: THandle; dwMilliseconds: DWORD): DWORD;
+	external 'WaitForSingleObject@kernel32.dll stdcall';
+function GetExitCodeProcess(hProcess: THandle; var lpExitCode: DWORD): BOOL;
+	external 'GetExitCodeProcess@kernel32.dll stdcall';
+function CloseHandle(hObject: THandle): BOOL;
+	external 'CloseHandle@kernel32.dll stdcall';
+function GetLastError: DWORD;
+	external 'GetLastError@kernel32.dll stdcall';
+function PeekMessage(var lpMsg: TMsg; hWnd: HWND; wMsgFilterMin, wMsgFilterMax, wRemoveMsg: UINT): BOOL;
+	external 'PeekMessageW@user32.dll stdcall';
+function TranslateMessage(const lpMsg: TMsg): BOOL;
+	external 'TranslateMessage@user32.dll stdcall';
+function DispatchMessage(const lpMsg: TMsg): Longint;
+	external 'DispatchMessageW@user32.dll stdcall';
 
 procedure StartPreflight(const ShowErrors: Boolean); forward;
 
@@ -391,6 +448,23 @@ begin
 	end;
 end;
 
+procedure LoadPreflightLog(const FileName: string);
+begin
+	if LogViewer = nil then
+		Exit;
+	if FileExists(FileName) then
+	begin
+		try
+			LogViewer.Lines.LoadFromFile(FileName);
+			LogViewer.SelStart := Length(LogViewer.Lines.Text);
+		except
+			LogViewer.Lines.Text := 'Unable to read log output.';
+		end;
+	end
+	else
+		LogViewer.Lines.Text := 'Waiting for log output...';
+end;
+
 procedure ShowPreflightSuccess;
 var
 	Detail: string;
@@ -410,10 +484,65 @@ begin
 		False);
 end;
 
+procedure CloseProcessHandle(var ProcessHandle: THandle);
+begin
+	if ProcessHandle <> 0 then
+	begin
+		CloseHandle(ProcessHandle);
+		ProcessHandle := 0;
+	end;
+end;
+
+function LaunchHiddenProcess(const FileName, Params: string; var ProcessHandle: THandle): Boolean;
+var
+	ExecInfo: TShellExecuteInfo;
+begin
+	ExecInfo.cbSize := SizeOf(ExecInfo);
+	ExecInfo.fMask := SEE_MASK_NOCLOSEPROCESS;
+	ExecInfo.Wnd := WizardForm.Handle;
+	ExecInfo.lpVerb := 'open';
+	ExecInfo.lpFile := FileName;
+	ExecInfo.lpParameters := Params;
+	ExecInfo.lpDirectory := '';
+	ExecInfo.nShow := SW_HIDE;
+	ExecInfo.hInstApp := 0;
+	ExecInfo.lpIDList := 0;
+	ExecInfo.lpClass := '';
+	ExecInfo.hkeyClass := 0;
+	ExecInfo.dwHotKey := 0;
+	ExecInfo.hMonitor := 0;
+	ExecInfo.hProcess := 0;
+	Result := ShellExecuteEx(ExecInfo);
+	if Result then
+		ProcessHandle := ExecInfo.hProcess
+	else
+		ProcessHandle := 0;
+end;
+
+function WaitForProcessWithLog(ProcessHandle: THandle; const LogPath: string): DWORD;
+var
+	WaitResult: DWORD;
+begin
+	Result := WAIT_FAILED;
+	if ProcessHandle = 0 then
+		Exit;
+	repeat
+		LoadPreflightLog(LogPath);
+		ProcessMessages;
+		WaitResult := WaitForSingleObject(ProcessHandle, ProcessPollIntervalMs);
+	until WaitResult <> WAIT_TIMEOUT;
+	LoadPreflightLog(LogPath);
+	Result := WaitResult;
+end;
+
 procedure StartPreflight(const ShowErrors: Boolean);
 var
-	PSExe, ScriptPath, OutputPath, Params: string;
+	PSExe, ScriptPath, OutputPath, LogPath, Params: string;
 	ResultCode: Integer;
+	ProcessHandle: THandle;
+	WaitResult: DWORD;
+	ExitCode: DWORD;
+	LaunchError: DWORD;
 begin
 	PreflightRunning := True;
 	PreflightOk := False;
@@ -421,46 +550,81 @@ begin
 	SetDiskStatus('Measuring disk usage...',
 		'Gathering GPU + dependency footprint. This may take up to a minute.',
 		False);
+	if LogViewer <> nil then
+		LogViewer.Lines.Text := 'Starting disk usage estimation...';
 	UpdateNextButtonState;
 	ExtractTemporaryFile(PreflightScriptName);
 	ScriptPath := ExpandConstant('{tmp}\') + PreflightScriptName;
 	OutputPath := ExpandConstant('{tmp}\') + PreflightOutputName;
+	LogPath := ExpandConstant('{tmp}\') + PreflightLogName;
 	DeleteFile(OutputPath);
+	DeleteFile(LogPath);
 	PSExe := GetPowerShellPath;
-	Params := Format('-ExecutionPolicy Bypass -NoLogo -NonInteractive -WindowStyle Hidden -File "%s" -Action preflight -Quiet -Gpu auto -PayloadBytes %d -PreflightOutput "%s"', [
+	Params := Format('-ExecutionPolicy Bypass -NoLogo -NonInteractive -WindowStyle Hidden -File "%s" -Action preflight -Quiet -Gpu auto -PayloadBytes %d -PreflightOutput "%s" -InstallerLog "%s"', [
 		ScriptPath,
 		PreflightPayloadBytes,
-		OutputPath]);
-	if not Exec(PSExe, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+		OutputPath,
+		LogPath]);
+	ProcessHandle := 0;
+	if not LaunchHiddenProcess(PSExe, Params, ProcessHandle) then
 	begin
+		LaunchError := GetLastError;
 		SetDiskStatus('Unable to launch PowerShell preflight.',
-			'Ensure Windows PowerShell is available, then click Recalculate.',
+			Format('Ensure Windows PowerShell is available (error %d), then click Recalculate.', [LaunchError]),
 			True);
 		if ShowErrors then
 			MsgBox('PowerShell could not be launched to compute disk usage.', mbError, MB_OK);
 	end
-	else if ResultCode <> 0 then
-	begin
-		SetDiskStatus(
-			Format('Preflight exited with code %d.', [ResultCode]),
-			'Review installer.log for errors, then click Recalculate.',
-			True);
-		if ShowErrors then
-			MsgBox('Disk usage estimation failed. Check your execution policy and retry.', mbError, MB_OK);
-	end
-	else if not LoadPreflightOutput(OutputPath) then
-	begin
-		SetDiskStatus('Preflight did not return usable data.',
-			'The helper script finished without writing metrics. Click Recalculate to try again.',
-			True);
-		if ShowErrors then
-			MsgBox('Disk usage estimation returned no data.', mbError, MB_OK);
-	end
 	else
 	begin
-		PreflightOk := True;
-		ShowPreflightSuccess;
+		WaitResult := WaitForProcessWithLog(ProcessHandle, LogPath);
+		if WaitResult = WAIT_FAILED then
+		begin
+			SetDiskStatus('Failed while monitoring PowerShell preflight.',
+				'Setup could not read the helper log. Click Recalculate to retry.',
+				True);
+			if ShowErrors then
+				MsgBox('Failed while monitoring the PowerShell helper.', mbError, MB_OK);
+		end
+		else if WaitResult <> WAIT_OBJECT_0 then
+		begin
+			SetDiskStatus('PowerShell preflight exited unexpectedly.',
+				'The helper returned an unexpected wait state. Click Recalculate to retry.',
+				True);
+			if ShowErrors then
+				MsgBox('PowerShell preflight exited unexpectedly.', mbError, MB_OK);
+		end
+		else
+		begin
+			if not GetExitCodeProcess(ProcessHandle, ExitCode) then
+				ResultCode := 1
+			else
+				ResultCode := Integer(ExitCode);
+			if ResultCode <> 0 then
+			begin
+				SetDiskStatus(
+					Format('Preflight exited with code %d.', [ResultCode]),
+					'Review installer.log for errors, then click Recalculate.',
+					True);
+				if ShowErrors then
+					MsgBox('Disk usage estimation failed. Check your execution policy and retry.', mbError, MB_OK);
+			end
+			else if not LoadPreflightOutput(OutputPath) then
+			begin
+				SetDiskStatus('Preflight did not return usable data.',
+					'The helper script finished without writing metrics. Click Recalculate to try again.',
+					True);
+				if ShowErrors then
+					MsgBox('Disk usage estimation returned no data.', mbError, MB_OK);
+			end
+			else
+			begin
+				PreflightOk := True;
+				ShowPreflightSuccess;
+			end;
+		end;
 	end;
+	CloseProcessHandle(ProcessHandle);
 	PreflightRunning := False;
 	DiskRetryButton.Enabled := True;
 	UpdateNextButtonState;
@@ -558,6 +722,26 @@ begin
 	DiskRetryButton.Left := 0;
 	DiskRetryButton.Top := DiskDetailLabel.Top + DiskDetailLabel.Height + ScaleY(4);
 	DiskRetryButton.OnClick := @DiskRetryButtonClick;
+
+	LogLabel := TNewStaticText.Create(LicensePage.Surface);
+	LogLabel.Parent := LicensePage.Surface;
+	LogLabel.Caption := 'Preflight status & log:';
+	LogLabel.Font.Style := [fsBold];
+	LogLabel.Left := 0;
+	LogLabel.Top := DiskRetryButton.Top + DiskRetryButton.Height + ScaleY(12);
+	LogLabel.Width := LicensePage.SurfaceWidth;
+
+	LogViewer := TRichEditViewer.Create(LicensePage.Surface);
+	LogViewer.Parent := LicensePage.Surface;
+	LogViewer.Left := 0;
+	LogViewer.Top := LogLabel.Top + LogLabel.Height + ScaleY(4);
+	LogViewer.Width := LicensePage.SurfaceWidth;
+	LogViewer.Height := ScaleY(120);
+	LogViewer.BorderStyle := bsSingle;
+	LogViewer.ReadOnly := True;
+	LogViewer.ScrollBars := ssVertical;
+	LogViewer.WordWrap := False;
+	LogViewer.Lines.Text := 'Waiting for disk usage preflight...';
 
 	StartPreflight(False);
 	UpdateNextButtonState;

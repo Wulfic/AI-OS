@@ -330,17 +330,19 @@ class HelpPanel(ttk.LabelFrame):  # type: ignore[misc]
                     import tkinterweb.bindings as twb
                     if hasattr(twb, 'TkinterWeb'):
                         original_post_event = twb.TkinterWeb.post_event
-                        
-                        def safe_post_event(self, event):
+
+                        def safe_post_event(self, *args, **kwargs):
                             """Wrap post_event to catch RuntimeError from background threads."""
+
                             try:
-                                return original_post_event(self, event)
-                            except RuntimeError as e:
-                                if "main thread is not in main loop" in str(e):
-                                    pass  # Silently ignore during startup
-                                else:
-                                    raise
-                        
+                                return original_post_event(self, *args, **kwargs)
+                            except RuntimeError as exc:
+                                message = str(exc)
+                                if "main thread" in message:
+                                    logger.debug("TkinterWeb post_event suppressed: %s", message)
+                                    return None
+                                raise
+
                         twb.TkinterWeb.post_event = safe_post_event
                         logger.info("[HelpPanel] Applied tkinterweb monkey-patch")
                 except Exception as e:

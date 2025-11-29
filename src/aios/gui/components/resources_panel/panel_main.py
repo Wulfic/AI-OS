@@ -6,12 +6,24 @@ from __future__ import annotations
 from ...utils import safe_variables
 
 import logging
+import os
 import platform
 import threading
 import time
 from concurrent.futures import CancelledError, TimeoutError, Future
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Callable, Optional
+
+try:  # pragma: no cover - GUI environment dependent
+    from tkinter import filedialog
+except Exception:  # pragma: no cover - GUI fallback
+    filedialog = None
+
+try:  # pragma: no cover - bootstrap guard
+    from aios.system import paths as system_paths
+except Exception:  # pragma: no cover
+    system_paths = None
 
 from .constants import tk, ttk
 from . import caps_manager
@@ -135,6 +147,11 @@ class ResourcesPanel(ttk.LabelFrame):  # type: ignore[misc]
         self.dataset_cap_var = safe_variables.StringVar(value="")
         self.model_cap_var = safe_variables.StringVar(value="")
         self.per_brain_cap_var = safe_variables.StringVar(value="")
+        self.artifacts_dir_var = safe_variables.StringVar(value="")
+        self._artifacts_status_var = safe_variables.StringVar(value="")
+        self._artifacts_status_label: Any | None = None
+        self._artifacts_default_dir = self._resolve_default_artifacts_dir()
+        self._artifacts_dir_is_valid = True
         
         # Build UI sections
         ui_builders.build_limits_ui(self)
@@ -216,6 +233,117 @@ class ResourcesPanel(ttk.LabelFrame):  # type: ignore[misc]
         self.zero_stage_var.trace_add("write", _autosave)
         self.dataset_cap_var.trace_add("write", _autosave)
         self.max_performance_var.trace_add("write", _autosave)
+        self.artifacts_dir_var.trace_add("write", _autosave)
+
+    # ------------------------------------------------------------------
+    # Artifacts path overrides
+    # ------------------------------------------------------------------
+
+    def _resolve_default_artifacts_dir(self) -> str:
+        if system_paths is not None:
+            try:
+                return str(system_paths.get_artifacts_root())
+            except Exception:
+                logger.debug("Failed to resolve ProgramData artifacts root", exc_info=True)
+        try:
+            return str(Path(__file__).resolve().parents[5] / "artifacts")
+        except Exception:
+            return str(Path.cwd() / "artifacts")
+
+    def _set_artifacts_status(self, message: str, color: str = "gray") -> None:
+        try:
+            self._artifacts_status_var.set(message)
+            if self._artifacts_status_label is not None:
+                self._artifacts_status_label.configure(foreground=color)
+        except Exception:
+            logger.debug("Failed to update artifacts status label", exc_info=True)
+
+    def _probe_directory_writable(self, path: Path) -> str | None:
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            return f"Failed to create directory: {exc}"
+
+        probe = path / f".aios-write-test-{os.getpid()}"
+        try:
+            probe.write_text("ok", encoding="utf-8")
+        except Exception as exc:
+            try:
+                probe.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return f"Failed to write probe file: {exc}"
+
+        try:
+            probe.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return None
+
+    def _apply_artifacts_override(self, path: Path | None) -> None:
+        if system_paths is not None:
+            try:
+                system_paths.set_artifacts_root_override(path)
+            except Exception:
+                logger.debug("Failed to apply artifacts override", exc_info=True)
+
+        if path is None:
+            os.environ.pop("AIOS_ARTIFACTS_DIR", None)
+        else:
+            os.environ["AIOS_ARTIFACTS_DIR"] = str(path)
+
+    def _validate_artifacts_dir(self, value: str | None = None, *, apply_override: bool = True) -> bool:
+        raw_value = (value if value is not None else self.artifacts_dir_var.get() or "").strip()
+        if not raw_value:
+            self._artifacts_dir_is_valid = True
+            self._set_artifacts_status(f"Using default path: {self._artifacts_default_dir}", "gray")
+            if apply_override:
+                self._apply_artifacts_override(None)
+            return True
+
+        candidate = Path(raw_value).expanduser()
+        if not candidate.is_absolute():
+            self._artifacts_dir_is_valid = False
+            self._set_artifacts_status("Enter an absolute path (e.g., D:\\AI-OS\\artifacts)", "#c0392b")
+            return False
+
+        if system_paths is not None:
+            try:
+                error = system_paths.test_directory_writable(candidate)
+            except Exception as exc:
+                error = str(exc)
+        else:
+            error = self._probe_directory_writable(candidate)
+
+        if error:
+            self._artifacts_dir_is_valid = False
+            self._set_artifacts_status(error, "#c0392b")
+            return False
+
+        self._artifacts_dir_is_valid = True
+        self._set_artifacts_status(f"Custom path OK: {candidate}", "#1d8348")
+        if apply_override:
+            self._apply_artifacts_override(candidate)
+        return True
+
+    def _browse_artifacts_dir(self) -> None:
+        if filedialog is None:
+            return
+
+        initial = self.artifacts_dir_var.get().strip() or self._artifacts_default_dir
+        try:
+            selected = filedialog.askdirectory(initialdir=initial, title="Select artifacts directory")
+        except Exception:
+            logger.warning("Failed to open artifacts folder picker", exc_info=True)
+            return
+
+        if selected:
+            self.artifacts_dir_var.set(selected)
+            self._validate_artifacts_dir()
+
+    def _reset_artifacts_dir(self) -> None:
+        self.artifacts_dir_var.set("")
+        self._validate_artifacts_dir()
         
         logger.info("Auto-save enabled for resource settings (debounced 1s)")
 
@@ -772,6 +900,10 @@ class ResourcesPanel(ttk.LabelFrame):  # type: ignore[misc]
         current_os = platform.system().strip().lower()
         self._active_os_label = current_os
 
+        artifacts_override = self.artifacts_dir_var.get().strip()
+        if not self._artifacts_dir_is_valid:
+            artifacts_override = ""
+
         vals: dict[str, Any] = {
             "cpu_threads": th,
             "gpu_mem_pct": gp,
@@ -792,6 +924,7 @@ class ResourcesPanel(ttk.LabelFrame):  # type: ignore[misc]
             "zero_stage": self.zero_stage_var.get(),
             # Storage caps
             "dataset_cap": self.dataset_cap_var.get(),
+            "artifacts_dir": artifacts_override,
             # Persist OS so we can warn when selections migrate across platforms
             "os_name": current_os,
         }
@@ -966,6 +1099,16 @@ class ResourcesPanel(ttk.LabelFrame):  # type: ignore[misc]
                     self.dataset_cap_var.set(str(ds))
             except Exception:
                 pass
+
+            try:
+                ad = vals.get("artifacts_dir")
+                if isinstance(ad, str):
+                    self.artifacts_dir_var.set(ad.strip())
+                else:
+                    self.artifacts_dir_var.set("")
+                self._validate_artifacts_dir(apply_override=True)
+            except Exception:
+                logger.debug("Failed to restore artifacts directory override", exc_info=True)
 
         try:
             snapshot_items: list[tuple[str, float]] = []

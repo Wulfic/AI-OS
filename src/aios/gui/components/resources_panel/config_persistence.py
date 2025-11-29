@@ -71,6 +71,12 @@ def load_resources_from_config() -> dict[str, Any]:
         if not isinstance(resources, dict):
             logger.warning("Resources section in config is not a dict")
             return {}
+        art_dir = resources.get('artifacts_dir')
+        if art_dir is not None and not isinstance(art_dir, str):
+            try:
+                resources['artifacts_dir'] = str(art_dir)
+            except Exception:
+                resources.pop('artifacts_dir', None)
         
         logger.info("Successfully loaded resource config")
         logger.debug(f"Resource config: {resources}")
@@ -141,6 +147,13 @@ def save_resources_to_config(resources_values: dict[str, Any]) -> bool:
                 resources['system_mem_limit_gb'] = None
         else:
             resources['system_mem_limit_gb'] = None
+
+        # Artifacts directory override
+        artifacts_dir = (resources_values.get('artifacts_dir') or '').strip()
+        if artifacts_dir:
+            resources['artifacts_dir'] = artifacts_dir
+        else:
+            resources.pop('artifacts_dir', None)
         
         # Save config back to file
         success = save_full_config(config)

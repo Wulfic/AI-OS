@@ -19,6 +19,11 @@ import time
 import os
 from pathlib import Path
 
+try:  # pragma: no cover - bootstrap guard
+    from aios.system import paths as system_paths
+except Exception:  # pragma: no cover
+    system_paths = None
+
 if TYPE_CHECKING:
     import tkinter as tk
 
@@ -35,6 +40,44 @@ from .cleanup import cleanup
 from .tray_management import init_tray, on_tray_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _apply_saved_artifacts_override() -> None:
+    """Load the artifacts directory override from config and apply it early."""
+
+    if system_paths is None:
+        return
+
+    try:
+        from ..components.resources_panel import config_persistence
+    except Exception:
+        return
+
+    try:
+        resources_cfg = config_persistence.load_resources_from_config()
+    except Exception:
+        return
+
+    override = str(resources_cfg.get("artifacts_dir") or "").strip()
+    if not override:
+        # Ensure we reset to defaults if the override was removed
+        system_paths.set_artifacts_root_override(None)
+        os.environ.pop("AIOS_ARTIFACTS_DIR", None)
+        return
+
+    candidate = Path(override).expanduser()
+    error = None
+    try:
+        error = system_paths.test_directory_writable(candidate)
+    except Exception as exc:
+        error = str(exc)
+
+    if error:
+        logger.warning("Artifacts override '%s' ignored: %s", candidate, error)
+        return
+
+    system_paths.set_artifacts_root_override(candidate)
+    os.environ["AIOS_ARTIFACTS_DIR"] = str(candidate)
 
 
 def run_app(app_instance: Any) -> None:
@@ -65,6 +108,7 @@ def run_app(app_instance: Any) -> None:
     
     _faulthandler_timer_active = False
     try:
+        _apply_saved_artifacts_override()
         # Use existing loading screen (created in __init__)
         def update_status(text):
             """Update startup status messaging without blocking the Tk loop."""

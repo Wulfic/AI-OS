@@ -406,11 +406,47 @@ def build_storage_caps_ui(panel: "ResourcesPanel") -> Any:
         panel: ResourcesPanel instance
         
     Returns:
-        None (storage caps now in top row)
+        None
     """
-    # Storage caps are now built inline in build_limits_ui
-    # This function kept for compatibility but does nothing
-    pass
+    try:
+        frame = ttk.LabelFrame(panel, text="Storage Paths")
+        frame.pack(fill="x", padx=8, pady=(8, 0))
+        ttk.Label(frame, text="Artifacts directory:").grid(row=0, column=0, sticky="w")
+        entry = ttk.Entry(frame, textvariable=panel.artifacts_dir_var, width=60)
+        entry.grid(row=0, column=1, sticky="ew", padx=(6, 4))
+        entry.bind("<FocusOut>", lambda _e: panel._validate_artifacts_dir())
+
+        browse_btn = ttk.Button(frame, text="Browse…", command=panel._browse_artifacts_dir)
+        browse_btn.grid(row=0, column=2, padx=(4, 0))
+
+        reset_btn = ttk.Button(frame, text="Use Default", command=panel._reset_artifacts_dir)
+        reset_btn.grid(row=0, column=3, padx=(4, 0))
+
+        frame.columnconfigure(1, weight=1)
+
+        status = ttk.Label(
+            frame,
+            textvariable=panel._artifacts_status_var,
+            font=("TkDefaultFont", 8),
+            foreground="gray",
+        )
+        status.grid(row=1, column=0, columnspan=4, sticky="w", pady=(4, 0))
+        panel._artifacts_status_label = status
+
+        try:
+            from ..tooltips import add_tooltip
+
+            add_tooltip(
+                entry,
+                "Optional custom location for artifacts and brains. Leave blank to use ProgramData/AI-OS/artifacts.",
+            )
+            add_tooltip(reset_btn, "Revert to the default ProgramData path.")
+        except Exception:
+            pass
+
+        panel._validate_artifacts_dir(apply_override=False)
+    except Exception as exc:
+        logger.error(f"Failed to build storage caps UI: {exc}", exc_info=True)
 
 
 def build_apply_button_ui(panel: "ResourcesPanel") -> None:
