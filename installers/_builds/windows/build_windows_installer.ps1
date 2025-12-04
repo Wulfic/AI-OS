@@ -293,6 +293,7 @@ const
 	WAIT_FAILED = $FFFFFFFF;
 	SEE_MASK_NOCLOSEPROCESS = $00000040;
 	PM_REMOVE = $0001;
+	EM_SCROLLCARET = $00B7;
 
 type
 	TShellExecuteInfo = record
@@ -329,13 +330,26 @@ var
 	LicensePage: TWizardPage;
 	LicenseViewer: TRichEditViewer;
 	LicenseAcceptCheck: TNewCheckBox;
+	
+	ConfigPage: TWizardPage;
 	BrainDownloadCheck: TNewCheckBox;
-	InstallCudaCheck: TNewCheckBox;
+	AdvancedModeCheck: TNewCheckBox;
+	ComponentsPanel: TPanel;
+	CompPythonCheck: TNewCheckBox;
+	CompGitCheck: TNewCheckBox;
+	CompNodeCheck: TNewCheckBox;
+	CompCudaCheck: TNewCheckBox;
+	
 	DiskSummaryLabel: TNewStaticText;
 	DiskDetailLabel: TNewStaticText;
 	DiskRetryButton: TNewButton;
 	LogLabel: TNewStaticText;
 	LogViewer: TRichEditViewer;
+	
+	InstallLogViewer: TRichEditViewer;
+	InstallDetailsButton: TNewButton;
+	InstallDetailsVisible: Boolean;
+	
 	PreflightOk: Boolean;
 	PreflightRunning: Boolean;
 	PreflightCoreBytes: Int64;
@@ -347,6 +361,8 @@ var
 	PreflightPythonStatus: string;
 	PreflightGitStatus: string;
 	PreflightNodeStatus: string;
+
+procedure UpdateConfigPageLayout; forward;
 
 function ShellExecuteEx(var lpExecInfo: TShellExecuteInfo): BOOL;
 	external 'ShellExecuteExW@shell32.dll stdcall';
@@ -406,6 +422,7 @@ begin
 		DiskSummaryLabel.Font.Color := clRed
 	else
 		DiskSummaryLabel.Font.Color := clWindowText;
+	UpdateConfigPageLayout;
 end;
 
 procedure ResetPreflightValues;
@@ -490,7 +507,7 @@ var
 	Detail: string;
 begin
 	Detail :=
-		Format('Core files: %s  |  Dependencies: %s  |  Buffer: %s%sMode: %s%s%sPrerequisites: Python [%s], Git [%s], Node [%s]', [
+		Format('Core files: %s  |  Dependencies: %s  |  Buffer: %s%sMode: %s%s%s%sPrerequisites: Python [%s], Git [%s], Node [%s]', [
 			FormatBytes(PreflightCoreBytes),
 			FormatBytes(PreflightDepBytes),
 			FormatBytes(PreflightBufferBytes),
@@ -498,6 +515,7 @@ begin
 			PreflightMode,
 			(#13#10),
 			PreflightNote,
+			(#13#10),
 			PreflightPythonStatus,
 			PreflightGitStatus,
 			PreflightNodeStatus]);
@@ -583,7 +601,13 @@ begin
 	PreflightRunning := True;
 	PreflightOk := False;
 	DiskRetryButton.Enabled := False;
-	InstallCudaCheck.Enabled := False;
+	
+	{ Disable controls during preflight }
+	if CompPythonCheck <> nil then CompPythonCheck.Enabled := False;
+	if CompGitCheck <> nil then CompGitCheck.Enabled := False;
+	if CompNodeCheck <> nil then CompNodeCheck.Enabled := False;
+	if CompCudaCheck <> nil then CompCudaCheck.Enabled := False;
+
 	SetDiskStatus('Measuring disk usage...',
 		'Gathering GPU + dependency footprint. This may take up to a minute.',
 		False);
@@ -603,8 +627,13 @@ begin
 		OutputPath,
 		LogPath]);
 
-	if InstallCudaCheck.Checked then
-		Params := Params + ' -InstallCudaTools';
+	if AdvancedModeCheck.Checked then
+	begin
+		if not CompPythonCheck.Checked then Params := Params + ' -SkipPythonInstall';
+		if not CompGitCheck.Checked then Params := Params + ' -SkipGitInstall';
+		if not CompNodeCheck.Checked then Params := Params + ' -SkipNodeInstall';
+		if CompCudaCheck.Checked then Params := Params + ' -InstallCudaTools';
+	end;
 	ProcessHandle := 0;
 	if not LaunchHiddenProcess(PSExe, Params, ProcessHandle) then
 	begin
@@ -667,7 +696,16 @@ begin
 	CloseProcessHandle(ProcessHandle);
 	PreflightRunning := False;
 	DiskRetryButton.Enabled := True;
-	InstallCudaCheck.Enabled := True;
+	
+	{ Re-enable controls }
+	if AdvancedModeCheck.Checked then
+	begin
+		CompPythonCheck.Enabled := True;
+		CompGitCheck.Enabled := True;
+		CompNodeCheck.Enabled := True;
+		CompCudaCheck.Enabled := True;
+	end;
+	
 	UpdateNextButtonState;
 end;
 
@@ -678,10 +716,12 @@ end;
 
 procedure CurPageChanged(CurPageID: Integer);
 begin
-	if (LicensePage <> nil) and (CurPageID <> LicensePage.ID) then
-		WizardForm.NextButton.Enabled := True
+	if (LicensePage <> nil) and (CurPageID = LicensePage.ID) then
+		UpdateNextButtonState
+	else if (ConfigPage <> nil) and (CurPageID = ConfigPage.ID) then
+		UpdateNextButtonState
 	else
-		UpdateNextButtonState;
+		WizardForm.NextButton.Enabled := True;
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -702,6 +742,16 @@ begin
 			Exit;
 		end;
 	end;
+end;
+
+procedure InstallDetailsButtonClick(Sender: TObject);
+begin
+	InstallDetailsVisible := not InstallDetailsVisible;
+	InstallLogViewer.Visible := InstallDetailsVisible;
+	if InstallDetailsVisible then
+		InstallDetailsButton.Caption := 'Hide Details'
+	else
+		InstallDetailsButton.Caption := 'Show Details';
 end;
 
 procedure StartInstall;
@@ -730,8 +780,13 @@ begin
 	else
 		Params := Params + ' -SkipBrain';
 
-	if InstallCudaCheck.Checked then
-		Params := Params + ' -InstallCudaTools';
+	if AdvancedModeCheck.Checked then
+	begin
+		if not CompPythonCheck.Checked then Params := Params + ' -SkipPythonInstall';
+		if not CompGitCheck.Checked then Params := Params + ' -SkipGitInstall';
+		if not CompNodeCheck.Checked then Params := Params + ' -SkipNodeInstall';
+		if CompCudaCheck.Checked then Params := Params + ' -InstallCudaTools';
+	end;
 		
 	ProcessHandle := 0;
 	if not LaunchHiddenProcess(PSExe, Params, ProcessHandle) then
@@ -753,6 +808,13 @@ begin
 						if Length(LastLine) > 80 then
 							LastLine := Copy(LastLine, 1, 77) + '...';
 						WizardForm.StatusLabel.Caption := LastLine;
+						
+						if InstallLogViewer <> nil then
+						begin
+							InstallLogViewer.Lines.Assign(Lines);
+							InstallLogViewer.SelStart := Length(InstallLogViewer.Lines.Text);
+							InstallLogViewer.Perform(EM_SCROLLCARET, 0, 0);
+						end;
 					end;
 				except
 					{ Ignore read errors }
@@ -790,21 +852,74 @@ begin
 	end;
 end;
 
+procedure UpdateConfigPageLayout;
+var
+	TopOffset: Integer;
+	RemainingHeight: Integer;
+begin
+	ComponentsPanel.Visible := AdvancedModeCheck.Checked;
+	
+	TopOffset := AdvancedModeCheck.Top + AdvancedModeCheck.Height + ScaleY(12);
+	
+	if AdvancedModeCheck.Checked then
+	begin
+		ComponentsPanel.Top := TopOffset;
+		{ Recalculate panel height based on children to prevent cutoff }
+		ComponentsPanel.Height := CompCudaCheck.Top + CompCudaCheck.Height + ScaleY(5);
+		TopOffset := TopOffset + ComponentsPanel.Height + ScaleY(12);
+	end;
+	
+	DiskSummaryLabel.Top := TopOffset;
+	DiskSummaryLabel.Width := ConfigPage.SurfaceWidth;
+	TopOffset := TopOffset + DiskSummaryLabel.Height + ScaleY(12);
+	
+	DiskDetailLabel.Top := TopOffset;
+	DiskDetailLabel.Width := ConfigPage.SurfaceWidth;
+	TopOffset := TopOffset + DiskDetailLabel.Height + ScaleY(12);
+	
+	DiskRetryButton.Top := TopOffset;
+	TopOffset := TopOffset + DiskRetryButton.Height + ScaleY(16);
+	
+	LogLabel.Top := TopOffset;
+	TopOffset := TopOffset + LogLabel.Height + ScaleY(8);
+	
+	LogViewer.Top := TopOffset;
+	RemainingHeight := ConfigPage.SurfaceHeight - TopOffset;
+	if RemainingHeight < ScaleY(50) then RemainingHeight := ScaleY(50);
+	LogViewer.Height := RemainingHeight;
+end;
+
+procedure AdvancedModeChanged(Sender: TObject);
+begin
+	UpdateConfigPageLayout;
+end;
+
 procedure InitializeWizard;
 var
 	LicensePath: string;
 begin
+	{ --- Page 1: License --- }
 	LicensePage :=
 		CreateCustomPage(
 			wpWelcome,
-			'License & Disk Usage',
-			'Read the AI-OS terms and confirm there is enough free space before installing.');
+			'License Agreement',
+			'Please read the following important information before continuing.');
+			
+	LicenseAcceptCheck := TNewCheckBox.Create(LicensePage.Surface);
+	LicenseAcceptCheck.Parent := LicensePage.Surface;
+	LicenseAcceptCheck.Caption := 'I accept the AI-OS License Agreement';
+	LicenseAcceptCheck.Left := 0;
+	LicenseAcceptCheck.Height := ScaleY(20);
+	LicenseAcceptCheck.Top := LicensePage.SurfaceHeight - LicenseAcceptCheck.Height - ScaleY(5);
+	LicenseAcceptCheck.Width := LicensePage.SurfaceWidth;
+	LicenseAcceptCheck.OnClick := @LicenseAcceptChanged;
+
 	LicenseViewer := TRichEditViewer.Create(LicensePage.Surface);
 	LicenseViewer.Parent := LicensePage.Surface;
 	LicenseViewer.Left := 0;
 	LicenseViewer.Top := 0;
 	LicenseViewer.Width := LicensePage.SurfaceWidth;
-	LicenseViewer.Height := ScaleY(150);
+	LicenseViewer.Height := LicenseAcceptCheck.Top - ScaleY(10);
 	LicenseViewer.ScrollBars := ssVertical;
 	LicenseViewer.BorderStyle := bsSingle;
 	LicenseViewer.ReadOnly := True;
@@ -815,78 +930,143 @@ begin
 	else
 		LicenseViewer.Lines.Text := 'License file missing from installer payload.';
 
-	LicenseAcceptCheck := TNewCheckBox.Create(LicensePage.Surface);
-	LicenseAcceptCheck.Parent := LicensePage.Surface;
-	LicenseAcceptCheck.Caption := 'I accept the AI-OS License Agreement';
-	LicenseAcceptCheck.Left := 0;
-	LicenseAcceptCheck.Top := LicenseViewer.Top + LicenseViewer.Height + ScaleY(8);
-	LicenseAcceptCheck.Width := LicensePage.SurfaceWidth;
-	LicenseAcceptCheck.OnClick := @LicenseAcceptChanged;
+	{ --- Page 2: Configuration --- }
+	ConfigPage :=
+		CreateCustomPage(
+			LicensePage.ID,
+			'Installation Configuration',
+			'Select components and verify disk usage.');
 
-	BrainDownloadCheck := TNewCheckBox.Create(LicensePage.Surface);
-	BrainDownloadCheck.Parent := LicensePage.Surface;
+	BrainDownloadCheck := TNewCheckBox.Create(ConfigPage.Surface);
+	BrainDownloadCheck.Parent := ConfigPage.Surface;
 	BrainDownloadCheck.Caption := 'Download pretrained brain (English-v1) [~2GB]';
 	BrainDownloadCheck.Left := 0;
-	BrainDownloadCheck.Top := LicenseAcceptCheck.Top + LicenseAcceptCheck.Height + ScaleY(8);
-	BrainDownloadCheck.Width := LicensePage.SurfaceWidth;
+	BrainDownloadCheck.Top := 0;
+	BrainDownloadCheck.Width := ConfigPage.SurfaceWidth;
+	BrainDownloadCheck.Height := ScaleY(20);
 	BrainDownloadCheck.Checked := True;
 
-	InstallCudaCheck := TNewCheckBox.Create(LicensePage.Surface);
-	InstallCudaCheck.Parent := LicensePage.Surface;
-	InstallCudaCheck.Caption := 'Advanced: Install NVIDIA CUDA components (even if no GPU detected)';
-	InstallCudaCheck.Left := 0;
-	InstallCudaCheck.Top := BrainDownloadCheck.Top + BrainDownloadCheck.Height + ScaleY(8);
-	InstallCudaCheck.Width := LicensePage.SurfaceWidth;
-	InstallCudaCheck.Checked := False;
-	InstallCudaCheck.OnClick := @DiskRetryButtonClick;
+	AdvancedModeCheck := TNewCheckBox.Create(ConfigPage.Surface);
+	AdvancedModeCheck.Parent := ConfigPage.Surface;
+	AdvancedModeCheck.Caption := 'Advanced Installation Mode (Select specific components)';
+	AdvancedModeCheck.Left := 0;
+	AdvancedModeCheck.Top := BrainDownloadCheck.Top + BrainDownloadCheck.Height + ScaleY(12);
+	AdvancedModeCheck.Width := ConfigPage.SurfaceWidth;
+	AdvancedModeCheck.Height := ScaleY(20);
+	AdvancedModeCheck.Checked := False;
+	AdvancedModeCheck.OnClick := @AdvancedModeChanged;
 
-	DiskSummaryLabel := TNewStaticText.Create(LicensePage.Surface);
-	DiskSummaryLabel.Parent := LicensePage.Surface;
+	ComponentsPanel := TPanel.Create(ConfigPage.Surface);
+	ComponentsPanel.Parent := ConfigPage.Surface;
+	ComponentsPanel.Left := ScaleX(20);
+	ComponentsPanel.Width := ConfigPage.SurfaceWidth - ScaleX(20);
+	ComponentsPanel.Height := ScaleY(100);
+	ComponentsPanel.BevelOuter := bvNone;
+	ComponentsPanel.Visible := False;
+
+	CompPythonCheck := TNewCheckBox.Create(ComponentsPanel);
+	CompPythonCheck.Parent := ComponentsPanel;
+	CompPythonCheck.Caption := 'Install Python 3.11 (if missing)';
+	CompPythonCheck.Left := 0;
+	CompPythonCheck.Top := 0;
+	CompPythonCheck.Width := ComponentsPanel.Width;
+	CompPythonCheck.Height := ScaleY(20);
+	CompPythonCheck.Checked := True;
+	CompPythonCheck.OnClick := @DiskRetryButtonClick;
+
+	CompGitCheck := TNewCheckBox.Create(ComponentsPanel);
+	CompGitCheck.Parent := ComponentsPanel;
+	CompGitCheck.Caption := 'Install Git (if missing)';
+	CompGitCheck.Left := 0;
+	CompGitCheck.Top := CompPythonCheck.Top + CompPythonCheck.Height + ScaleY(8);
+	CompGitCheck.Width := ComponentsPanel.Width;
+	CompGitCheck.Height := ScaleY(20);
+	CompGitCheck.Checked := True;
+	CompGitCheck.OnClick := @DiskRetryButtonClick;
+
+	CompNodeCheck := TNewCheckBox.Create(ComponentsPanel);
+	CompNodeCheck.Parent := ComponentsPanel;
+	CompNodeCheck.Caption := 'Install Node.js LTS (if missing)';
+	CompNodeCheck.Left := 0;
+	CompNodeCheck.Top := CompGitCheck.Top + CompGitCheck.Height + ScaleY(8);
+	CompNodeCheck.Width := ComponentsPanel.Width;
+	CompNodeCheck.Height := ScaleY(20);
+	CompNodeCheck.Checked := True;
+	CompNodeCheck.OnClick := @DiskRetryButtonClick;
+
+	CompCudaCheck := TNewCheckBox.Create(ComponentsPanel);
+	CompCudaCheck.Parent := ComponentsPanel;
+	CompCudaCheck.Caption := 'Install NVIDIA CUDA Tools (Force)';
+	CompCudaCheck.Left := 0;
+	CompCudaCheck.Top := CompNodeCheck.Top + CompNodeCheck.Height + ScaleY(8);
+	CompCudaCheck.Width := ComponentsPanel.Width;
+	CompCudaCheck.Height := ScaleY(20);
+	CompCudaCheck.Checked := False;
+	CompCudaCheck.OnClick := @DiskRetryButtonClick;
+
+	DiskSummaryLabel := TNewStaticText.Create(ConfigPage.Surface);
+	DiskSummaryLabel.Parent := ConfigPage.Surface;
 	DiskSummaryLabel.Left := 0;
-	DiskSummaryLabel.Top := InstallCudaCheck.Top + InstallCudaCheck.Height + ScaleY(12);
-	DiskSummaryLabel.Width := LicensePage.SurfaceWidth;
-	DiskSummaryLabel.AutoSize := False;
-	DiskSummaryLabel.Height := ScaleY(36);
+	DiskSummaryLabel.Width := ConfigPage.SurfaceWidth;
+	DiskSummaryLabel.AutoSize := True;
 	DiskSummaryLabel.WordWrap := True;
 	DiskSummaryLabel.Font.Style := [fsBold];
 
-	DiskDetailLabel := TNewStaticText.Create(LicensePage.Surface);
-	DiskDetailLabel.Parent := LicensePage.Surface;
+	DiskDetailLabel := TNewStaticText.Create(ConfigPage.Surface);
+	DiskDetailLabel.Parent := ConfigPage.Surface;
 	DiskDetailLabel.Left := 0;
-	DiskDetailLabel.Top := DiskSummaryLabel.Top + DiskSummaryLabel.Height + ScaleY(4);
-	DiskDetailLabel.Width := LicensePage.SurfaceWidth;
-	DiskDetailLabel.Height := ScaleY(60);
-	DiskDetailLabel.AutoSize := False;
+	DiskDetailLabel.Width := ConfigPage.SurfaceWidth;
+	DiskDetailLabel.AutoSize := True;
 	DiskDetailLabel.WordWrap := True;
 
-	DiskRetryButton := TNewButton.Create(LicensePage.Surface);
-	DiskRetryButton.Parent := LicensePage.Surface;
+	DiskRetryButton := TNewButton.Create(ConfigPage.Surface);
+	DiskRetryButton.Parent := ConfigPage.Surface;
 	DiskRetryButton.Caption := '&Recalculate';
 	DiskRetryButton.Width := ScaleX(110);
+	DiskRetryButton.Height := ScaleY(26);
 	DiskRetryButton.Left := 0;
-	DiskRetryButton.Top := DiskDetailLabel.Top + DiskDetailLabel.Height + ScaleY(4);
 	DiskRetryButton.OnClick := @DiskRetryButtonClick;
 
-	LogLabel := TNewStaticText.Create(LicensePage.Surface);
-	LogLabel.Parent := LicensePage.Surface;
+	LogLabel := TNewStaticText.Create(ConfigPage.Surface);
+	LogLabel.Parent := ConfigPage.Surface;
 	LogLabel.Caption := 'Preflight status & log:';
 	LogLabel.Font.Style := [fsBold];
 	LogLabel.Left := 0;
-	LogLabel.Top := DiskRetryButton.Top + DiskRetryButton.Height + ScaleY(12);
-	LogLabel.Width := LicensePage.SurfaceWidth;
+	LogLabel.Width := ConfigPage.SurfaceWidth;
 
-	LogViewer := TRichEditViewer.Create(LicensePage.Surface);
-	LogViewer.Parent := LicensePage.Surface;
+	LogViewer := TRichEditViewer.Create(ConfigPage.Surface);
+	LogViewer.Parent := ConfigPage.Surface;
 	LogViewer.Left := 0;
-	LogViewer.Top := LogLabel.Top + LogLabel.Height + ScaleY(4);
-	LogViewer.Width := LicensePage.SurfaceWidth;
-	LogViewer.Height := ScaleY(120);
+	LogViewer.Width := ConfigPage.SurfaceWidth;
 	LogViewer.BorderStyle := bsSingle;
 	LogViewer.ReadOnly := True;
 	LogViewer.ScrollBars := ssVertical;
 	LogViewer.WordWrap := False;
 	LogViewer.Lines.Text := 'Waiting for disk usage preflight...';
 
+	{ --- Install Page Controls --- }
+	InstallDetailsButton := TNewButton.Create(WizardForm);
+	InstallDetailsButton.Parent := WizardForm.InstallingPage;
+	InstallDetailsButton.Caption := 'Show Details';
+	InstallDetailsButton.Left := 0;
+	InstallDetailsButton.Top := WizardForm.ProgressGauge.Top + WizardForm.ProgressGauge.Height + ScaleY(10);
+	InstallDetailsButton.Width := ScaleX(110);
+	InstallDetailsButton.Height := ScaleY(26);
+	InstallDetailsButton.OnClick := @InstallDetailsButtonClick;
+	
+	InstallLogViewer := TRichEditViewer.Create(WizardForm);
+	InstallLogViewer.Parent := WizardForm.InstallingPage;
+	InstallLogViewer.Left := 0;
+	InstallLogViewer.Top := InstallDetailsButton.Top + InstallDetailsButton.Height + ScaleY(10);
+	InstallLogViewer.Width := WizardForm.StatusLabel.Width;
+	InstallLogViewer.Height := ScaleY(150);
+	InstallLogViewer.ScrollBars := ssVertical;
+	InstallLogViewer.BorderStyle := bsSingle;
+	InstallLogViewer.ReadOnly := True;
+	InstallLogViewer.Visible := False;
+	InstallDetailsVisible := False;
+
+	UpdateConfigPageLayout;
 	StartPreflight(False);
 	UpdateNextButtonState;
 end;

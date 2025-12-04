@@ -7,6 +7,12 @@ param(
   [string]$Gpu = 'auto',
   # Force installation of CUDA tools even if no NVIDIA GPU is detected
   [switch]$InstallCudaTools,
+  # Skip automatic installation of Python
+  [switch]$SkipPythonInstall,
+  # Skip automatic installation of Git
+  [switch]$SkipGitInstall,
+  # Skip automatic installation of Node.js
+  [switch]$SkipNodeInstall,
   # Internal: elevated sub-process to perform admin-only steps
   [switch]$ElevatedSubprocess,
   # Suppress Write-Host output for quiet automation flows
@@ -503,6 +509,10 @@ function Test-Python() {
   } catch {}
 
   if (Confirm-Choice "Install Python 3.11 via winget now?" -DefaultYes:$true) {
+    if ($SkipPythonInstall) {
+      Write-Host "[i] Skipping Python installation as requested." -ForegroundColor Yellow
+      return $false
+    }
     try {
       winget install -e --id Python.Python.3.11 -h --accept-source-agreements --accept-package-agreements
       Write-Host "[+] Python installed." -ForegroundColor Green
@@ -531,6 +541,10 @@ function Test-Git() {
   }
   Write-Host "[!] Git not found." -ForegroundColor Yellow
   if (Confirm-Choice "Install Git via winget now?" -DefaultYes:$true) {
+    if ($SkipGitInstall) {
+      Write-Host "[i] Skipping Git installation as requested." -ForegroundColor Yellow
+      return
+    }
     try {
       winget install -e --id Git.Git -h --accept-source-agreements --accept-package-agreements
       Write-Host "[+] Git installed." -ForegroundColor Green
@@ -555,6 +569,10 @@ function Test-NodeJS() {
   }
   
   Write-Host "[!] Node.js not found. Installing Node.js LTS via winget..." -ForegroundColor Yellow
+  if ($SkipNodeInstall) {
+    Write-Host "[i] Skipping Node.js installation as requested." -ForegroundColor Yellow
+    return
+  }
   try {
     winget install -e --id OpenJS.NodeJS.LTS -h --accept-source-agreements --accept-package-agreements
     Write-Host "[+] Node.js installed." -ForegroundColor Green
