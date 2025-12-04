@@ -160,13 +160,14 @@ def save_resources_to_config(resources_values: dict[str, Any]) -> bool:
         
         if success:
             logger.info("Successfully saved resource config")
+            return True
         else:
             logger.error("Failed to save resource config")
+            raise RuntimeError("Failed to write config file")
         
-        return success
     except Exception as e:
         logger.error(f"Failed to save resource config: {e}", exc_info=True)
-        return False
+        raise e
 
 
 def merge_config_with_defaults(config_values: dict[str, Any], default_values: dict[str, Any]) -> dict[str, Any]:

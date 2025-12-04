@@ -74,10 +74,10 @@ def start_evaluation(panel: "EvaluationPanel") -> None:
     if not HarnessWrapper.is_lm_eval_installed():
         logger.error("lm-evaluation-harness not installed")
         messagebox.showerror(
-            "lm-evaluation-harness Not Found",
-            "The lm-evaluation-harness package is not installed.\n\n"
-            "Please install it with:\n"
-            "pip install lm-eval[api]"
+            "Dependency Error",
+            "The lm-evaluation-harness package is missing.\n\n"
+            "This component is bundled with AI-OS but failed to load.\n"
+            "Please run 'aios doctor' in a terminal to repair dependencies."
         )
         return
     
@@ -281,6 +281,19 @@ def start_evaluation(panel: "EvaluationPanel") -> None:
                     # This is a native AI-OS brain - use custom adapter
                     panel._log(f"[eval] Detected AI-OS ACTv1 brain - using native adapter")
                     
+                    # Check for checkpoint
+                    checkpoint = brain_path / "actv1_student.safetensors"
+                    if not checkpoint.exists():
+                        msg = f"Missing checkpoint: {checkpoint}\nCannot evaluate brain without model weights."
+                        panel._log(f"[eval] Error: {msg}")
+                        messagebox.showerror("Missing Checkpoint", msg)
+                        panel.start_btn.config(state="normal")
+                        panel.stop_btn.config(state="disabled")
+                        panel._is_running = False
+                        panel.progress.stop()
+                        panel.progress_label.config(text="failed")
+                        return
+
                     # Import and register the custom adapter
                     try:
                         from aios.core.evaluation.aios_lm_eval_adapter import register_aios_model

@@ -14,24 +14,14 @@ param(
   # Optional log destination for installer orchestration
   [string]$InstallerLog,
   # Optional override for core payload size (bytes)
-  [long]$PayloadBytes = 0
+  [long]$PayloadBytes = 0,
+  # Explicitly enable brain download (skips prompt)
+  [switch]$DownloadBrain,
+  # Explicitly disable brain download (skips prompt)
+  [switch]$SkipBrain
 )
 
 $ErrorActionPreference = 'Stop'
-
-if ($Quiet) {
-  function Write-Host {
-    param(
-      [Parameter(ValueFromPipeline = $true)]
-      [object]$Object,
-      [Parameter(ValueFromRemainingArguments = $true)]
-      [object[]]$Objects,
-      [ConsoleColor]$ForegroundColor,
-      [ConsoleColor]$BackgroundColor,
-      [switch]$NoNewline
-    )
-  }
-}
 
 function Resolve-RepoRoot {
   param([string]$StartDirectory)
@@ -94,6 +84,33 @@ function Write-InstallerLog {
   } catch {
     # Suppress logging exceptions to avoid blocking installer
   }
+}
+
+# Capture original Write-Host for internal use
+if (-not (Test-Path function:\Write-Host-Original)) {
+    Copy-Item function:\Write-Host function:\Write-Host-Original
+}
+
+function Write-Host {
+    param(
+        [Parameter(ValueFromPipeline = $true)]
+        [object]$Object,
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [object[]]$Objects,
+        [ConsoleColor]$ForegroundColor,
+        [ConsoleColor]$BackgroundColor,
+        [switch]$NoNewline
+    )
+
+    # If not quiet, write to console
+    if (-not $Quiet) {
+        Write-Host-Original @PSBoundParameters
+    }
+
+    # Always log to file if configured
+    if ($Object) {
+        Write-InstallerLog "$Object"
+    }
 }
 
 Initialize-InstallerLog
@@ -376,11 +393,39 @@ function Write-PreflightResult {
   Set-Content -Path $PreflightOutput -Value $lines -Encoding UTF8
 }
 
+function Check-Prerequisites {
+  $status = [ordered]@{
+    python = "Missing"
+    git = "Missing"
+    node = "Missing"
+  }
+
+  # Python
+  $py = Get-PythonExecutableForVersion '3.12'
+  if (-not $py) { $py = Get-PythonExecutableForVersion '3.11' }
+  if (-not $py) { $py = Get-PythonExecutableForVersion '3.10' }
+  if (-not $py) { try { $py = (Get-Command python -ErrorAction SilentlyContinue).Source } catch {} }
+  
+  if ($py) { $status['python'] = "Found" }
+
+  # Git
+  if (Get-Command git -ErrorAction SilentlyContinue) { $status['git'] = "Found" }
+
+  # Node
+  if (Get-Command node -ErrorAction SilentlyContinue) { $status['node'] = "Found" }
+
+  return $status
+}
+
 function Invoke-Preflight {
   Write-InstallerLog 'Starting disk usage preflight check.'
   try {
     $coreBytes = Get-CorePayloadBytes -ProvidedBytes $PayloadBytes
     Write-InstallerLog ("Core payload bytes resolved to {0}" -f $coreBytes)
+    
+    $prereqs = Check-Prerequisites
+    Write-InstallerLog ("Prerequisites: Python={0}, Git={1}, Node={2}" -f $prereqs['python'], $prereqs['git'], $prereqs['node'])
+
     $footprint = Get-DependencyFootprint -GpuPref $Gpu
     if (-not $footprint) {
       Write-InstallerLog 'Unable to compute dependency footprint.'
@@ -397,6 +442,9 @@ function Invoke-Preflight {
       buffer_bytes = [int64]$footprint.BufferBytes
       total_bytes = [int64]$totalBytes
       note = $footprint.Note
+      python_status = $prereqs['python']
+      git_status = $prereqs['git']
+      node_status = $prereqs['node']
       timestamp = (Get-Date -Format 'o')
     }
 
@@ -507,6 +555,31 @@ function Test-NodeJS() {
   }
 }
 
+function Install-LauncherWrapper {
+  $wrapperSrc = Join-Path $repoRoot "installers\wrapper\AIOSLauncher.cs"
+  $manifest = Join-Path $repoRoot "installers\wrapper\app.manifest"
+  $exePath = Join-Path $repoRoot "AI-OS.exe"
+  
+  if (Test-Path $wrapperSrc) {
+    Write-Host "[i] Compiling/Installing admin wrapper..."
+    try {
+      $csc = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+      if (Test-Path $csc) {
+        & $csc /target:exe "/out:$exePath" "/win32manifest:$manifest" $wrapperSrc | Out-Null
+        if (Test-Path $exePath) {
+           Write-Host "[+] Wrapper compiled successfully." -ForegroundColor Green
+           return $exePath
+        }
+      } else {
+         Write-Host "[!] csc.exe not found at expected location." -ForegroundColor Yellow
+      }
+    } catch {
+      Write-Host "[!] Failed to compile wrapper: $_" -ForegroundColor Yellow
+    }
+  }
+  return $null
+}
+
 # Core Logic Functions
 function Install-Aios() {
   Write-Host "--- Starting AI-OS Windows Installation ---"
@@ -550,26 +623,15 @@ function Install-Aios() {
     Install-FlashAttentionWheel -pipPath $pipPath -pythonPath $pythonPath -Quiet | Out-Null
   }
 
-  $fullExtrasInstalled = $false
   Write-Host "[i] Installing AI-OS with UI/HF extras (includes tkinterweb for Help rendering)..."
   Push-Location $repoRoot
   try {
     & $pipPath install -e ".[ui,hf]"
-    $fullExtrasInstalled = $true
   } catch {
-    Write-Host "[!] install -e '.[ui,hf]' failed: $_" -ForegroundColor Yellow
-    Write-Host "[i] Falling back to staged dependency install..." -ForegroundColor Yellow
+    Write-Host "[!] install -e '.[ui,hf]' failed: $_" -ForegroundColor Red
+    throw "Failed to install AI-OS dependencies."
   } finally {
     Pop-Location
-  }
-
-  if (-not $fullExtrasInstalled) {
-    Install-UiExtras -pipPath $pipPath -Extras ".[ui]"
-    $hfMode = if ($script:PyTorchBuild -eq 'cuda') { 'gpu' } else { 'cpu' }
-    Install-HfStack -pipPath $pipPath -Mode $hfMode
-    if ($script:PyTorchBuild -eq 'cuda') {
-      Install-FlashAttentionWheel -pipPath $pipPath -pythonPath $pythonPath -Quiet | Out-Null
-    }
   }
 
   Write-Host "[i] Ensuring httpx is available (dataset panel dependency)..."
@@ -577,16 +639,6 @@ function Install-Aios() {
   
   Write-Host "[i] Ensuring Ruff linter is available for developer tooling..."
   & $pipPath install --upgrade "ruff>=0.4.0"
-
-  # Install lm-evaluation-harness separately (for model evaluation)
-  Write-Host "[i] Installing lm-evaluation-harness for model benchmarking..."
-  try {
-    & $pipPath install "lm-eval>=0.4.0"
-    Write-Host "[+] lm-evaluation-harness installed successfully" -ForegroundColor Green
-  } catch {
-    Write-Host "[!] lm-evaluation-harness installation failed (non-critical): $_" -ForegroundColor Yellow
-    Write-Host "[i] You can manually install it later with: pip install lm-eval" -ForegroundColor Yellow
-  }
 
   if ($script:PyTorchBuild -eq 'cuda') {
     Install-FlashAttentionWheel -pipPath $pipPath -pythonPath $pythonPath | Out-Null
@@ -685,9 +737,38 @@ def installed_cuda_version(name=""):
     Write-Host "[i] DeepSpeed not installed, skipping patch" -ForegroundColor Gray
   }
 
+  # Pre-create .lm_eval_cache to avoid permission issues
+  Write-Host "[i] Configuring evaluation cache..."
+  try {
+    $userCache = [Environment]::GetFolderPath('LocalApplicationData')
+    $evalCache = Join-Path $userCache "AI-OS\cache\lm_eval"
+    if (-not (Test-Path $evalCache)) {
+      New-Item -ItemType Directory -Path $evalCache -Force | Out-Null
+    }
+    Write-Host "[+] Evaluation cache directory created." -ForegroundColor Green
+  } catch {
+    Write-Host "[!] Failed to create evaluation cache (non-critical): $_" -ForegroundColor Yellow
+  }
+
+  # Verification Step
+  Write-Host "[i] Verifying installation integrity..."
+  try {
+    & $pythonPath -c "import lm_eval; import tkinterweb; print('Core dependencies verified.')"
+    if ($script:PyTorchBuild -eq 'cuda') {
+        & $pythonPath -c "import flash_attn; print('FlashAttention verified.')"
+    }
+    Write-Host "[+] All critical dependencies verified." -ForegroundColor Green
+  } catch {
+    Write-Host "[!] Verification failed: $_" -ForegroundColor Red
+    throw "Installation verification failed. Please check logs."
+  }
+
   Write-Host "[+] AI-OS installation complete!" -ForegroundColor Green
   Write-Host "To activate the environment, run: & '$venvPath\Scripts\Activate.ps1'"
   Write-Host "Then you can use the 'aios' command."
+
+  # Compile wrapper
+  $wrapperExe = Install-LauncherWrapper
 
   # Create Start Menu shortcut with icon
   try {
@@ -699,8 +780,15 @@ def installed_cuda_version(name=""):
     
     $WScriptShell = New-Object -ComObject WScript.Shell
     $shortcut = $WScriptShell.CreateShortcut($shortcutPath)
-    $shortcut.TargetPath = "$venvPath\Scripts\python.exe"
-    $shortcut.Arguments = "-m aios.cli.aios gui"
+    
+    if ($wrapperExe -and (Test-Path $wrapperExe)) {
+        $shortcut.TargetPath = $wrapperExe
+        $shortcut.Arguments = "gui"
+    } else {
+        $shortcut.TargetPath = "$venvPath\Scripts\python.exe"
+        $shortcut.Arguments = "-m aios.cli.aios gui"
+    }
+
     $shortcut.WorkingDirectory = $repoRoot
     $shortcut.Description = "AI-OS - Advanced AI Operating System"
     if (Test-Path $iconPath) {
@@ -721,8 +809,15 @@ def installed_cuda_version(name=""):
       
       $WScriptShell = New-Object -ComObject WScript.Shell
       $shortcut = $WScriptShell.CreateShortcut($desktopShortcut)
-      $shortcut.TargetPath = "$venvPath\Scripts\python.exe"
-      $shortcut.Arguments = "-m aios.cli.aios gui"
+      
+      if ($wrapperExe -and (Test-Path $wrapperExe)) {
+          $shortcut.TargetPath = $wrapperExe
+          $shortcut.Arguments = "gui"
+      } else {
+          $shortcut.TargetPath = "$venvPath\Scripts\python.exe"
+          $shortcut.Arguments = "-m aios.cli.aios gui"
+      }
+
       $shortcut.WorkingDirectory = $repoRoot
       $shortcut.Description = "AI-OS - Advanced AI Operating System"
       if (Test-Path $iconPath) {
@@ -785,6 +880,28 @@ function aios {
       Write-Host "[i] Installed shim: $shim" -ForegroundColor Green
     }
   } catch {}
+
+  # Optional Brain Download
+  $doBrain = $false
+  if ($DownloadBrain) { $doBrain = $true }
+  elseif ($SkipBrain) { $doBrain = $false }
+  else { $doBrain = Confirm-Choice "Download pretrained brain (English-v1)?" -DefaultYes:$true }
+
+  if ($doBrain) {
+    Write-Host "[i] Downloading pretrained brain..."
+    try {
+      & $pythonPath -m aios.cli.aios brains fetch --preset English-v1
+      if ($LASTEXITCODE -eq 0) {
+        Write-Host "[+] Brain downloaded successfully." -ForegroundColor Green
+      } else {
+        Write-Host "[!] Brain download failed (exit code $LASTEXITCODE)." -ForegroundColor Yellow
+        Write-Host "[i] You can try again later with: aios brains fetch" -ForegroundColor Yellow
+      }
+    } catch {
+      Write-Host "[!] Brain download failed: $_" -ForegroundColor Yellow
+      Write-Host "[i] You can try again later with: aios brains fetch" -ForegroundColor Yellow
+    }
+  }
 }
 
 function Uninstall-Aios() {

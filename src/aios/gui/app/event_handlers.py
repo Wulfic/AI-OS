@@ -32,7 +32,7 @@ def setup_event_handlers(app: Any) -> None:
         logger.info("User action: Closing application window")
         try:
             # Save state before closing
-            app._save_state()
+            app._save_state(sync=True)
             logger.debug("State saved before window close")
             
             # Clean up resources

@@ -61,6 +61,15 @@ sudo ./installers/scripts/install_aios_on_ubuntu.sh install --yes
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ./installers/scripts/install_aios_on_windows.ps1 -Action install -Yes
 ```
+
+## Administrator Privileges
+AI-OS requires Administrator privileges on Windows to function correctly. This is necessary for:
+- Write access to `%ProgramData%` for shared artifacts and models.
+- GPU scheduling and performance tuning.
+- System-level integration features.
+
+The installer creates shortcuts that automatically request elevation. If you launch AI-OS manually, please ensure you run it as Administrator.
+
 ## Usage
 Use the shortcut to start the program or via terminal.
 

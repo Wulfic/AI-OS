@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from ..hrm_training_panel.path_defaults import get_default_bundle_dir
+from aios.gui.components.hrm_training_panel.path_defaults import get_default_bundle_dir
 
 logger = logging.getLogger(__name__)
 

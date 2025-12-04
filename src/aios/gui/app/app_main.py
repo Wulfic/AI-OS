@@ -176,7 +176,7 @@ def run_app(app_instance: Any) -> None:
         
         # 5b. Attach cleanup and save functions to app (BEFORE panels - they need these)
         app._cleanup = lambda: cleanup(app)
-        app._save_state = lambda: save_state(app)
+        app._save_state = lambda sync=False: save_state(app, sync=sync)
         
         # Add a scheduled state save mechanism to batch saves
         app._state_save_timer = None

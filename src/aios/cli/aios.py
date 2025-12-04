@@ -303,5 +303,96 @@ app.add_typer(hrm_hf_app, name="hrm-hf")
 app.add_typer(cache_cli.app, name="cache")
 app.add_typer(eval_cli.app, name="eval")
 
+
+@app.command()
+def doctor(
+    permissions: bool = typer.Option(False, "--permissions", help="Check file permissions only"),
+):
+    """Diagnose installation and runtime issues."""
+    import ctypes
+    
+    typer.echo("AI-OS Doctor - Diagnostic Tool")
+    typer.echo("==============================")
+    
+    # 1. Check Elevation
+    try:
+        is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except Exception:
+        is_admin = False
+        
+    if is_admin:
+        typer.echo("[+] Running as Administrator")
+    else:
+        typer.echo("[!] Running as Standard User")
+        typer.echo("    Note: Admin rights are required for full functionality (ProgramData access, GPU scheduling).")
+        
+    # 2. Check Paths
+    if system_paths:
+        paths_to_check = {
+            "Logs": system_paths.get_logs_dir(),
+            "Config": system_paths.get_user_config_dir(),
+            "State": system_paths.get_state_file_path().parent,
+            "Artifacts": system_paths.get_artifacts_root(),
+            "Cache": system_paths.get_user_cache_root(),
+        }
+        
+        typer.echo("\nChecking Directory Permissions:")
+        for name, path in paths_to_check.items():
+            p = Path(path)
+            status = "OK"
+            try:
+                if not p.exists():
+                    p.mkdir(parents=True, exist_ok=True)
+                    status = "Created"
+                
+                # Test write
+                test_file = p / ".write_test"
+                test_file.write_text("test")
+                test_file.unlink()
+                typer.echo(f"[+] {name}: {p} ({status}) - Writable")
+            except Exception as e:
+                typer.echo(f"[!] {name}: {p} - NOT WRITABLE ({e})")
+                if "Artifacts" in name and not is_admin:
+                    typer.echo("    -> Try running as Administrator")
+
+    if permissions:
+        return
+
+    # 3. Check Dependencies
+    typer.echo("\nChecking Dependencies:")
+    
+    # lm_eval
+    try:
+        import lm_eval
+        typer.echo(f"[+] lm_eval: Installed ({lm_eval.__version__})")
+    except ImportError:
+        typer.echo("[!] lm_eval: MISSING")
+        typer.echo("    -> Run: pip install lm-eval[api]")
+
+    # tkinterweb
+    try:
+        import tkinterweb
+        typer.echo("[+] tkinterweb: Installed")
+    except ImportError:
+        typer.echo("[!] tkinterweb: MISSING")
+        typer.echo("    -> Run: pip install tkinterweb>=3.23.8")
+        
+    # Flash Attention (if CUDA)
+    try:
+        import torch
+        if torch.cuda.is_available():
+            try:
+                import flash_attn
+                typer.echo(f"[+] flash_attn: Installed ({flash_attn.__version__})")
+            except ImportError:
+                typer.echo("[!] flash_attn: MISSING (Recommended for CUDA)")
+        else:
+            typer.echo("[i] flash_attn: Skipped (No CUDA)")
+    except ImportError:
+        typer.echo("[!] torch: MISSING")
+
+    typer.echo("\nDiagnostics complete.")
+
+
 if __name__ == "__main__":
     app()

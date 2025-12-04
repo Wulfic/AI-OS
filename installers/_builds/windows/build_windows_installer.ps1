@@ -256,13 +256,6 @@ Source: "{#SourceRoot}\installers\scripts\install_aios_on_windows.ps1"; DestDir:
 Source: "{#SourceRoot}\LICENSE"; DestDir: "{tmp}"; Flags: dontcopy
 Source: "{#SourceRoot}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
-[Run]
-Filename: "powershell.exe"; \
-  Parameters: "-ExecutionPolicy Bypass -NoLogo -NonInteractive -File ""{app}\installers\scripts\install_aios_on_windows.ps1"" -Action install -Yes"; \
-  Description: "Configure AI-OS runtime (requires internet access)"; \
-  StatusMsg: "Configuring AI-OS runtime environment..."; \
-  Flags: waituntilterminated
-
 [UninstallRun]
 Filename: "powershell.exe"; \
   Parameters: "-ExecutionPolicy Bypass -NoLogo -NonInteractive -File ""{app}\installers\scripts\install_aios_on_windows.ps1"" -Action uninstall -Yes"; \
@@ -278,6 +271,7 @@ const
 	PreflightScriptName = 'install_aios_on_windows.ps1';
 	PreflightOutputName = 'aios_preflight.txt';
 	PreflightLogName = 'aios_preflight.log';
+	InstallLogName = 'aios_install.log';
 	LicenseFileName = 'LICENSE';
 	ProcessPollIntervalMs = 150;
 	WAIT_OBJECT_0 = $00000000;
@@ -321,6 +315,7 @@ var
 	LicensePage: TWizardPage;
 	LicenseViewer: TRichEditViewer;
 	LicenseAcceptCheck: TNewCheckBox;
+	BrainDownloadCheck: TNewCheckBox;
 	DiskSummaryLabel: TNewStaticText;
 	DiskDetailLabel: TNewStaticText;
 	DiskRetryButton: TNewButton;
@@ -334,6 +329,9 @@ var
 	PreflightTotalBytes: Int64;
 	PreflightMode: string;
 	PreflightNote: string;
+	PreflightPythonStatus: string;
+	PreflightGitStatus: string;
+	PreflightNodeStatus: string;
 
 function ShellExecuteEx(var lpExecInfo: TShellExecuteInfo): BOOL;
 	external 'ShellExecuteExW@shell32.dll stdcall';
@@ -351,8 +349,6 @@ function TranslateMessage(const lpMsg: TMsg): BOOL;
 	external 'TranslateMessage@user32.dll stdcall';
 function DispatchMessage(const lpMsg: TMsg): Longint;
 	external 'DispatchMessageW@user32.dll stdcall';
-
-procedure StartPreflight(const ShowErrors: Boolean); forward;
 
 function FormatBytes(Value: Int64): string;
 begin
@@ -405,6 +401,9 @@ begin
 	PreflightTotalBytes := 0;
 	PreflightMode := '';
 	PreflightNote := '';
+	PreflightPythonStatus := '';
+	PreflightGitStatus := '';
+	PreflightNodeStatus := '';
 end;
 
 function LoadPreflightOutput(const FileName: string): Boolean;
@@ -438,7 +437,13 @@ begin
 			else if Key = 'mode' then
 				PreflightMode := Value
 			else if Key = 'note' then
-				PreflightNote := Value;
+				PreflightNote := Value
+			else if Key = 'python_status' then
+				PreflightPythonStatus := Value
+			else if Key = 'git_status' then
+				PreflightGitStatus := Value
+			else if Key = 'node_status' then
+				PreflightNodeStatus := Value;
 		end;
 		if PreflightTotalBytes = 0 then
 			PreflightTotalBytes := PreflightCoreBytes + PreflightDepBytes + PreflightBufferBytes;
@@ -470,14 +475,17 @@ var
 	Detail: string;
 begin
 	Detail :=
-		Format('Core files: %s  |  Dependencies: %s  |  Buffer: %s%sMode: %s%s%s', [
+		Format('Core files: %s  |  Dependencies: %s  |  Buffer: %s%sMode: %s%s%sPrerequisites: Python [%s], Git [%s], Node [%s]', [
 			FormatBytes(PreflightCoreBytes),
 			FormatBytes(PreflightDepBytes),
 			FormatBytes(PreflightBufferBytes),
 			(#13#10),
 			PreflightMode,
 			(#13#10),
-			PreflightNote]);
+			PreflightNote,
+			PreflightPythonStatus,
+			PreflightGitStatus,
+			PreflightNodeStatus]);
 	SetDiskStatus(
 		Format('Estimated total required: %s', [FormatBytes(PreflightTotalBytes)]),
 		Detail,
@@ -663,6 +671,86 @@ begin
 	end;
 end;
 
+procedure StartInstall;
+var
+	PSExe, ScriptPath, LogPath, Params: string;
+	ProcessHandle: THandle;
+	WaitResult: DWORD;
+	ExitCode: DWORD;
+	Lines: TStringList;
+	LastLine: string;
+begin
+	WizardForm.StatusLabel.Caption := 'Configuring AI-OS runtime environment...';
+	WizardForm.ProgressGauge.Style := npbstMarquee;
+	
+	ScriptPath := ExpandConstant('{app}\installers\scripts\install_aios_on_windows.ps1');
+	LogPath := ExpandConstant('{tmp}\') + InstallLogName;
+	DeleteFile(LogPath);
+	
+	PSExe := GetPowerShellPath;
+	Params := Format('-ExecutionPolicy Bypass -NoLogo -NonInteractive -WindowStyle Hidden -File "%s" -Action install -Yes -InstallerLog "%s"', [
+		ScriptPath,
+		LogPath]);
+
+	if BrainDownloadCheck.Checked then
+		Params := Params + ' -DownloadBrain'
+	else
+		Params := Params + ' -SkipBrain';
+		
+	ProcessHandle := 0;
+	if not LaunchHiddenProcess(PSExe, Params, ProcessHandle) then
+	begin
+		MsgBox('Failed to launch configuration script.', mbError, MB_OK);
+		Exit;
+	end;
+	
+	Lines := TStringList.Create;
+	try
+		repeat
+			if FileExists(LogPath) then
+			begin
+				try
+					Lines.LoadFromFile(LogPath);
+					if Lines.Count > 0 then
+					begin
+						LastLine := Lines[Lines.Count - 1];
+						if Length(LastLine) > 80 then
+							LastLine := Copy(LastLine, 1, 77) + '...';
+						WizardForm.StatusLabel.Caption := LastLine;
+					end;
+				except
+					{ Ignore read errors }
+				end;
+			end;
+			
+			ProcessMessages;
+			WaitResult := WaitForSingleObject(ProcessHandle, ProcessPollIntervalMs);
+		until WaitResult <> WAIT_TIMEOUT;
+	finally
+		Lines.Free;
+	end;
+	
+	if not GetExitCodeProcess(ProcessHandle, ExitCode) then
+		ExitCode := 1;
+		
+	CloseProcessHandle(ProcessHandle);
+	
+	if ExitCode <> 0 then
+	begin
+		MsgBox(Format('Configuration script failed with exit code %d. Check %s for details.', [ExitCode, LogPath]), mbError, MB_OK);
+	end;
+	
+	WizardForm.ProgressGauge.Style := npbstNormal;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+	if CurStep = ssPostInstall then
+	begin
+		StartInstall;
+	end;
+end;
+
 procedure InitializeWizard;
 var
 	LicensePath: string;
@@ -696,10 +784,18 @@ begin
 	LicenseAcceptCheck.Width := LicensePage.SurfaceWidth;
 	LicenseAcceptCheck.OnClick := @LicenseAcceptChanged;
 
+	BrainDownloadCheck := TNewCheckBox.Create(LicensePage.Surface);
+	BrainDownloadCheck.Parent := LicensePage.Surface;
+	BrainDownloadCheck.Caption := 'Download pretrained brain (English-v1) [~2GB]';
+	BrainDownloadCheck.Left := 0;
+	BrainDownloadCheck.Top := LicenseAcceptCheck.Top + LicenseAcceptCheck.Height + ScaleY(8);
+	BrainDownloadCheck.Width := LicensePage.SurfaceWidth;
+	BrainDownloadCheck.Checked := True;
+
 	DiskSummaryLabel := TNewStaticText.Create(LicensePage.Surface);
 	DiskSummaryLabel.Parent := LicensePage.Surface;
 	DiskSummaryLabel.Left := 0;
-	DiskSummaryLabel.Top := LicenseAcceptCheck.Top + LicenseAcceptCheck.Height + ScaleY(12);
+	DiskSummaryLabel.Top := BrainDownloadCheck.Top + BrainDownloadCheck.Height + ScaleY(12);
 	DiskSummaryLabel.Width := LicensePage.SurfaceWidth;
 	DiskSummaryLabel.AutoSize := False;
 	DiskSummaryLabel.Height := ScaleY(36);

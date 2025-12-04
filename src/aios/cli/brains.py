@@ -476,5 +476,77 @@ def config_set(
         yaml.safe_dump(cfg, f, sort_keys=False)
     typer.echo(json.dumps({"ok": True, "brains": brains, "path": str(path)}))
 
+
+@app.command("fetch")
+def fetch_brain(
+    preset: str = typer.Option("English-v1", help="Name of the brain preset to download"),
+    force: bool = typer.Option(False, help="Force download even if exists"),
+    store_dir: Optional[str] = typer.Option(None, help="Override storage directory"),
+):
+    """Download and install a pretrained brain from GitHub releases."""
+    import httpx
+    import zipfile
+    import io
+    import shutil
+    from aios.core.brains import registry_management
+
+    # Resolve storage directory
+    reg = BrainRegistry()
+    resolved_store = _resolve_store_dir(store_dir)
+    if resolved_store:
+        reg.store_dir = resolved_store
+    
+    brains_root = Path(reg.store_dir)
+    
+    # Define presets
+    presets = {
+        "English-v1": {
+            "url": "https://github.com/Wulfic/AI-OS/releases/download/Brain%2FModel/English-v1.zip",
+            "target_subpath": "actv1/English-v1",
+            "brain_name": "English-v1"
+        }
+    }
+    
+    if preset not in presets:
+        typer.echo(f"Error: Unknown preset '{preset}'. Available: {list(presets.keys())}")
+        raise typer.Exit(code=1)
+        
+    info = presets[preset]
+    target_path = brains_root / info["target_subpath"]
+    
+    if target_path.exists() and not force:
+        typer.echo(f"Brain '{preset}' already exists at {target_path}. Use --force to overwrite.")
+        return
+
+    typer.echo(f"Downloading {preset} from {info['url']}...")
+    
+    try:
+        with httpx.Client(follow_redirects=True) as client:
+            resp = client.get(info["url"])
+            resp.raise_for_status()
+            
+            typer.echo("Extracting...")
+            with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
+                # Extract to parent of target_path (e.g. brains/actv1)
+                # assuming zip contains English-v1 folder
+                extract_root = target_path.parent
+                extract_root.mkdir(parents=True, exist_ok=True)
+                
+                z.extractall(extract_root)
+                
+        typer.echo(f"Installed to {target_path}")
+        
+        # Register as master
+        registry_management.load_master_brains(reg)
+        reg.masters.add(info["brain_name"])
+        registry_management.save_master_brains(reg)
+        
+        typer.echo(f"Marked '{info['brain_name']}' as master brain.")
+        
+    except Exception as e:
+        typer.echo(f"Error fetching brain: {e}")
+        raise typer.Exit(code=1)
+
+
 if __name__ == "__main__":
     app()

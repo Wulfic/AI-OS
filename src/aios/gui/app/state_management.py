@@ -196,7 +196,7 @@ def load_state(app: Any) -> dict:
         return {}
 
 
-def save_state(app: Any) -> None:
+def save_state(app: Any, sync: bool = False) -> None:
     """
     Save application state to JSON file.
     
@@ -206,6 +206,10 @@ def save_state(app: Any) -> None:
     - Settings panel (theme, model settings)
     - MCP panel (server configurations)
     - HRM Training panel (training parameters)
+    
+    Args:
+        app: AiosTkApp instance
+        sync: If True, write state synchronously (blocking)
     """
     # Don't save state until after initial restoration
     if not getattr(app, '_state_restored', False):
@@ -347,7 +351,7 @@ def save_state(app: Any) -> None:
             _perform_write()
 
     worker_pool = getattr(app, "_worker_pool", None)
-    if worker_pool is not None:
+    if worker_pool is not None and not sync:
         try:
             worker_pool.submit(_write_state_snapshot, state, save_seq, section_count)
             return

@@ -16,9 +16,10 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 try:  # pragma: no cover - GUI environment dependent
-    from tkinter import filedialog
+    from tkinter import filedialog, messagebox
 except Exception:  # pragma: no cover - GUI fallback
     filedialog = None
+    messagebox = None
 
 try:  # pragma: no cover - bootstrap guard
     from aios.system import paths as system_paths
@@ -506,6 +507,12 @@ class ResourcesPanel(ttk.LabelFrame):  # type: ignore[misc]
                 if error is not None:
                     logger.error("Error saving resource settings: %s", error, exc_info=True)
                     self._set_status("Failed to save settings")
+                    
+                    # Show dialog if permission error
+                    if messagebox and (isinstance(error, PermissionError) or "permission" in str(error).lower()):
+                         messagebox.showerror("Permission Denied", 
+                             f"Failed to save settings: {error}\n\n"
+                             "Please run AI-OS as Administrator or check file permissions.")
                     return
 
                 if success:
