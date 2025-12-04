@@ -88,7 +88,11 @@ function Write-InstallerLog {
 
 # Capture original Write-Host for internal use
 if (-not (Test-Path function:\Write-Host-Original)) {
-    Copy-Item function:\Write-Host function:\Write-Host-Original
+    if (Test-Path function:\Write-Host) {
+        Copy-Item function:\Write-Host function:\Write-Host-Original
+    } else {
+        function Write-Host-Original { Microsoft.PowerShell.Utility\Write-Host @args }
+    }
 }
 
 function Write-Host {
