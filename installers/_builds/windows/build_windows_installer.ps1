@@ -27,11 +27,25 @@ function Remove-PathRobust {
 	param([string]$Path)
 	if (-not $Path) { return }
 	if (-not (Test-Path -LiteralPath $Path)) { return }
+
+	# For directories, prefer cmd.exe /c rd /s /q as it is faster and handles deep paths/locks better
+	if (Test-Path -LiteralPath $Path -PathType Container) {
+		$extended = if ($Path.StartsWith('\\?\')) { $Path } else { "\\\\?\$Path" }
+		$escaped = $extended.Replace('"', '""')
+		$command = "rd /s /q `"$escaped`""
+		
+		$proc = Start-Process -FilePath cmd.exe -ArgumentList @('/c', $command) -NoNewWindow -Wait -PassThru
+		if ($proc.ExitCode -eq 0 -and -not (Test-Path -LiteralPath $Path)) {
+			return
+		}
+		# If cmd failed, fall through to Remove-Item as backup
+	}
+
 	try {
 		Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
 		return
 	} catch {
-		# Fallback to extended path removal via cmd.exe
+		# Fallback to extended path removal via cmd.exe (for files or if first attempt failed)
 	}
 
 	$extended = if ($Path.StartsWith('\\?\')) { $Path } else { "\\\\?\$Path" }
@@ -527,6 +541,16 @@ begin
 		ProcessHandle := 0;
 end;
 
+procedure ProcessMessages;
+var
+	Msg: TMsg;
+begin
+	while PeekMessage(Msg, 0, 0, 0, PM_REMOVE) do begin
+		TranslateMessage(Msg);
+		DispatchMessage(Msg);
+	end;
+end;
+
 function WaitForProcessWithLog(ProcessHandle: THandle; const LogPath: string): DWORD;
 var
 	WaitResult: DWORD;
@@ -536,7 +560,10 @@ begin
 		Exit;
 	repeat
 		LoadPreflightLog(LogPath);
-		ProcessMessages;
+		try
+			ProcessMessages;
+		except
+		end;
 		WaitResult := WaitForSingleObject(ProcessHandle, ProcessPollIntervalMs);
 	until WaitResult <> WAIT_TIMEOUT;
 	LoadPreflightLog(LogPath);
@@ -723,7 +750,10 @@ begin
 				end;
 			end;
 			
-			ProcessMessages;
+			try
+				ProcessMessages;
+			except
+			end;
 			WaitResult := WaitForSingleObject(ProcessHandle, ProcessPollIntervalMs);
 		until WaitResult <> WAIT_TIMEOUT;
 	finally
@@ -863,8 +893,9 @@ if (-not (Test-Path $outputInstaller)) {
 Write-Info "Created installer $outputInstaller"
 
 if (-not $KeepBuild) {
-	Write-Info "Cleaning build workspace"
-	Remove-Item -Path $buildRoot -Recurse -Force
+	Write-Info "Cleaning build workspace (waiting for handles to release...)"
+	Start-Sleep -Seconds 2
+	Remove-PathRobust -Path $buildRoot
 }
 
 Write-Info "Done"
