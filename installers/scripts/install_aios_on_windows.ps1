@@ -5,6 +5,8 @@ param(
   # GPU preference: auto (detect), cuda, dml, cpu
   [ValidateSet('auto','cuda','dml','cpu')]
   [string]$Gpu = 'auto',
+  # Force installation of CUDA tools even if no NVIDIA GPU is detected
+  [switch]$InstallCudaTools,
   # Internal: elevated sub-process to perform admin-only steps
   [switch]$ElevatedSubprocess,
   # Suppress Write-Host output for quiet automation flows
@@ -22,6 +24,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($InstallCudaTools) {
+    Write-Host "[i] Forcing CUDA installation as requested." -ForegroundColor Cyan
+    $Gpu = 'cuda'
+}
 
 function Resolve-RepoRoot {
   param([string]$StartDirectory)
@@ -497,7 +504,7 @@ function Test-Python() {
 
   if (Confirm-Choice "Install Python 3.11 via winget now?" -DefaultYes:$true) {
     try {
-      winget install -e --id Python.Python.3.11 -h
+      winget install -e --id Python.Python.3.11 -h --accept-source-agreements --accept-package-agreements
       Write-Host "[+] Python installed." -ForegroundColor Green
       # After install, try to resolve via 'py' without requiring a new terminal session
       $p = Get-PythonExecutableForVersion '3.11'
@@ -525,7 +532,7 @@ function Test-Git() {
   Write-Host "[!] Git not found." -ForegroundColor Yellow
   if (Confirm-Choice "Install Git via winget now?" -DefaultYes:$true) {
     try {
-      winget install -e --id Git.Git -h
+      winget install -e --id Git.Git -h --accept-source-agreements --accept-package-agreements
       Write-Host "[+] Git installed." -ForegroundColor Green
       return
     } catch {
@@ -549,7 +556,7 @@ function Test-NodeJS() {
   
   Write-Host "[!] Node.js not found. Installing Node.js LTS via winget..." -ForegroundColor Yellow
   try {
-    winget install -e --id OpenJS.NodeJS.LTS -h
+    winget install -e --id OpenJS.NodeJS.LTS -h --accept-source-agreements --accept-package-agreements
     Write-Host "[+] Node.js installed." -ForegroundColor Green
     Write-Host "    Note: You may need to restart your terminal for 'node' to be available in PATH." -ForegroundColor Yellow
   } catch {
@@ -600,7 +607,7 @@ function Install-Aios() {
     if (-not $pyExec) {
       Write-Host "[!] Python 3.12 not found but recommended for CUDA wheels. Attempt installation via winget…" -ForegroundColor Yellow
       if (Confirm-Choice "Install Python 3.12 via winget now?" -DefaultYes:$true) {
-        winget install -e --id Python.Python.3.12 -h
+        winget install -e --id Python.Python.3.12 -h --accept-source-agreements --accept-package-agreements
         $pyExec = Get-PythonExecutableForVersion '3.12'
       }
     }

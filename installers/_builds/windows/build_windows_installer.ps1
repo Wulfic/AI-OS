@@ -330,6 +330,7 @@ var
 	LicenseViewer: TRichEditViewer;
 	LicenseAcceptCheck: TNewCheckBox;
 	BrainDownloadCheck: TNewCheckBox;
+	InstallCudaCheck: TNewCheckBox;
 	DiskSummaryLabel: TNewStaticText;
 	DiskDetailLabel: TNewStaticText;
 	DiskRetryButton: TNewButton;
@@ -582,6 +583,7 @@ begin
 	PreflightRunning := True;
 	PreflightOk := False;
 	DiskRetryButton.Enabled := False;
+	InstallCudaCheck.Enabled := False;
 	SetDiskStatus('Measuring disk usage...',
 		'Gathering GPU + dependency footprint. This may take up to a minute.',
 		False);
@@ -600,6 +602,9 @@ begin
 		PreflightPayloadBytes,
 		OutputPath,
 		LogPath]);
+
+	if InstallCudaCheck.Checked then
+		Params := Params + ' -InstallCudaTools';
 	ProcessHandle := 0;
 	if not LaunchHiddenProcess(PSExe, Params, ProcessHandle) then
 	begin
@@ -662,6 +667,7 @@ begin
 	CloseProcessHandle(ProcessHandle);
 	PreflightRunning := False;
 	DiskRetryButton.Enabled := True;
+	InstallCudaCheck.Enabled := True;
 	UpdateNextButtonState;
 end;
 
@@ -723,6 +729,9 @@ begin
 		Params := Params + ' -DownloadBrain'
 	else
 		Params := Params + ' -SkipBrain';
+
+	if InstallCudaCheck.Checked then
+		Params := Params + ' -InstallCudaTools';
 		
 	ProcessHandle := 0;
 	if not LaunchHiddenProcess(PSExe, Params, ProcessHandle) then
@@ -822,10 +831,19 @@ begin
 	BrainDownloadCheck.Width := LicensePage.SurfaceWidth;
 	BrainDownloadCheck.Checked := True;
 
+	InstallCudaCheck := TNewCheckBox.Create(LicensePage.Surface);
+	InstallCudaCheck.Parent := LicensePage.Surface;
+	InstallCudaCheck.Caption := 'Advanced: Install NVIDIA CUDA components (even if no GPU detected)';
+	InstallCudaCheck.Left := 0;
+	InstallCudaCheck.Top := BrainDownloadCheck.Top + BrainDownloadCheck.Height + ScaleY(8);
+	InstallCudaCheck.Width := LicensePage.SurfaceWidth;
+	InstallCudaCheck.Checked := False;
+	InstallCudaCheck.OnClick := @DiskRetryButtonClick;
+
 	DiskSummaryLabel := TNewStaticText.Create(LicensePage.Surface);
 	DiskSummaryLabel.Parent := LicensePage.Surface;
 	DiskSummaryLabel.Left := 0;
-	DiskSummaryLabel.Top := BrainDownloadCheck.Top + BrainDownloadCheck.Height + ScaleY(12);
+	DiskSummaryLabel.Top := InstallCudaCheck.Top + InstallCudaCheck.Height + ScaleY(12);
 	DiskSummaryLabel.Width := LicensePage.SurfaceWidth;
 	DiskSummaryLabel.AutoSize := False;
 	DiskSummaryLabel.Height := ScaleY(36);
