@@ -1543,13 +1543,23 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
         app: AiosTkApp instance with panels already created
         update_status_fn: Function to call to update loading status message
     """
+    # Import crash logging for early diagnostics
+    try:
+        from .app_main import _write_crash_log
+    except ImportError:
+        def _write_crash_log(msg, exc=None):
+            pass
+    
+    _write_crash_log("load_all_panel_data: Starting parallel data load")
     logger.info("Loading all panel data with threading...")
 
     pool = getattr(app, "_worker_pool", None)
     if pool is None:
+        _write_crash_log("load_all_panel_data: Worker pool unavailable!")
         raise RuntimeError("Worker pool unavailable during panel data loading")
 
     pool_workers = getattr(pool, "max_workers", "unknown")
+    _write_crash_log(f"load_all_panel_data: Worker pool has {pool_workers} workers")
     logger.info("Submitting panel data loads to shared worker pool (%s workers)", pool_workers)
     
     # Track completion status
@@ -1564,112 +1574,137 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
         'hrm_training': {'done': False, 'error': None},
     }
     
-    # Thread functions that update results
+    # Thread functions that update results - each has crash logging for diagnostics
     def load_chat():
         try:
+            _write_crash_log("load_chat: Starting")
             import time
             start = time.time()
             _load_chat_brains_sync(app)
             duration = time.time() - start
             logger.info(f"[DATA LOAD] Chat brains: {duration:.3f}s")
             results['chat']['done'] = True
+            _write_crash_log(f"load_chat: Completed in {duration:.3f}s")
         except Exception as e:
             results['chat']['error'] = str(e)
             logger.error(f"Error loading chat data: {e}")
+            _write_crash_log(f"load_chat: FAILED", e)
         return 'chat'
     
     def load_brains():
         try:
+            _write_crash_log("load_brains: Starting")
             import time
             start = time.time()
             _load_brains_panel_sync(app)
             duration = time.time() - start
             logger.info(f"[DATA LOAD] Brains panel: {duration:.3f}s")
             results['brains']['done'] = True
+            _write_crash_log(f"load_brains: Completed in {duration:.3f}s")
         except Exception as e:
             results['brains']['error'] = str(e)
             logger.error(f"Error loading brains data: {e}")
+            _write_crash_log(f"load_brains: FAILED", e)
         return 'brains'
     
     def load_mcp():
         try:
+            _write_crash_log("load_mcp: Starting")
             import time
             start = time.time()
             _load_mcp_panel_sync(app)
             duration = time.time() - start
             logger.info(f"[DATA LOAD] MCP panel: {duration:.3f}s")
             results['mcp']['done'] = True
+            _write_crash_log(f"load_mcp: Completed in {duration:.3f}s")
         except Exception as e:
             results['mcp']['error'] = str(e)
             logger.error(f"Error loading MCP data: {e}")
+            _write_crash_log(f"load_mcp: FAILED", e)
         return 'mcp'
     
     def load_resources():
         try:
+            _write_crash_log("load_resources: Starting")
             import time
             start = time.time()
             _load_resources_panel_sync(app)
             duration = time.time() - start
             logger.info(f"[DATA LOAD] Resources panel: {duration:.3f}s")
             results['resources']['done'] = True
+            _write_crash_log(f"load_resources: Completed in {duration:.3f}s")
         except Exception as e:
             results['resources']['error'] = str(e)
             logger.error(f"Error loading resources data: {e}")
+            _write_crash_log(f"load_resources: FAILED", e)
         return 'resources'
     
     def load_settings():
         try:
+            _write_crash_log("load_settings: Starting")
             import time
             start = time.time()
             _load_settings_panel_sync(app)
             duration = time.time() - start
             logger.info(f"[DATA LOAD] Settings panel: {duration:.3f}s")
             results['settings']['done'] = True
+            _write_crash_log(f"load_settings: Completed in {duration:.3f}s")
         except Exception as e:
             results['settings']['error'] = str(e)
             logger.error(f"Error loading settings data: {e}")
+            _write_crash_log(f"load_settings: FAILED", e)
         return 'settings'
     
     def load_evaluation():
         try:
+            _write_crash_log("load_evaluation: Starting")
             import time
             start = time.time()
             _load_evaluation_panel_sync(app)
             duration = time.time() - start
             logger.info(f"[DATA LOAD] Evaluation panel: {duration:.3f}s")
             results['evaluation']['done'] = True
+            _write_crash_log(f"load_evaluation: Completed in {duration:.3f}s")
         except Exception as e:
             results['evaluation']['error'] = str(e)
             logger.error(f"Error loading evaluation data: {e}")
+            _write_crash_log(f"load_evaluation: FAILED", e)
         return 'evaluation'
     
     def load_help():
         try:
+            _write_crash_log("load_help: Starting")
             import time
             start = time.time()
             _load_help_panel_sync(app)
             duration = time.time() - start
             logger.info(f"[DATA LOAD] Help panel: {duration:.3f}s")
             results['help']['done'] = True
+            _write_crash_log(f"load_help: Completed in {duration:.3f}s")
         except Exception as e:
             results['help']['error'] = str(e)
             logger.error(f"Error loading help data: {e}")
+            _write_crash_log(f"load_help: FAILED", e)
         return 'help'
     
     def load_hrm_training():
         try:
+            _write_crash_log("load_hrm_training: Starting")
             import time
             start = time.time()
             _load_hrm_training_panel_sync(app)
             duration = time.time() - start
             logger.info(f"[DATA LOAD] HRM training panel: {duration:.3f}s")
             results['hrm_training']['done'] = True
+            _write_crash_log(f"load_hrm_training: Completed in {duration:.3f}s")
         except Exception as e:
             results['hrm_training']['error'] = str(e)
             logger.error(f"Error loading HRM training data: {e}")
+            _write_crash_log(f"load_hrm_training: FAILED", e)
         return 'hrm_training'
     
     # Start loading with available executor
+    _write_crash_log("load_all_panel_data: Submitting tasks to worker pool")
     update_status_fn("Loading data in parallel...")
     app.root.update_idletasks()
     futures = {
@@ -1742,6 +1777,7 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
                         except Exception:
                             pass
                     logger.info("All panel data loaded successfully")
+                    _write_crash_log("load_all_panel_data: All tasks completed successfully")
                 elif not all_done:
                     message = _compose_status_message()
                     if message:
@@ -1754,6 +1790,7 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
     for future, task_name in futures.items():
         future.add_done_callback(_handle_completion(task_name))
 
+    _write_crash_log("load_all_panel_data: All tasks submitted, waiting for completion callbacks")
     message = _compose_status_message()
     if message:
         update_status_fn(message)

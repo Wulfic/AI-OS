@@ -42,6 +42,7 @@ function Remove-PathRobust {
 	}
 
 	try {
+		$ProgressPreference = 'SilentlyContinue'
 		Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
 		return
 	} catch {
@@ -90,6 +91,18 @@ if (-not $Version) {
 
 Write-Info "Preparing AI-OS Windows installer build (version $Version)"
 
+# Detect host Python version to embed in installer
+$hostPythonVersion = "3.10.11"  # Default fallback
+try {
+	$pyVersionOutput = python --version 2>&1
+	if ($LASTEXITCODE -eq 0 -and $pyVersionOutput -match 'Python\s+(\d+\.\d+\.\d+)') {
+		$hostPythonVersion = $Matches[1]
+		Write-Info "Detected host Python version: $hostPythonVersion"
+	}
+} catch {
+	Write-Warn "Could not detect host Python version, using default: $hostPythonVersion"
+}
+
 if (Test-Path $buildRoot) {
 	Remove-Item -Path $buildRoot -Recurse -Force
 }
@@ -129,7 +142,7 @@ foreach ($item in $projectItems) {
 		New-Item -ItemType Directory -Path $destinationPath -Force | Out-Null
 		$excludeNames = @()
 		if ($item -eq 'installers') {
-			$excludeNames = @('_builds', 'releases')
+			$excludeNames = @('_builds', 'releases', 'dependencies')
 		}
 
 		Get-ChildItem -Path $sourcePath -Force | ForEach-Object {
@@ -242,6 +255,7 @@ $issContent = @"
 #define OutputRoot "$releaseDir"
 #define RepoRoot "$repoRoot"
 #define CorePayloadBytes $payloadBytes
+#define HostPythonVersion "$hostPythonVersion"
 
 [Setup]
 AppId=$appId
@@ -287,13 +301,16 @@ const
 	PreflightLogName = 'aios_preflight.log';
 	InstallLogName = 'aios_install.log';
 	LicenseFileName = 'LICENSE';
-	ProcessPollIntervalMs = 150;
+	HostPythonVersion = '{#HostPythonVersion}';
+	ProcessPollIntervalMs = 300;
 	WAIT_OBJECT_0 = $00000000;
 	WAIT_TIMEOUT = $00000102;
 	WAIT_FAILED = $FFFFFFFF;
 	SEE_MASK_NOCLOSEPROCESS = $00000040;
 	PM_REMOVE = $0001;
 	EM_SCROLLCARET = $00B7;
+	WM_VSCROLL = $0115;
+	SB_BOTTOM = 7;
 
 type
 	TShellExecuteInfo = record
@@ -349,6 +366,7 @@ var
 	InstallLogViewer: TRichEditViewer;
 	InstallDetailsButton: TNewButton;
 	InstallDetailsVisible: Boolean;
+	InstallLogLastCount: Integer;
 	
 	PreflightOk: Boolean;
 	PreflightRunning: Boolean;
@@ -380,6 +398,10 @@ function TranslateMessage(const lpMsg: TMsg): BOOL;
 	external 'TranslateMessage@user32.dll stdcall';
 function DispatchMessage(const lpMsg: TMsg): Longint;
 	external 'DispatchMessageW@user32.dll stdcall';
+function SendMessage(hWnd: HWND; Msg: UINT; wParam, lParam: Longint): Longint;
+	external 'SendMessageW@user32.dll stdcall';
+function MulDiv(nNumber, nNumerator, nDenominator: Integer): Integer;
+	external 'MulDiv@kernel32.dll stdcall';
 
 function FormatBytes(Value: Int64): string;
 begin
@@ -405,8 +427,9 @@ begin
 	if (LicensePage = nil) or (WizardForm = nil) then
 		Exit;
 	if WizardForm.CurPageID = LicensePage.ID then
-		WizardForm.NextButton.Enabled :=
-			LicenseAcceptCheck.Checked and PreflightOk and (not PreflightRunning);
+		WizardForm.NextButton.Enabled := LicenseAcceptCheck.Checked
+	else if (ConfigPage <> nil) and (WizardForm.CurPageID = ConfigPage.ID) then
+		WizardForm.NextButton.Enabled := PreflightOk and (not PreflightRunning);
 end;
 
 procedure LicenseAcceptChanged(Sender: TObject);
@@ -600,7 +623,6 @@ var
 begin
 	PreflightRunning := True;
 	PreflightOk := False;
-	DiskRetryButton.Enabled := False;
 	
 	{ Disable controls during preflight }
 	if CompPythonCheck <> nil then CompPythonCheck.Enabled := False;
@@ -639,7 +661,7 @@ begin
 	begin
 		LaunchError := GetLastError;
 		SetDiskStatus('Unable to launch PowerShell preflight.',
-			Format('Ensure Windows PowerShell is available (error %d), then click Recalculate.', [LaunchError]),
+			Format('Ensure Windows PowerShell is available (error %d).', [LaunchError]),
 			True);
 		if ShowErrors then
 			MsgBox('PowerShell could not be launched to compute disk usage.', mbError, MB_OK);
@@ -650,7 +672,7 @@ begin
 		if WaitResult = WAIT_FAILED then
 		begin
 			SetDiskStatus('Failed while monitoring PowerShell preflight.',
-				'Setup could not read the helper log. Click Recalculate to retry.',
+				'Setup could not read the helper log.',
 				True);
 			if ShowErrors then
 				MsgBox('Failed while monitoring the PowerShell helper.', mbError, MB_OK);
@@ -658,7 +680,7 @@ begin
 		else if WaitResult <> WAIT_OBJECT_0 then
 		begin
 			SetDiskStatus('PowerShell preflight exited unexpectedly.',
-				'The helper returned an unexpected wait state. Click Recalculate to retry.',
+				'The helper returned an unexpected wait state.',
 				True);
 			if ShowErrors then
 				MsgBox('PowerShell preflight exited unexpectedly.', mbError, MB_OK);
@@ -673,7 +695,7 @@ begin
 			begin
 				SetDiskStatus(
 					Format('Preflight exited with code %d.', [ResultCode]),
-					'Review installer.log for errors, then click Recalculate.',
+					'Review installer.log for errors.',
 					True);
 				if ShowErrors then
 					MsgBox('Disk usage estimation failed. Check your execution policy and retry.', mbError, MB_OK);
@@ -681,7 +703,7 @@ begin
 			else if not LoadPreflightOutput(OutputPath) then
 			begin
 				SetDiskStatus('Preflight did not return usable data.',
-					'The helper script finished without writing metrics. Click Recalculate to try again.',
+					'The helper script finished without writing metrics.',
 					True);
 				if ShowErrors then
 					MsgBox('Disk usage estimation returned no data.', mbError, MB_OK);
@@ -695,23 +717,14 @@ begin
 	end;
 	CloseProcessHandle(ProcessHandle);
 	PreflightRunning := False;
-	DiskRetryButton.Enabled := True;
 	
 	{ Re-enable controls }
-	if AdvancedModeCheck.Checked then
-	begin
-		CompPythonCheck.Enabled := True;
-		CompGitCheck.Enabled := True;
-		CompNodeCheck.Enabled := True;
-		CompCudaCheck.Enabled := True;
-	end;
+	if CompPythonCheck <> nil then CompPythonCheck.Enabled := True;
+	if CompGitCheck <> nil then CompGitCheck.Enabled := True;
+	if CompNodeCheck <> nil then CompNodeCheck.Enabled := True;
+	if CompCudaCheck <> nil then CompCudaCheck.Enabled := True;
 	
 	UpdateNextButtonState;
-end;
-
-procedure DiskRetryButtonClick(Sender: TObject);
-begin
-	StartPreflight(True);
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
@@ -735,6 +748,9 @@ begin
 			Result := False;
 			Exit;
 		end;
+	end;
+	if (ConfigPage <> nil) and (CurPageID = ConfigPage.ID) then
+	begin
 		if not PreflightOk then
 		begin
 			MsgBox('Wait for the disk usage estimate to finish (or click Recalculate) before continuing.', mbError, MB_OK);
@@ -749,9 +765,9 @@ begin
 	InstallDetailsVisible := not InstallDetailsVisible;
 	InstallLogViewer.Visible := InstallDetailsVisible;
 	if InstallDetailsVisible then
-		InstallDetailsButton.Caption := 'Hide Details'
+		InstallDetailsButton.Caption := 'Hide Details ^'
 	else
-		InstallDetailsButton.Caption := 'Show Details';
+		InstallDetailsButton.Caption := 'Show Details v';
 end;
 
 procedure StartInstall;
@@ -771,9 +787,13 @@ begin
 	DeleteFile(LogPath);
 	
 	PSExe := GetPowerShellPath;
-	Params := Format('-ExecutionPolicy Bypass -NoLogo -NonInteractive -WindowStyle Hidden -File "%s" -Action install -Yes -InstallerLog "%s"', [
+	
+	{ Build parameters - the script handles its own logging via -InstallerLog }
+	{ Pass the host Python version so the installer uses the same version as the build machine }
+	Params := Format('-ExecutionPolicy Bypass -NoLogo -NonInteractive -WindowStyle Hidden -File "%s" -Action install -Yes -InstallerLog "%s" -PreferredPythonVersion "%s"', [
 		ScriptPath,
-		LogPath]);
+		LogPath,
+		HostPythonVersion]);
 
 	if BrainDownloadCheck.Checked then
 		Params := Params + ' -DownloadBrain'
@@ -795,6 +815,9 @@ begin
 		Exit;
 	end;
 	
+	{ Initialize tracking variable }
+	InstallLogLastCount := 0;
+	
 	Lines := TStringList.Create;
 	try
 		repeat
@@ -809,11 +832,14 @@ begin
 							LastLine := Copy(LastLine, 1, 77) + '...';
 						WizardForm.StatusLabel.Caption := LastLine;
 						
-						if InstallLogViewer <> nil then
+						{ Only update the log viewer if there are new lines }
+						if (InstallLogViewer <> nil) and (Lines.Count > InstallLogLastCount) then
 						begin
+							{ Update content }
 							InstallLogViewer.Lines.Assign(Lines);
-							InstallLogViewer.SelStart := Length(InstallLogViewer.Lines.Text);
-							InstallLogViewer.Perform(EM_SCROLLCARET, 0, 0);
+							InstallLogLastCount := Lines.Count;
+							{ Force scroll to absolute bottom using WM_VSCROLL }
+							SendMessage(InstallLogViewer.Handle, WM_VSCROLL, SB_BOTTOM, 0);
 						end;
 					end;
 				except
@@ -852,6 +878,95 @@ begin
 	end;
 end;
 
+procedure DeinitializeSetup();
+var
+	PreflightLogSrc, InstallLogSrc: string;
+	PreflightLogDest, InstallLogDest: string;
+	LogDir, DesktopDir, SourceDir: string;
+	Timestamp: string;
+	AppLogCopyOk: Boolean;
+begin
+	{ Copy log files to multiple locations for accessibility }
+	Timestamp := GetDateTimeString('yyyymmdd_hhnnss', #0, #0);
+	PreflightLogSrc := ExpandConstant('{tmp}\') + PreflightLogName;
+	InstallLogSrc := ExpandConstant('{tmp}\') + InstallLogName;
+	AppLogCopyOk := False;
+	
+	{ PRIORITY 1: Copy to source directory (releases folder where installer is located) }
+	{ This is the most useful location for development/testing }
+	try
+		SourceDir := ExpandConstant('{src}');
+		if DirExists(SourceDir) then
+		begin
+			if FileExists(PreflightLogSrc) then
+			begin
+				PreflightLogDest := SourceDir + '\AIOS_preflight_' + Timestamp + '.log';
+				CopyFile(PreflightLogSrc, PreflightLogDest, False);
+			end;
+			
+			if FileExists(InstallLogSrc) then
+			begin
+				InstallLogDest := SourceDir + '\AIOS_install_' + Timestamp + '.log';
+				CopyFile(InstallLogSrc, InstallLogDest, False);
+			end;
+		end;
+	except
+		{ Source directory copy failed - continue to other locations }
+	end;
+	
+	{ PRIORITY 2: Try to copy to installation directory's logs folder }
+	try
+		LogDir := ExpandConstant('{app}\logs');
+		if not DirExists(LogDir) then
+			ForceDirectories(LogDir);
+		
+		if DirExists(LogDir) then
+		begin
+			if FileExists(PreflightLogSrc) then
+			begin
+				PreflightLogDest := LogDir + '\aios_preflight_' + Timestamp + '.log';
+				CopyFile(PreflightLogSrc, PreflightLogDest, False);
+			end;
+			
+			if FileExists(InstallLogSrc) then
+			begin
+				InstallLogDest := LogDir + '\aios_install_' + Timestamp + '.log';
+				CopyFile(InstallLogSrc, InstallLogDest, False);
+			end;
+			AppLogCopyOk := True;
+		end;
+	except
+		{ App directory not available - will try desktop }
+		AppLogCopyOk := False;
+	end;
+	
+	{ PRIORITY 3: Copy to user desktop as a fallback }
+	try
+		DesktopDir := ExpandConstant('{userdesktop}');
+		if DirExists(DesktopDir) then
+		begin
+			if FileExists(PreflightLogSrc) then
+			begin
+				PreflightLogDest := DesktopDir + '\AIOS_preflight_' + Timestamp + '.log';
+				CopyFile(PreflightLogSrc, PreflightLogDest, False);
+			end;
+			
+			if FileExists(InstallLogSrc) then
+			begin
+				InstallLogDest := DesktopDir + '\AIOS_install_' + Timestamp + '.log';
+				CopyFile(InstallLogSrc, InstallLogDest, False);
+			end;
+		end;
+	except
+		{ Desktop copy failed }
+	end;
+end;
+
+procedure ComponentChanged(Sender: TObject);
+begin
+	StartPreflight(False);
+end;
+
 procedure UpdateConfigPageLayout;
 var
 	TopOffset: Integer;
@@ -859,29 +974,26 @@ var
 begin
 	ComponentsPanel.Visible := AdvancedModeCheck.Checked;
 	
-	TopOffset := AdvancedModeCheck.Top + AdvancedModeCheck.Height + ScaleY(12);
+	TopOffset := AdvancedModeCheck.Top + AdvancedModeCheck.Height + ScaleY(5);
 	
 	if AdvancedModeCheck.Checked then
 	begin
 		ComponentsPanel.Top := TopOffset;
 		{ Recalculate panel height based on children to prevent cutoff }
 		ComponentsPanel.Height := CompCudaCheck.Top + CompCudaCheck.Height + ScaleY(5);
-		TopOffset := TopOffset + ComponentsPanel.Height + ScaleY(12);
+		TopOffset := TopOffset + ComponentsPanel.Height + ScaleY(5);
 	end;
 	
 	DiskSummaryLabel.Top := TopOffset;
 	DiskSummaryLabel.Width := ConfigPage.SurfaceWidth;
-	TopOffset := TopOffset + DiskSummaryLabel.Height + ScaleY(12);
+	TopOffset := TopOffset + DiskSummaryLabel.Height + ScaleY(10);
 	
 	DiskDetailLabel.Top := TopOffset;
 	DiskDetailLabel.Width := ConfigPage.SurfaceWidth;
-	TopOffset := TopOffset + DiskDetailLabel.Height + ScaleY(12);
-	
-	DiskRetryButton.Top := TopOffset;
-	TopOffset := TopOffset + DiskRetryButton.Height + ScaleY(16);
+	TopOffset := TopOffset + DiskDetailLabel.Height + ScaleY(10);
 	
 	LogLabel.Top := TopOffset;
-	TopOffset := TopOffset + LogLabel.Height + ScaleY(8);
+	TopOffset := TopOffset + LogLabel.Height + ScaleY(5);
 	
 	LogViewer.Top := TopOffset;
 	RemainingHeight := ConfigPage.SurfaceHeight - TopOffset;
@@ -918,7 +1030,8 @@ begin
 	LicenseViewer.Parent := LicensePage.Surface;
 	LicenseViewer.Left := 0;
 	LicenseViewer.Top := 0;
-	LicenseViewer.Width := LicensePage.SurfaceWidth;
+	{ Extend to ~85% of page width to use more space }
+	LicenseViewer.Width := MulDiv(WizardForm.ClientWidth, 85, 100);
 	LicenseViewer.Height := LicenseAcceptCheck.Top - ScaleY(10);
 	LicenseViewer.ScrollBars := ssVertical;
 	LicenseViewer.BorderStyle := bsSingle;
@@ -943,14 +1056,14 @@ begin
 	BrainDownloadCheck.Left := 0;
 	BrainDownloadCheck.Top := 0;
 	BrainDownloadCheck.Width := ConfigPage.SurfaceWidth;
-	BrainDownloadCheck.Height := ScaleY(20);
+	BrainDownloadCheck.Height := ScaleY(30);
 	BrainDownloadCheck.Checked := True;
 
 	AdvancedModeCheck := TNewCheckBox.Create(ConfigPage.Surface);
 	AdvancedModeCheck.Parent := ConfigPage.Surface;
 	AdvancedModeCheck.Caption := 'Advanced Installation Mode (Select specific components)';
 	AdvancedModeCheck.Left := 0;
-	AdvancedModeCheck.Top := BrainDownloadCheck.Top + BrainDownloadCheck.Height + ScaleY(12);
+	AdvancedModeCheck.Top := BrainDownloadCheck.Top + BrainDownloadCheck.Height + ScaleY(5);
 	AdvancedModeCheck.Width := ConfigPage.SurfaceWidth;
 	AdvancedModeCheck.Height := ScaleY(20);
 	AdvancedModeCheck.Checked := False;
@@ -972,37 +1085,37 @@ begin
 	CompPythonCheck.Width := ComponentsPanel.Width;
 	CompPythonCheck.Height := ScaleY(20);
 	CompPythonCheck.Checked := True;
-	CompPythonCheck.OnClick := @DiskRetryButtonClick;
+	CompPythonCheck.OnClick := @ComponentChanged;
 
 	CompGitCheck := TNewCheckBox.Create(ComponentsPanel);
 	CompGitCheck.Parent := ComponentsPanel;
 	CompGitCheck.Caption := 'Install Git (if missing)';
 	CompGitCheck.Left := 0;
-	CompGitCheck.Top := CompPythonCheck.Top + CompPythonCheck.Height + ScaleY(8);
+	CompGitCheck.Top := CompPythonCheck.Top + CompPythonCheck.Height + ScaleY(4);
 	CompGitCheck.Width := ComponentsPanel.Width;
 	CompGitCheck.Height := ScaleY(20);
 	CompGitCheck.Checked := True;
-	CompGitCheck.OnClick := @DiskRetryButtonClick;
+	CompGitCheck.OnClick := @ComponentChanged;
 
 	CompNodeCheck := TNewCheckBox.Create(ComponentsPanel);
 	CompNodeCheck.Parent := ComponentsPanel;
 	CompNodeCheck.Caption := 'Install Node.js LTS (if missing)';
 	CompNodeCheck.Left := 0;
-	CompNodeCheck.Top := CompGitCheck.Top + CompGitCheck.Height + ScaleY(8);
+	CompNodeCheck.Top := CompGitCheck.Top + CompGitCheck.Height + ScaleY(4);
 	CompNodeCheck.Width := ComponentsPanel.Width;
 	CompNodeCheck.Height := ScaleY(20);
 	CompNodeCheck.Checked := True;
-	CompNodeCheck.OnClick := @DiskRetryButtonClick;
+	CompNodeCheck.OnClick := @ComponentChanged;
 
 	CompCudaCheck := TNewCheckBox.Create(ComponentsPanel);
 	CompCudaCheck.Parent := ComponentsPanel;
 	CompCudaCheck.Caption := 'Install NVIDIA CUDA Tools (Force)';
 	CompCudaCheck.Left := 0;
-	CompCudaCheck.Top := CompNodeCheck.Top + CompNodeCheck.Height + ScaleY(8);
+	CompCudaCheck.Top := CompNodeCheck.Top + CompNodeCheck.Height + ScaleY(4);
 	CompCudaCheck.Width := ComponentsPanel.Width;
 	CompCudaCheck.Height := ScaleY(20);
 	CompCudaCheck.Checked := False;
-	CompCudaCheck.OnClick := @DiskRetryButtonClick;
+	CompCudaCheck.OnClick := @ComponentChanged;
 
 	DiskSummaryLabel := TNewStaticText.Create(ConfigPage.Surface);
 	DiskSummaryLabel.Parent := ConfigPage.Surface;
@@ -1018,14 +1131,6 @@ begin
 	DiskDetailLabel.Width := ConfigPage.SurfaceWidth;
 	DiskDetailLabel.AutoSize := True;
 	DiskDetailLabel.WordWrap := True;
-
-	DiskRetryButton := TNewButton.Create(ConfigPage.Surface);
-	DiskRetryButton.Parent := ConfigPage.Surface;
-	DiskRetryButton.Caption := '&Recalculate';
-	DiskRetryButton.Width := ScaleX(110);
-	DiskRetryButton.Height := ScaleY(26);
-	DiskRetryButton.Left := 0;
-	DiskRetryButton.OnClick := @DiskRetryButtonClick;
 
 	LogLabel := TNewStaticText.Create(ConfigPage.Surface);
 	LogLabel.Parent := ConfigPage.Surface;
@@ -1047,11 +1152,11 @@ begin
 	{ --- Install Page Controls --- }
 	InstallDetailsButton := TNewButton.Create(WizardForm);
 	InstallDetailsButton.Parent := WizardForm.InstallingPage;
-	InstallDetailsButton.Caption := 'Show Details';
+	InstallDetailsButton.Caption := 'Show Details v';
 	InstallDetailsButton.Left := 0;
 	InstallDetailsButton.Top := WizardForm.ProgressGauge.Top + WizardForm.ProgressGauge.Height + ScaleY(10);
-	InstallDetailsButton.Width := ScaleX(110);
-	InstallDetailsButton.Height := ScaleY(26);
+	InstallDetailsButton.Width := ScaleX(120);
+	InstallDetailsButton.Height := ScaleY(30);
 	InstallDetailsButton.OnClick := @InstallDetailsButtonClick;
 	
 	InstallLogViewer := TRichEditViewer.Create(WizardForm);

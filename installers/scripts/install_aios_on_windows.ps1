@@ -26,12 +26,66 @@ param(
   # Explicitly enable brain download (skips prompt)
   [switch]$DownloadBrain,
   # Explicitly disable brain download (skips prompt)
-  [switch]$SkipBrain
+  [switch]$SkipBrain,
+  # Preferred Python version (e.g., "3.10.11") - will install this version if Python needs to be installed
+  [string]$PreferredPythonVersion = ''
 )
+
+# Initialize desktop log FIRST - before any errors can occur
+$script:DesktopLogInitialized = $false
+$script:DesktopLogPath = ''
+try {
+    $desktopPath = [Environment]::GetFolderPath('Desktop')
+    $script:DesktopLogPath = Join-Path $desktopPath "AIOS_Installer.log"
+    
+    # Check if log already exists - if so, append; if not, create with header
+    if (Test-Path $script:DesktopLogPath) {
+        # Append session separator
+        $separator = @"
+
+========================================
+New Session: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+Action: $Action
+Parameters: Gpu=$Gpu, SkipPythonInstall=$SkipPythonInstall, SkipGitInstall=$SkipGitInstall, SkipNodeInstall=$SkipNodeInstall
+========================================
+
+"@
+        Add-Content -Path $script:DesktopLogPath -Value $separator -Encoding UTF8
+    } else {
+        # Create new log file with header
+        $header = @"
+AI-OS Installer Log
+Created: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+========================================
+
+Session: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+Action: $Action
+Parameters: Gpu=$Gpu, SkipPythonInstall=$SkipPythonInstall, SkipGitInstall=$SkipGitInstall, SkipNodeInstall=$SkipNodeInstall
+InstallerLog: $InstallerLog
+PreflightOutput: $PreflightOutput
+PayloadBytes: $PayloadBytes
+PSScriptRoot: $PSScriptRoot
+========================================
+
+"@
+        Set-Content -Path $script:DesktopLogPath -Value $header -Encoding UTF8 -Force
+    }
+    $script:DesktopLogInitialized = $true
+} catch {
+    # If we can't create desktop log, continue anyway
+    # Try to create an error file on desktop to indicate the problem
+    try {
+        $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+        $errorPath = Join-Path $desktopPath "AIOS_LOG_CREATION_FAILED_$timestamp.txt"
+        Set-Content -Path $errorPath -Value "Failed to create installer log: $_" -Force
+    } catch {}
+    $script:DesktopLogInitialized = $false
+}
 
 $ErrorActionPreference = 'Stop'
 
 if ($InstallCudaTools) {
+    if ($script:DesktopLogInitialized) { Add-Content -Path $script:DesktopLogPath -Value "[i] Forcing CUDA installation as requested." -Encoding UTF8 }
     Write-Host "[i] Forcing CUDA installation as requested." -ForegroundColor Cyan
     $Gpu = 'cuda'
 }
@@ -66,8 +120,12 @@ function Resolve-RepoRoot {
 $repoRoot = Resolve-RepoRoot -StartDirectory $PSScriptRoot
 $script:PyTorchBuild = 'cpu'
 $script:InstallerLogInitialized = $false
+# Desktop log variables already initialized at the top of the script
 
 function Initialize-InstallerLog {
+  # Desktop log was already initialized at script start
+  # This function only handles the installer log parameter if provided
+  
   if ([string]::IsNullOrWhiteSpace($InstallerLog)) { return }
   try {
     $dir = Split-Path -Parent $InstallerLog
@@ -84,18 +142,33 @@ function Initialize-InstallerLog {
 function Write-InstallerLog {
   param([string]$Message)
 
+  $timestamp = (Get-Date -Format 'HH:mm:ss')
+  $line = "[{0}] {1}" -f $timestamp, $Message
+  
+  # Write to desktop log
+  if ($script:DesktopLogInitialized) {
+    try {
+      Add-Content -Path $script:DesktopLogPath -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
+    } catch {
+      # Ignore desktop log write failures
+    }
+  }
+
+  # Write to installer log parameter if provided
   if ([string]::IsNullOrWhiteSpace($InstallerLog)) { return }
   if (-not $script:InstallerLogInitialized) {
     Initialize-InstallerLog
   }
   if (-not $script:InstallerLogInitialized) { return }
 
-  $timestamp = (Get-Date -Format 'HH:mm:ss')
-  $line = "[{0}] {1}" -f $timestamp, $Message
-  try {
-    Add-Content -Path $InstallerLog -Value $line -Encoding UTF8
-  } catch {
-    # Suppress logging exceptions to avoid blocking installer
+  # Retry logic to handle file contention with Inno Setup reader
+  for ($i = 0; $i -lt 10; $i++) {
+    try {
+      Add-Content -Path $InstallerLog -Value $line -Encoding UTF8 -ErrorAction Stop
+      break
+    } catch {
+      Start-Sleep -Milliseconds 100
+    }
   }
 }
 
@@ -147,6 +220,21 @@ function Get-PythonExecutableForVersion([string]$Version) {
     $out = & py -$Version -c "import sys; print(sys.executable)" 2>$null
     if ($LASTEXITCODE -eq 0 -and $out) { return $out.Trim() }
   } catch {}
+
+  # Fallback: Check common locations for py.exe if not in PATH
+  $candidates = @(
+    "$env:LOCALAPPDATA\Programs\Python\Launcher\py.exe",
+    "$env:SystemRoot\py.exe"
+  )
+  foreach ($c in $candidates) {
+    if (Test-Path $c) {
+      try {
+        $out = & $c -$Version -c "import sys; print(sys.executable)" 2>$null
+        if ($LASTEXITCODE -eq 0 -and $out) { return $out.Trim() }
+      } catch {}
+    }
+  }
+
   return ''
 }
 
@@ -474,6 +562,233 @@ function Invoke-Preflight {
   }
 }
 
+# Determines the best Python version to install based on:
+# 1. PreferredPythonVersion parameter (if specified)
+# 2. Default to 3.10.11 (minimum supported, widely compatible)
+function Get-PreferredPythonVersion {
+  # Use the command-line parameter if specified
+  if (-not [string]::IsNullOrWhiteSpace($PreferredPythonVersion)) {
+    Write-Host "[i] Using preferred Python version: $PreferredPythonVersion" -ForegroundColor Cyan
+    return $PreferredPythonVersion
+  }
+  
+  # Default to Python 3.10.11 - the minimum required version per pyproject.toml
+  # This ensures maximum compatibility and matches the user's expected environment
+  $defaultVersion = "3.10.11"
+  Write-Host "[i] Using default Python version: $defaultVersion" -ForegroundColor Cyan
+  return $defaultVersion
+}
+
+# Returns the major.minor version string for winget package ID (e.g., "3.10" from "3.10.11")
+function Get-PythonMajorMinor {
+  param([string]$FullVersion)
+  
+  if ([string]::IsNullOrWhiteSpace($FullVersion)) {
+    return "3.10"
+  }
+  
+  $parts = $FullVersion -split '\.'
+  if ($parts.Count -ge 2) {
+    return "$($parts[0]).$($parts[1])"
+  }
+  return "3.10"
+}
+
+# Direct Python download and installation (fallback when winget fails)
+function Install-PythonDirect {
+  param([string]$Version = "")
+  
+  # Determine the version to install
+  if ([string]::IsNullOrWhiteSpace($Version)) {
+    $Version = Get-PreferredPythonVersion
+  }
+  
+  Write-Host "[i] Attempting direct Python $Version installation from python.org..." -ForegroundColor Cyan
+  
+  $pythonUrl = "https://www.python.org/ftp/python/$Version/python-$Version-amd64.exe"
+  $tempInstaller = Join-Path $env:TEMP "python-$Version-installer.exe"
+  $logFile = Join-Path $env:TEMP "python-$Version-install.log"
+  
+  # Parse major.minor version for path construction
+  $versionParts = $Version -split '\.'
+  $majorMinor = "$($versionParts[0])$($versionParts[1])"  # e.g., "310" for 3.10.11
+  
+  try {
+    # Download Python installer
+    Write-Host "[i] Downloading Python $Version installer..." -ForegroundColor Cyan
+    $ProgressPreference = 'SilentlyContinue'
+    Invoke-WebRequest -Uri $pythonUrl -OutFile $tempInstaller -UseBasicParsing -TimeoutSec 300
+    
+    if (-not (Test-Path $tempInstaller)) {
+      throw "Download failed - installer not found"
+    }
+    
+    $fileSize = (Get-Item $tempInstaller).Length / 1MB
+    Write-Host "[+] Downloaded Python installer ($([math]::Round($fileSize, 1)) MB)" -ForegroundColor Green
+    
+    # Install Python quietly with verbose logging for detailed output
+    Write-Host "[i] Installing Python $Version (quiet mode with logging)..." -ForegroundColor Cyan
+    Write-Host "[i] Installation log: $logFile" -ForegroundColor Gray
+    
+    # Run the Python installer directly with -Wait to ensure we wait for completion
+    # The Python installer (WiX bundle) requires: /quiet InstallAllUsers=1 PrependPath=1 etc.
+    $installerArgs = @(
+      '/quiet',
+      '/log', "`"$logFile`"",
+      'InstallAllUsers=1',
+      'PrependPath=1',
+      'Include_test=0',
+      'Include_launcher=1',
+      'Include_pip=1'
+    )
+    $installerArgsString = $installerArgs -join ' '
+    Write-Host "[i] Running: $tempInstaller $installerArgsString" -ForegroundColor Gray
+    
+    # Start the installer process directly and wait for it
+    $proc = Start-Process -FilePath $tempInstaller -ArgumentList $installerArgsString -PassThru -WindowStyle Hidden
+    
+    # Monitor log file and output progress (with 10-minute timeout)
+    Write-Host "[i] Monitoring installation progress (this may take a few minutes)..." -ForegroundColor Cyan
+    $lastPosition = 0
+    $progressDots = 0
+    $startTime = Get-Date
+    $maxWaitMinutes = 10
+    while (-not $proc.HasExited) {
+      Start-Sleep -Milliseconds 500
+      
+      # Check for timeout
+      $elapsed = (Get-Date) - $startTime
+      if ($elapsed.TotalMinutes -gt $maxWaitMinutes) {
+        Write-Host "`n[!] Installation timeout after $maxWaitMinutes minutes" -ForegroundColor Red
+        try { $proc.Kill() } catch {}
+        throw "Python installation timed out after $maxWaitMinutes minutes"
+      }
+      
+      # Read new content from log file
+      if (Test-Path $logFile) {
+        try {
+          $logContent = Get-Content $logFile -Raw -ErrorAction SilentlyContinue
+          if ($logContent -and $logContent.Length -gt $lastPosition) {
+            $newContent = $logContent.Substring($lastPosition)
+            $lastPosition = $logContent.Length
+            
+            # Parse and display relevant log lines
+            $lines = $newContent -split "`r?`n"
+            foreach ($line in $lines) {
+              $line = $line.Trim()
+              if ($line -and $line.Length -gt 0) {
+                # Filter for informative messages
+                if ($line -match 'Action\s+\d+:\d+:\d+:\s+(.+)' -or
+                    $line -match 'Installing\s+(.+)' -or
+                    $line -match 'Extracting\s+(.+)' -or
+                    $line -match 'Creating\s+(.+)' -or
+                    $line -match 'Registering\s+(.+)' -or
+                    $line -match 'Configuring\s+(.+)' -or
+                    $line -match 'Copying\s+(.+)' -or
+                    $line -match 'Property.*=.*' -or
+                    $line -match 'INSTALL\.' -or
+                    $line -match 'MSI \(s\)') {
+                  Write-Host "    [Python] $line" -ForegroundColor Gray
+                }
+              }
+            }
+          }
+        } catch {
+          # Ignore read errors, log may be locked
+        }
+      }
+      
+      # Show progress indicator
+      $progressDots++
+      if ($progressDots % 4 -eq 0) {
+        Write-Host "." -NoNewline -ForegroundColor Cyan
+      }
+    }
+    Write-Host "" # New line after dots
+    
+    # Wait for process to fully complete
+    $proc.WaitForExit()
+    
+    # Output final log content
+    if (Test-Path $logFile) {
+      try {
+        $logContent = Get-Content $logFile -Raw -ErrorAction SilentlyContinue
+        if ($logContent -and $logContent.Length -gt $lastPosition) {
+          $newContent = $logContent.Substring($lastPosition)
+          $lines = $newContent -split "`r?`n"
+          foreach ($line in $lines) {
+            $line = $line.Trim()
+            if ($line -and $line.Length -gt 0 -and ($line -match 'Action|Installing|Complete|Success|Error|Failed')) {
+              Write-Host "    [Python] $line" -ForegroundColor Gray
+            }
+          }
+        }
+      } catch {}
+    }
+    
+    if ($proc.ExitCode -ne 0) {
+      # Output full log on failure for debugging
+      Write-Host "[!] Python installer failed. Full log:" -ForegroundColor Red
+      if (Test-Path $logFile) {
+        $fullLog = Get-Content $logFile -ErrorAction SilentlyContinue
+        foreach ($line in $fullLog | Select-Object -Last 50) {
+          Write-Host "    $line" -ForegroundColor Yellow
+        }
+      }
+      throw "Python installer exited with code $($proc.ExitCode)"
+    }
+    
+    Write-Host "[+] Python $Version installed successfully!" -ForegroundColor Green
+    
+    # Copy log to desktop for easy access
+    try {
+      $desktopPath = [Environment]::GetFolderPath('Desktop')
+      $desktopLogDest = Join-Path $desktopPath "python_install.log"
+      if (Test-Path $logFile) {
+        Copy-Item $logFile $desktopLogDest -Force -ErrorAction SilentlyContinue
+        Write-Host "[i] Python installation log saved to: $desktopLogDest" -ForegroundColor Cyan
+      }
+    } catch {}
+    
+    # Refresh PATH
+    try {
+      $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+    } catch {}
+    
+    # Add common Python locations (dynamic based on version)
+    $pythonPaths = @(
+      "$env:ProgramFiles\Python$majorMinor",
+      "$env:ProgramFiles\Python$majorMinor\Scripts",
+      "$env:LOCALAPPDATA\Programs\Python\Python$majorMinor",
+      "$env:LOCALAPPDATA\Programs\Python\Python$majorMinor\Scripts",
+      "$env:LOCALAPPDATA\Programs\Python\Launcher"
+    )
+    foreach ($pp in $pythonPaths) {
+      if ((Test-Path $pp) -and $pp -notin $env:Path.Split(';')) {
+        $env:Path += ";$pp"
+      }
+    }
+    
+    return $true
+  } catch {
+    Write-Host "[!] Direct Python installation failed: $_" -ForegroundColor Red
+    # Try to copy log even on failure for debugging
+    try {
+      $desktopPath = [Environment]::GetFolderPath('Desktop')
+      $desktopLogDest = Join-Path $desktopPath "python_install_FAILED.log"
+      if (Test-Path $logFile) {
+        Copy-Item $logFile $desktopLogDest -Force -ErrorAction SilentlyContinue
+        Write-Host "[i] Python installation log saved to: $desktopLogDest" -ForegroundColor Yellow
+      }
+    } catch {}
+    return $false
+  } finally {
+    if (Test-Path $tempInstaller) {
+      Remove-Item $tempInstaller -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
+
 # Prerequisite Check Functions
 function Test-Python() {
   $minVersion = [version]"3.10"
@@ -508,16 +823,298 @@ function Test-Python() {
     }
   } catch {}
 
-  if (Confirm-Choice "Install Python 3.11 via winget now?" -DefaultYes:$true) {
+  # Determine the version to install
+  $targetVersion = Get-PreferredPythonVersion
+  $targetMajorMinor = Get-PythonMajorMinor -FullVersion $targetVersion
+
+  if (Confirm-Choice "Install Python $targetMajorMinor via winget now?" -DefaultYes:$true) {
     if ($SkipPythonInstall) {
       Write-Host "[i] Skipping Python installation as requested." -ForegroundColor Yellow
       return $false
     }
     try {
-      winget install -e --id Python.Python.3.11 -h --accept-source-agreements --accept-package-agreements
-      Write-Host "[+] Python installed." -ForegroundColor Green
+      Write-Host "[i] Attempting to install Python..."
+      if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Host "[!] Winget not found. Downloading and installing Winget..." -ForegroundColor Yellow
+        
+        # Define download URLs for Winget dependencies
+        # VCLibs 14.0.33728.0 - required minimum version for Winget 1.24.25200
+        # Using direct GitHub mirror for correct version, fallback to aka.ms
+        $vclibsUrl = "https://github.com/M1k3G0/Win10_LTSC_VP9_Installer/raw/refs/heads/master/Microsoft.VCLibs.140.00.UWPDesktop_14.0.33728.0_x64__8wekyb3d8bbwe.Appx"
+        $vclibsFallbackUrl = "https://aka.ms/Microsoft.VCLibs.x64.14.00.Desktop.appx"
+        $uiXamlUrl = "https://github.com/microsoft/microsoft-ui-xaml/releases/download/v2.8.6/Microsoft.UI.Xaml.2.8.x64.appx"
+        # Direct download URL for WindowsAppRuntime 1.8.3 (latest stable as of Dec 2025)
+        $appRuntimeUrl = "https://aka.ms/windowsappsdk/1.8/stable/windowsappruntimeinstall-x64.exe"
+        $wingetUrl = "https://github.com/microsoft/winget-cli/releases/download/v1.9.25200/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle"
+        
+        # Temporary download locations
+        $tempDir = $env:TEMP
+        $tempVcLibs = Join-Path $tempDir "vclibs_x64.appx"
+        $tempUiXaml = Join-Path $tempDir "ui_xaml_x64.appx"
+        $tempAppRuntime = Join-Path $tempDir "windowsappruntime_x64.exe"
+        $tempWinget = Join-Path $tempDir "winget.msixbundle"
+        
+        # Helper function to download with timeout and retry
+        function Download-WithRetry {
+            param(
+                [string]$Url,
+                [string]$OutFile,
+                [string]$Description,
+                [int]$TimeoutSec = 120,
+                [int]$MaxRetries = 3
+            )
+            
+            $attempt = 0
+            while ($attempt -lt $MaxRetries) {
+                $attempt++
+                try {
+                    Write-Host "[i] Downloading $Description (attempt $attempt/$MaxRetries)..." -ForegroundColor Cyan
+                    
+                    # Use Start-BitsTransfer for better reliability with large files
+                    if (Get-Command Start-BitsTransfer -ErrorAction SilentlyContinue) {
+                        Start-BitsTransfer -Source $Url -Destination $OutFile -ErrorAction Stop
+                    } else {
+                        # Fallback to Invoke-WebRequest with timeout
+                        $ProgressPreference = 'SilentlyContinue'
+                        Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing -TimeoutSec $TimeoutSec -MaximumRedirection 5 -ErrorAction Stop
+                    }
+                    
+                    if (Test-Path $OutFile) {
+                        $fileSize = (Get-Item $OutFile).Length / 1MB
+                        Write-Host "[+] Downloaded $Description successfully ($([math]::Round($fileSize, 2)) MB)" -ForegroundColor Green
+                        return $true
+                    }
+                } catch {
+                    Write-Host "[!] Download attempt $attempt failed: $_" -ForegroundColor Yellow
+                    if ($attempt -lt $MaxRetries) {
+                        $waitSec = [math]::Pow(2, $attempt)
+                        Write-Host "[i] Retrying in $waitSec seconds..." -ForegroundColor Cyan
+                        Start-Sleep -Seconds $waitSec
+                    }
+                }
+            }
+            
+            throw "Failed to download $Description after $MaxRetries attempts"
+        }
+        
+        try {
+            # Check if VCLibs is already installed with sufficient version
+            $vclibsInstalled = Get-AppxPackage -Name "Microsoft.VCLibs.140.00*" -ErrorAction SilentlyContinue
+            $minVcLibsVersion = [version]"14.0.33728.0"
+            
+            if (-not $vclibsInstalled -or ([version]$vclibsInstalled.Version -lt $minVcLibsVersion)) {
+                if ($vclibsInstalled) {
+                    Write-Host "[!] VCLibs version $($vclibsInstalled.Version) is too old (need >= 14.0.33728.0)" -ForegroundColor Yellow
+                }
+                
+                # Try primary URL (GitHub mirror with correct version)
+                $downloadSuccess = $false
+                try {
+                    Download-WithRetry -Url $vclibsUrl -OutFile $tempVcLibs -Description "VCLibs 14.0.33728.0"
+                    $downloadSuccess = $true
+                } catch {
+                    Write-Host "[!] Primary VCLibs source failed, trying fallback: $_" -ForegroundColor Yellow
+                    try {
+                        Download-WithRetry -Url $vclibsFallbackUrl -OutFile $tempVcLibs -Description "VCLibs (fallback)"
+                        $downloadSuccess = $true
+                    } catch {
+                        throw "Failed to download VCLibs from any source: $_"
+                    }
+                }
+                
+                if ($downloadSuccess) {
+                    Write-Host "[i] Installing VCLibs..." -ForegroundColor Cyan
+                    Add-AppxPackage -Path $tempVcLibs -ForceApplicationShutdown -ErrorAction Stop
+                    
+                    # Verify the installed version
+                    $vclibsInstalled = Get-AppxPackage -Name "Microsoft.VCLibs.140.00*" -ErrorAction SilentlyContinue
+                    if ($vclibsInstalled) {
+                        Write-Host "[+] VCLibs installed successfully (version $($vclibsInstalled.Version))" -ForegroundColor Green
+                        if ([version]$vclibsInstalled.Version -lt $minVcLibsVersion) {
+                            Write-Host "[!] Warning: Installed VCLibs version is still too old, Winget may fail" -ForegroundColor Yellow
+                        }
+                    }
+                }
+            } else {
+                Write-Host "[i] VCLibs already installed (version $($vclibsInstalled.Version)), skipping..." -ForegroundColor Cyan
+            }
+            
+            # Download and install UI.Xaml
+            Download-WithRetry -Url $uiXamlUrl -OutFile $tempUiXaml -Description "UI.Xaml"
+            Write-Host "[i] Installing UI.Xaml..." -ForegroundColor Cyan
+            Add-AppxPackage -Path $tempUiXaml -ForceApplicationShutdown -ErrorAction Stop
+            
+            # Download and install WindowsAppRuntime (optional, enhances Winget 1.27+)
+            # Made non-fatal because core Winget functionality works without it
+            try {
+                Download-WithRetry -Url $appRuntimeUrl -OutFile $tempAppRuntime -Description "WindowsAppRuntime" -TimeoutSec 120
+                Write-Host "[i] Installing WindowsAppRuntime..." -ForegroundColor Cyan
+                $proc = Start-Process -FilePath $tempAppRuntime -ArgumentList '--quiet' -Wait -PassThru -NoNewWindow
+                if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 1638) {
+                    # 1638 = already installed (newer version exists)
+                    Write-Host "[!] Warning: WindowsAppRuntime installer exited with code $($proc.ExitCode), but continuing anyway" -ForegroundColor Yellow
+                } else {
+                    Write-Host "[+] WindowsAppRuntime installed successfully" -ForegroundColor Green
+                }
+            } catch {
+                Write-Host "[!] Warning: WindowsAppRuntime installation failed: $_" -ForegroundColor Yellow
+                Write-Host "[!] Continuing without WindowsAppRuntime (Winget core features should still work)" -ForegroundColor Yellow
+            }
+            
+            # Download and install Winget
+            Download-WithRetry -Url $wingetUrl -OutFile $tempWinget -Description "Winget" -TimeoutSec 180
+            Write-Host "[i] Installing Winget..." -ForegroundColor Cyan
+            Add-AppxPackage -Path $tempWinget -ForceApplicationShutdown -ErrorAction Stop
+            Write-Host "[+] Winget installed successfully!" -ForegroundColor Green
+            
+        } catch {
+            Write-Host "[!] Failed to download/install Winget: $_" -ForegroundColor Red
+            throw "Winget installation failed: $_"
+        } finally {
+            # Clean up downloaded files
+            @($tempVcLibs, $tempUiXaml, $tempAppRuntime, $tempWinget) | ForEach-Object {
+                if (Test-Path $_) {
+                    Remove-Item $_ -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+        
+      # Refresh env to find winget - more comprehensive PATH refresh
+      Write-Host "[i] Refreshing environment to locate winget..." -ForegroundColor Cyan
+      Start-Sleep -Seconds 3
+      
+      # Multiple potential locations for winget
+      $wingetPaths = @(
+        "$env:LOCALAPPDATA\Microsoft\WindowsApps",
+        "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*_x64__8wekyb3d8bbwe",
+        "$env:LOCALAPPDATA\Microsoft\WindowsApps\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe"
+      )
+      
+      foreach ($wp in $wingetPaths) {
+        if ($wp -match '\*') {
+          $resolved = Get-Item $wp -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          if ($resolved -and $resolved -notin $env:Path.Split(';')) {
+            $env:Path += ";$resolved"
+          }
+        } elseif ((Test-Path $wp) -and $wp -notin $env:Path.Split(';')) {
+          $env:Path += ";$wp"
+        }
+      }
+      
+      # Also refresh from registry
+      try {
+        $machinePath = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+        $userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
+        $env:Path = "$machinePath;$userPath;$env:Path"
+      } catch {}
+      
+      # Try to find winget with retry
+      $wingetFound = $false
+      for ($retry = 0; $retry -lt 5; $retry++) {
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+          $wingetFound = $true
+          break
+        }
+        Write-Host "[i] Waiting for winget to become available (attempt $($retry + 1)/5)..." -ForegroundColor Cyan
+        Start-Sleep -Seconds 2
+      }
+      
+      if (-not $wingetFound) {
+          Write-Host "[!] Winget not found in PATH after installation. Will try direct Python download." -ForegroundColor Yellow
+          throw "Winget installed but not found in PATH - falling back to direct download."
+      }
+      
+      # Update winget sources after fresh installation with verbose output
+      Write-Host "[i] Initializing winget package sources (this may take a moment)..." -ForegroundColor Cyan
+      try {
+        # First, accept agreements
+        $null = winget list --accept-source-agreements 2>&1
+        Start-Sleep -Seconds 2
+        
+        # Then update sources
+        $sourceOutput = winget source update 2>&1
+        Write-Host "[i] Source update output: $sourceOutput" -ForegroundColor Gray
+        Start-Sleep -Seconds 3
+      } catch {
+        Write-Host "[!] Source update had issues: $_" -ForegroundColor Yellow
+      }
+    }
+    
+    Write-Host "[i] Installing Python via winget..." -ForegroundColor Cyan
+    
+    # Try up to 3 times with source reset on failure
+    $attempts = 0
+    $maxAttempts = 3
+    $success = $false
+    
+    while ($attempts -lt $maxAttempts -and -not $success) {
+      $attempts++
+      if ($attempts -gt 1) {
+        Write-Host "[i] Retrying Python installation (attempt $attempts/$maxAttempts)..." -ForegroundColor Yellow
+        Write-Host "[i] Resetting winget sources..." -ForegroundColor Yellow
+        try {
+          winget source reset --force 2>&1 | Out-Null
+          Start-Sleep -Seconds 3
+          winget source update 2>&1 | Out-Null
+          Start-Sleep -Seconds 2
+        } catch {
+          Write-Host "[!] Source reset failed: $_" -ForegroundColor Yellow
+        }
+      }
+      
+      $wingetPkgId = "Python.Python.$targetMajorMinor"
+      Write-Host "[i] Running: winget install $wingetPkgId --source winget..." -ForegroundColor Cyan
+      Write-Host "[i] Winget will download and install Python - showing progress below..." -ForegroundColor Yellow
+      
+      # Run winget with verbose output (removed -h/hidden flag for visibility)
+      # Use --source winget to avoid ambiguity with msstore source
+      $wingetOutput = winget install -e --id $wingetPkgId --source winget --accept-source-agreements --accept-package-agreements --verbose 2>&1
+      $exitCode = $LASTEXITCODE
+      
+      # Log the output with categorization
+      if ($wingetOutput) {
+        foreach ($line in $wingetOutput) {
+          $lineStr = "$line".Trim()
+          if ($lineStr) {
+            # Colorize based on content
+            if ($lineStr -match 'error|fail|exception' -and $lineStr -notmatch 'errorhandling') {
+              Write-Host "    [Winget] $lineStr" -ForegroundColor Red
+            } elseif ($lineStr -match 'warning|warn') {
+              Write-Host "    [Winget] $lineStr" -ForegroundColor Yellow
+            } elseif ($lineStr -match 'success|complete|installed|found') {
+              Write-Host "    [Winget] $lineStr" -ForegroundColor Green
+            } elseif ($lineStr -match 'download|progress|%') {
+              Write-Host "    [Winget] $lineStr" -ForegroundColor Cyan
+            } else {
+              Write-Host "    [Winget] $lineStr" -ForegroundColor Gray
+            }
+          }
+        }
+      }
+      Write-Host "[i] Winget exit code: $exitCode" -ForegroundColor Gray
+      
+      if ($exitCode -eq 0 -or $exitCode -eq -1978335189) {
+        # -1978335189 = already installed
+        $success = $true
+      } elseif ($attempts -lt $maxAttempts) {
+        Write-Host "[!] Winget install failed (exit code $exitCode), retrying..." -ForegroundColor Yellow
+        Start-Sleep -Seconds 2
+      }
+    }
+    
+    if (-not $success) {
+      Write-Host "[!] Winget Python installation failed after $maxAttempts attempts. Trying direct download..." -ForegroundColor Yellow
+      throw "winget failed - falling back to direct download"
+    }
+    Write-Host "[+] Python installed via winget." -ForegroundColor Green
+      
+      # Refresh environment variables to find the new installation
+      try {
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+      } catch {}
+
       # After install, try to resolve via 'py' without requiring a new terminal session
-      $p = Get-PythonExecutableForVersion '3.11'
+      $p = Get-PythonExecutableForVersion $targetMajorMinor
       if ($p) {
         $ver = & $p -c "import sys; print('.'.join(map(str, sys.version_info[:3])))" 2>$null
         if ($LASTEXITCODE -eq 0 -and $ver -and ([version]$ver -ge [version]'3.10')) { return $true }
@@ -525,13 +1122,193 @@ function Test-Python() {
       # Fallback: let caller continue; interpreter selection logic will also try 'py'
       return $true
     } catch {
-      Write-Host "[!] winget install failed. Please install Python >= $minVersion manually and re-run." -ForegroundColor Red
-      throw
+      # Winget failed - try direct Python download as fallback
+      Write-Host "[!] Winget-based installation failed: $_" -ForegroundColor Yellow
+      Write-Host "[i] Attempting direct Python download from python.org..." -ForegroundColor Cyan
+      
+      if (Install-PythonDirect -Version $targetVersion) {
+        # Verify the installation
+        $p = Get-PythonExecutableForVersion $targetMajorMinor
+        if ($p) {
+          $ver = & $p -c "import sys; print('.'.join(map(str, sys.version_info[:3])))" 2>$null
+          if ($LASTEXITCODE -eq 0 -and $ver -and ([version]$ver -ge [version]'3.10')) {
+            Write-Host "[+] Python $ver installed via direct download." -ForegroundColor Green
+            return $true
+          }
+        }
+        
+        # Try checking via python command directly
+        $versionNoDot = $targetMajorMinor -replace '\.', ''
+        try {
+          $pythonPath = "$env:ProgramFiles\Python$versionNoDot\python.exe"
+          if (Test-Path $pythonPath) {
+            $ver = & $pythonPath -c "import sys; print('.'.join(map(str, sys.version_info[:3])))" 2>$null
+            if ($LASTEXITCODE -eq 0 -and $ver) {
+              Write-Host "[+] Python $ver installed at $pythonPath" -ForegroundColor Green
+              return $true
+            }
+          }
+        } catch {}
+        
+        # Installation seemed to succeed, return true
+        return $true
+      }
+      
+      Write-Host "[!] All Python installation methods failed." -ForegroundColor Red
+      Write-Host "[!] Please install Python >= $minVersion manually from https://www.python.org/downloads/" -ForegroundColor Red
+      throw "Python installation failed via all methods"
     }
   } else {
     throw "Python >= $minVersion is required. Please install it and re-run."
   }
   return $false
+}
+
+# Check and install Microsoft Visual C++ Redistributable (required for PyTorch DLLs)
+function Test-VCRedist() {
+  Write-Host "[i] Checking for Microsoft Visual C++ Redistributable..." -ForegroundColor Cyan
+  
+  # Check for VC++ Redistributable 2015-2022 (x64) - required for PyTorch
+  # These are the registry keys where VC++ Redist is registered
+  $vcRedistKeys = @(
+    'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64',
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x64',
+    'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\X64'
+  )
+  
+  $vcInstalled = $false
+  $installedVersion = $null
+  
+  foreach ($key in $vcRedistKeys) {
+    try {
+      if (Test-Path $key) {
+        $regValue = Get-ItemProperty -Path $key -ErrorAction SilentlyContinue
+        if ($regValue -and $regValue.Installed -eq 1) {
+          $vcInstalled = $true
+          $installedVersion = $regValue.Version
+          break
+        }
+      }
+    } catch {}
+  }
+  
+  # Alternative check: look for the actual DLL
+  if (-not $vcInstalled) {
+    $vcruntime = "$env:SystemRoot\System32\vcruntime140.dll"
+    $vcruntime_1 = "$env:SystemRoot\System32\vcruntime140_1.dll"
+    if ((Test-Path $vcruntime) -and (Test-Path $vcruntime_1)) {
+      $vcInstalled = $true
+      $installedVersion = "Unknown (DLL present)"
+    }
+  }
+  
+  if ($vcInstalled) {
+    Write-Host "[+] Microsoft Visual C++ Redistributable is installed (Version: $installedVersion)" -ForegroundColor Green
+    return $true
+  }
+  
+  Write-Host "[!] Microsoft Visual C++ Redistributable not found." -ForegroundColor Yellow
+  Write-Host "[!] This is REQUIRED for PyTorch to work on Windows." -ForegroundColor Yellow
+  
+  # Always try to install if not present (respects -Yes flag via Confirm-Choice)
+  if (Confirm-Choice "Install Microsoft Visual C++ Redistributable now?" -DefaultYes:$true) {
+    $installSuccess = $false
+    
+    # Try multiple download methods for robustness
+    $vcRedistUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+    $vcRedistPath = Join-Path $env:TEMP "vc_redist.x64.exe"
+    
+    Write-Host "[i] Downloading Visual C++ Redistributable 2015-2022 (x64)..." -ForegroundColor Cyan
+    
+    # Method 1: Invoke-WebRequest
+    try {
+      $ProgressPreference = 'SilentlyContinue'
+      Invoke-WebRequest -Uri $vcRedistUrl -OutFile $vcRedistPath -UseBasicParsing -TimeoutSec 180
+      if (Test-Path $vcRedistPath) {
+        $fileSize = (Get-Item $vcRedistPath).Length
+        if ($fileSize -gt 1000000) {  # At least 1MB
+          Write-Host "[+] Downloaded VC++ Redistributable ($([math]::Round($fileSize / 1MB, 1)) MB)" -ForegroundColor Green
+        } else {
+          throw "Downloaded file too small - likely incomplete"
+        }
+      }
+    } catch {
+      Write-Host "[!] Download method 1 failed: $_" -ForegroundColor Yellow
+      
+      # Method 2: Start-BitsTransfer
+      try {
+        Write-Host "[i] Trying alternative download method (BITS)..." -ForegroundColor Cyan
+        Start-BitsTransfer -Source $vcRedistUrl -Destination $vcRedistPath -ErrorAction Stop
+      } catch {
+        Write-Host "[!] Download method 2 failed: $_" -ForegroundColor Yellow
+        
+        # Method 3: .NET WebClient
+        try {
+          Write-Host "[i] Trying fallback download method (.NET)..." -ForegroundColor Cyan
+          $webClient = New-Object System.Net.WebClient
+          $webClient.DownloadFile($vcRedistUrl, $vcRedistPath)
+        } catch {
+          Write-Host "[!] All download methods failed: $_" -ForegroundColor Red
+        }
+      }
+    }
+    
+    # Try to install if we have the file
+    if (Test-Path $vcRedistPath) {
+      try {
+        Write-Host "[i] Installing Visual C++ Redistributable..." -ForegroundColor Cyan
+        
+        # Run installer silently with admin privileges
+        $proc = Start-Process -FilePath $vcRedistPath -ArgumentList '/install', '/quiet', '/norestart' -PassThru -Wait -Verb RunAs -ErrorAction SilentlyContinue
+        
+        # If -Verb RunAs fails (no elevation), try without
+        if (-not $proc) {
+          $proc = Start-Process -FilePath $vcRedistPath -ArgumentList '/install', '/quiet', '/norestart' -PassThru -Wait
+        }
+        
+        if ($proc.ExitCode -eq 0) {
+          Write-Host "[+] Visual C++ Redistributable installed successfully!" -ForegroundColor Green
+          $installSuccess = $true
+        } elseif ($proc.ExitCode -eq 1638) {
+          Write-Host "[+] A newer version of Visual C++ Redistributable is already installed." -ForegroundColor Green
+          $installSuccess = $true
+        } elseif ($proc.ExitCode -eq 3010) {
+          Write-Host "[+] Visual C++ Redistributable installed. A reboot may be required." -ForegroundColor Yellow
+          $installSuccess = $true
+        } elseif ($proc.ExitCode -eq 5) {
+          Write-Host "[!] Access denied - installer may need to be run as Administrator." -ForegroundColor Red
+          Write-Host "[!] Please install manually from: https://aka.ms/vs/17/release/vc_redist.x64.exe" -ForegroundColor Yellow
+        } else {
+          Write-Host "[!] VC++ Redistributable installer exited with code $($proc.ExitCode)" -ForegroundColor Yellow
+        }
+        
+        Remove-Item $vcRedistPath -Force -ErrorAction SilentlyContinue
+      } catch {
+        Write-Host "[!] Failed to run VC++ installer: $_" -ForegroundColor Red
+        Remove-Item $vcRedistPath -Force -ErrorAction SilentlyContinue
+      }
+    }
+    
+    if (-not $installSuccess) {
+      Write-Host "" -ForegroundColor Yellow
+      Write-Host "===============================================================================" -ForegroundColor Red
+      Write-Host " IMPORTANT: Visual C++ Redistributable installation may have failed!" -ForegroundColor Red
+      Write-Host " PyTorch requires this component to run properly on Windows." -ForegroundColor Red
+      Write-Host "" -ForegroundColor Red
+      Write-Host " Please download and install manually from:" -ForegroundColor Yellow
+      Write-Host "   https://aka.ms/vs/17/release/vc_redist.x64.exe" -ForegroundColor Cyan
+      Write-Host "" -ForegroundColor Yellow
+      Write-Host " After installing, restart the AI-OS application." -ForegroundColor Yellow
+      Write-Host "===============================================================================" -ForegroundColor Red
+      Write-Host ""
+    }
+    
+    return $installSuccess
+  } else {
+    Write-Host "[!] WARNING: PyTorch WILL NOT WORK without Visual C++ Redistributable!" -ForegroundColor Red
+    Write-Host "[!] You MUST install it from: https://aka.ms/vs/17/release/vc_redist.x64.exe" -ForegroundColor Yellow
+    return $false
+  }
 }
 
 function Test-Git() {
@@ -546,11 +1323,18 @@ function Test-Git() {
       return
     }
     try {
+      if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Host "[!] winget not found. Cannot install Git automatically." -ForegroundColor Red
+        throw "winget not found"
+      }
       winget install -e --id Git.Git -h --accept-source-agreements --accept-package-agreements
       Write-Host "[+] Git installed." -ForegroundColor Green
+      try {
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+      } catch {}
       return
     } catch {
-      Write-Host "[!] winget install failed. Please install Git manually and re-run." -ForegroundColor Red
+      Write-Host "[!] Git installation failed. Please install Git manually and re-run." -ForegroundColor Red
       throw
     }
   } else {
@@ -574,11 +1358,18 @@ function Test-NodeJS() {
     return
   }
   try {
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Host "[!] winget not found. Cannot install Node.js automatically." -ForegroundColor Red
+        throw "winget not found"
+    }
     winget install -e --id OpenJS.NodeJS.LTS -h --accept-source-agreements --accept-package-agreements
     Write-Host "[+] Node.js installed." -ForegroundColor Green
+    try {
+      $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+    } catch {}
     Write-Host "    Note: You may need to restart your terminal for 'node' to be available in PATH." -ForegroundColor Yellow
   } catch {
-    Write-Host "[!] winget install failed. Node.js is required for MCP tool support." -ForegroundColor Red
+    Write-Host "[!] Node.js installation failed. Node.js is required for MCP tool support." -ForegroundColor Red
     Write-Host "    Install manually: winget install OpenJS.NodeJS.LTS" -ForegroundColor Red
     throw "Node.js installation failed."
   }
@@ -612,30 +1403,77 @@ function Install-LauncherWrapper {
 # Core Logic Functions
 function Install-Aios() {
   Write-Host "--- Starting AI-OS Windows Installation ---"
+  
+  # CRITICAL: Install Visual C++ Redistributable FIRST - required for PyTorch DLLs
+  Test-VCRedist
+  
   Test-Python
   Test-Git
   Test-NodeJS  # Check for Node.js (optional but recommended)
 
-  # Decide best Python interpreter (prefer 3.12 for CUDA builds)
+  # Decide best Python interpreter
+  # Prefer higher versions for better CUDA wheel support, but respect PreferredPythonVersion if set
   $gpuInfo = Get-GpuInfo
   $preferCuda = ($Gpu -eq 'cuda') -or ($Gpu -eq 'auto' -and $gpuInfo.HasNvidia)
   $pyExec = ''
+  
+  # Determine target version for installation if needed
+  $targetVersion = Get-PreferredPythonVersion
+  $targetMajorMinor = Get-PythonMajorMinor -FullVersion $targetVersion
+  
   if ($preferCuda) {
+    # For CUDA, try higher versions first as they have better wheel support
     $pyExec = Get-PythonExecutableForVersion '3.12'
+    if (-not $pyExec) { $pyExec = Get-PythonExecutableForVersion '3.11' }
+    if (-not $pyExec) { $pyExec = Get-PythonExecutableForVersion '3.10' }
+    
     if (-not $pyExec) {
-      Write-Host "[!] Python 3.12 not found but recommended for CUDA wheels. Attempt installation via winget…" -ForegroundColor Yellow
-      if (Confirm-Choice "Install Python 3.12 via winget now?" -DefaultYes:$true) {
-        winget install -e --id Python.Python.3.12 -h --accept-source-agreements --accept-package-agreements
-        $pyExec = Get-PythonExecutableForVersion '3.12'
+      Write-Host "[!] No suitable Python found. Will install Python $targetMajorMinor." -ForegroundColor Yellow
+      $wingetPkgId = "Python.Python.$targetMajorMinor"
+      if (Confirm-Choice "Install Python $targetMajorMinor via winget now?" -DefaultYes:$true) {
+        winget install -e --id $wingetPkgId -h --accept-source-agreements --accept-package-agreements
+        $pyExec = Get-PythonExecutableForVersion $targetMajorMinor
       }
     }
   }
+  if (-not $pyExec) { $pyExec = Get-PythonExecutableForVersion '3.12' }
   if (-not $pyExec) { $pyExec = Get-PythonExecutableForVersion '3.11' }
   if (-not $pyExec) { $pyExec = Get-PythonExecutableForVersion '3.10' }
   if (-not $pyExec) {
     try { $pyExec = (Get-Command python -ErrorAction SilentlyContinue).Source } catch {}
   }
-  if (-not $pyExec) { throw "No suitable Python interpreter found." }
+  if (-not $pyExec) {
+    if ($SkipPythonInstall) {
+      Write-Host "[!] Python not found and installation skipped." -ForegroundColor Yellow
+      Write-Host "[!] Skipping environment setup. You must configure AI-OS manually." -ForegroundColor Yellow
+      
+      # Create the shortcut pointing to the wrapper (or nothing?)
+      # If we return here, we skip the rest of Install-Aios, including shortcut creation.
+      # We should probably still create the shortcut but point it to a placeholder or just the wrapper.
+      
+      $wrapperExe = Install-LauncherWrapper
+      if ($wrapperExe) {
+          # Create shortcut to wrapper
+          try {
+            $startMenuPath = [Environment]::GetFolderPath('StartMenu')
+            $programsPath = Join-Path $startMenuPath 'Programs'
+            $shortcutPath = Join-Path $programsPath 'AI-OS.lnk'
+            $iconPath = Join-Path $repoRoot 'installers\AI-OS.ico'
+            $WScriptShell = New-Object -ComObject WScript.Shell
+            $shortcut = $WScriptShell.CreateShortcut($shortcutPath)
+            $shortcut.TargetPath = $wrapperExe
+            $shortcut.Arguments = "gui"
+            $shortcut.WorkingDirectory = $repoRoot
+            $shortcut.Description = "AI-OS - Advanced AI Operating System"
+            if (Test-Path $iconPath) { $shortcut.IconLocation = $iconPath }
+            $shortcut.Save()
+          } catch {}
+      }
+      
+      return
+    }
+    throw "No suitable Python interpreter found."
+  }
 
   $venvPath = Join-Path $repoRoot ".venv"
   Write-Host "[i] Setting up Python virtual environment in '$venvPath' using '$pyExec'..."
@@ -795,6 +1633,11 @@ def installed_cuda_version(name=""):
   Write-Host "[+] AI-OS installation complete!" -ForegroundColor Green
   Write-Host "To activate the environment, run: & '$venvPath\Scripts\Activate.ps1'"
   Write-Host "Then you can use the 'aios' command."
+  
+  # Notify about desktop log location
+  if ($script:DesktopLogInitialized -and (Test-Path $script:DesktopLogPath)) {
+    Write-Host "[i] Installation log saved to: $($script:DesktopLogPath)" -ForegroundColor Cyan
+  }
 
   # Compile wrapper
   $wrapperExe = Install-LauncherWrapper
@@ -954,12 +1797,58 @@ function Main() {
     try {
       Invoke-Preflight
     } catch {
+      $errorMessage = $_.Exception.Message
+      $errorDetails = $_ | Out-String
+      
       if ($Quiet) {
         Write-Error $_
       } else {
         Write-Host "[!!!] Preflight failed:" -ForegroundColor Red
         Write-Host $_ -ForegroundColor Red
       }
+
+      # Emergency log - write directly to known locations regardless of $InstallerLog
+      $emergencyLog = @"
+[Preflight Failure Log]
+Timestamp: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+Error: $errorMessage
+Details:
+$errorDetails
+
+Script Path: $PSScriptRoot
+Repo Root: $repoRoot
+InstallerLog Parameter: $InstallerLog
+Desktop Log: $($script:DesktopLogPath)
+PayloadBytes Parameter: $PayloadBytes
+Gpu Parameter: $Gpu
+"@
+
+      # Always notify about desktop log if it was created
+      if ($script:DesktopLogInitialized -and (Test-Path $script:DesktopLogPath)) {
+          if (-not $Quiet) {
+              Write-Host "[i] Full log saved to desktop: $($script:DesktopLogPath)" -ForegroundColor Cyan
+          }
+      }
+
+      $logDestinations = @("C:\AI-OS_Root", "C:\Installer", "$env:TEMP")
+      foreach ($dest in $logDestinations) {
+          if (Test-Path $dest) {
+              try {
+                  $emergencyLogPath = Join-Path $dest "aios_preflight_failure.log"
+                  Set-Content -Path $emergencyLogPath -Value $emergencyLog -Force -Encoding UTF8
+                  
+                  # Also copy the InstallerLog if it exists
+                  if ($InstallerLog -and (Test-Path $InstallerLog)) {
+                      Copy-Item -Path $InstallerLog -Destination (Join-Path $dest "aios_preflight_detail.log") -Force
+                  }
+                  # Copy desktop log if it exists
+                  if ($script:DesktopLogInitialized -and (Test-Path $script:DesktopLogPath)) {
+                      Copy-Item -Path $script:DesktopLogPath -Destination (Join-Path $dest "aios_desktop.log") -Force
+                  }
+              } catch {}
+          }
+      }
+
       exit 1
     }
     return
@@ -987,10 +1876,48 @@ function Main() {
   } catch {
     Write-Host "[!!!] An error occurred:" -ForegroundColor Red
     Write-Host $_ -ForegroundColor Red
+    
+    # Always notify about desktop log if it was created
+    if ($script:DesktopLogInitialized -and (Test-Path $script:DesktopLogPath)) {
+        Write-Host "[i] Full log saved to desktop: $($script:DesktopLogPath)" -ForegroundColor Cyan
+    }
+
     exit 1
   } finally {
     Pop-Location
   }
 }
 
-Main
+# Wrap Main execution to catch ANY error and log to desktop
+try {
+    Main
+} catch {
+    $errorMsg = "FATAL ERROR: $($_.Exception.Message)"
+    $errorDetails = $_ | Out-String
+    
+    # Always try to write to desktop log
+    if ($script:DesktopLogInitialized -and $script:DesktopLogPath) {
+        try {
+            $criticalError = @"
+
+========================================
+CRITICAL ERROR CAUGHT
+========================================
+$errorMsg
+
+Full Details:
+$errorDetails
+
+Stack Trace:
+$($_.ScriptStackTrace)
+"@
+            Add-Content -Path $script:DesktopLogPath -Value $criticalError -Encoding UTF8 -Force
+            Write-Host "[!!!] Fatal error occurred. Check desktop log: $script:DesktopLogPath" -ForegroundColor Red
+        } catch {
+            # Last resort - can't even write to desktop log
+        }
+    }
+    
+    # Re-throw to preserve exit code
+    throw
+}

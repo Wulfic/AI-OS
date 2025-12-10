@@ -15,11 +15,13 @@ This document is a comprehensive design and delivery guide for adding pluggable 
 
 - Improve scalability and reproducibility of dataset handling.
 - Prepare for retrieval-augmented features and expert selection memories.
+- Enable persistent cognitive memory for attention traces and crystallized motifs (see `PERSISTENT_TRACES_SEMANTIC_CRYSTALLIZATION.md`).
 
 ### Non-goals (Out of scope for PF-005)
 
 - Full RAG pipelines, memory policies, or retrieval-integrated training loops.
 - On-the-fly embedding model training; we only provide an API and a thin client.
+- Cognitive memory integration (attention traces, crystallized motifs) is implemented separately in Phase 2.5 of `PERSISTENT_TRACES_SEMANTIC_CRYSTALLIZATION.md` after both foundations are complete.
 
 ---
 
@@ -78,6 +80,138 @@ class VectorStoreClient:
 ```
 
 Use cases now: basic smoke tests and future expert-selection memories. No training-time coupling required in PF-005.
+
+### 3) Cognitive memory integration (Future)
+
+**Note**: This section describes planned integration with `PERSISTENT_TRACES_SEMANTIC_CRYSTALLIZATION.md` (implemented in their Phase 2.5, dependent on PF-005 completion).
+
+The `VectorStoreClient` provides the storage backend for two cognitive memory components:
+
+#### A) Attention Trace Storage
+
+**Purpose**: Persist high-salience attention patterns across training sessions.
+
+**Wrapper class**: `TraceVectorStore`
+```python
+# src/aios/core/hrm_models/cognitive/vector_wrappers.py
+from aios.memory.vector_store import VectorStoreClient
+
+class TraceVectorStore:
+    """Specialized wrapper for attention trace persistence."""
+    
+    def __init__(self, vector_client: VectorStoreClient, collection: str = "attention_traces"):
+        self.client = vector_client
+        self.collection = collection
+        self.embedder = TraceEmbedder(embed_dim=128)  # Converts sparse trace to dense vector
+    
+    def upsert_traces(self, traces: List[AttentionTrace], training_step: int):
+        """Store batch of attention traces."""
+        ids = [f"trace_{t.layer_id}_{t.head_id}_{t.query_idx}_{t.key_idx}_{training_step}" 
+               for t in traces]
+        vectors = [self.embedder.embed(t) for t in traces]  # List[np.ndarray[128]]
+        metadata = [{
+            "layer": t.layer_id,
+            "head": t.head_id,
+            "query_idx": t.query_idx,
+            "key_idx": t.key_idx,
+            "salience": t.salience,
+            "age": t.age,
+            "training_step": training_step,
+        } for t in traces]
+        self.client.upsert(ids, vectors, metadata)
+    
+    def query_similar_traces(self, query_trace: AttentionTrace, top_k: int = 100):
+        """Retrieve similar traces for warm-starting."""
+        query_vec = self.embedder.embed(query_trace)
+        return self.client.query(query_vec, top_k=top_k)
+```
+
+**Data flow**:
+1. Training runs with `TraceManager` accumulating traces in RAM (~24 MB)
+2. Every `trace_sync_interval` steps (e.g., 1000), `TraceManager.sync_to_vector_store()` calls `TraceVectorStore.upsert_traces()`
+3. On training restart, `TraceManager.load_from_vector_store()` retrieves historical traces for warm start
+4. Benefit: Cross-session learning - model remembers useful attention patterns from previous training runs
+
+**Collections**: `attention_traces` (one per model or shared)
+
+#### B) Crystallized Motif Storage
+
+**Purpose**: Store and share high-utility expert routing patterns ("thought primitives").
+
+**Wrapper class**: `MotifVectorStore`
+```python
+class MotifVectorStore:
+    """Specialized wrapper for crystallized motif persistence."""
+    
+    def __init__(self, vector_client: VectorStoreClient, collection: str = "crystallized_motifs"):
+        self.client = vector_client
+        self.collection = collection
+        self.embedder = MotifEmbedder(embed_dim=256)  # Encodes expert sequence to vector
+    
+    def upsert_motif(self, motif: CrystallizedMotif):
+        """Store a single crystallized motif."""
+        motif_id = f"motif_{motif.id}"
+        vector = self.embedder.embed(motif)  # np.ndarray[256]
+        metadata = {
+            "motif_id": motif.id,
+            "expert_sequence": motif.expert_sequence,  # [2, 7, 3, 1]
+            "frequency": motif.count,
+            "utility": motif.utility,
+            "entropy": motif.entropy,
+            "age": motif.age,
+            "task_tags": motif.task_tags,  # ["retrieval", "QA"]
+        }
+        self.client.upsert([motif_id], [vector], [metadata])
+    
+    def query_motifs_for_task(self, task_tag: str, top_k: int = 10):
+        """Retrieve best motifs for specific task type."""
+        # Filter by task tag, return highest utility
+        return self.client.query(
+            vector=None,  # Use filter-only query if backend supports
+            top_k=top_k,
+            filter={"task_tags": task_tag}
+        )
+    
+    def transfer_motifs_to_model(self, target_model_id: str, motif_ids: List[str]):
+        """Enable cross-model motif sharing."""
+        # Retrieve motifs and return for injection into target model's RoutingPathTree
+        results = [self.client.query_by_id(mid) for mid in motif_ids]
+        return [self._reconstruct_motif_from_metadata(r[2]) for r in results]
+```
+
+**Data flow**:
+1. During training, `RoutingPathTree` tracks expert routing patterns
+2. When motif crystallizes (high frequency + utility + stability), `RoutingPathTree.persist_motif()` calls `MotifVectorStore.upsert_motif()`
+3. Other models can query motifs via `query_motifs_for_task()` for zero-shot transfer
+4. Benefit: Multi-model collaboration - models share learned reasoning strategies
+
+**Collections**: `crystallized_motifs` (shared across all models for collaborative learning)
+
+#### C) Scalability Comparison
+
+| Storage Mode | Capacity | Retrieval Speed | Persistence | Sharing |
+|--------------|----------|-----------------|-------------|----------|
+| **RAM-only** (baseline) | ~2M traces, 512 motifs | O(n) scan | None (lost on restart) | No |
+| **Vector Store** (enhanced) | Billions of traces/motifs | O(log n) ANN | Persistent | Multi-model |
+
+**Memory overhead**:
+- RAM-only: 30 MB total
+- With vector store: 30 MB (RAM) + 5 MB (embedding models) = 35 MB total
+- External storage: Qdrant/LanceDB (on disk or service)
+
+**Configuration** (see unified schema below):
+```yaml
+memory:
+  vector_store:
+    backend: "qdrant"  # Shared by datasets, traces, and motifs
+  persistent_traces:
+    persist_to_vector_store: true  # Enable cross-session persistence
+    trace_sync_interval: 1000
+  semantic_crystallization:
+    persist_motifs: true  # Auto-save crystallized motifs
+```
+
+**Integration timeline**: Week 6.5-7.5 of Persistent Traces roadmap (after PF-005 vector store foundation is complete).
 
 ---
 
@@ -232,6 +366,22 @@ Optional CLI (lightweight utility for smoke tests):
 
 - `aios memory vs-upsert` and `aios memory vs-query` that call the above client; documented only, can be added in a follow-up small PR.
 
+### F) Cognitive memory integration (Future)
+
+**Note**: Implemented in `PERSISTENT_TRACES_SEMANTIC_CRYSTALLIZATION.md` Phase 2.5 (Week 6.5-7.5), dependent on PF-005 completion.
+
+Files to add by cognitive architecture team:
+
+- `src/aios/core/hrm_models/cognitive/vector_wrappers.py` (`TraceVectorStore`, `MotifVectorStore`)
+- `src/aios/core/hrm_models/cognitive/embedders.py` (`TraceEmbedder`, `MotifEmbedder`)
+
+Integration points in existing files:
+
+- `src/aios/core/hrm_models/cognitive/trace_manager.py`: Add `sync_to_vector_store()`, `load_from_vector_store()` methods
+- `src/aios/core/hrm_models/cognitive/routing_tree.py`: Add `persist_motif()` method
+
+See "Cognitive memory integration" section above for detailed specifications.
+
 ---
 
 ## Docker and local services
@@ -297,6 +447,232 @@ Acceptance criteria (pass/fail):
 - HF: Iterates and trains for 1 step on a public dataset split; no blocking warnings
 - WDS: Iterates and trains for 1 step from shards; no blocking warnings
 - VS: Upsert/query test returns top-5 with non-increasing similarity
+
+---
+
+## Implementation roadmap
+
+**Total timeline**: 6 weeks for core features + 1.5 weeks for cognitive memory integration (optional)
+
+### Week 1-2: Core Infrastructure
+**Owner**: Backend team  
+**Deliverables**:
+- [ ] Create `src/aios/memory/vector_store.py` with `VectorStoreClient` protocol
+- [ ] Implement Qdrant driver (`src/aios/memory/vector_stores/qdrant.py`)
+- [ ] Implement LanceDB driver (`src/aios/memory/vector_stores/lancedb.py`)
+- [ ] Factory function `create_vector_store(backend, config)`
+- [ ] Unit tests for upsert/query/delete operations
+- [ ] Docker Compose service definition for Qdrant
+
+**Acceptance**:
+- Qdrant driver: Upsert 1000 vectors, query returns correct top-5
+- LanceDB driver: Same test, embedded mode (no service)
+- Both drivers pass same test suite (interface compliance)
+
+### Week 3-4: Dataset Backend Integration
+**Owner**: Training pipeline team  
+**Deliverables**:
+- [ ] Create `src/aios/cli/hrm_hf/data_backends/` package
+- [ ] Implement `custom.py` (wrap existing file/dir/CSV logic)
+- [ ] Implement `hf.py` (HuggingFace Datasets streaming)
+- [ ] Implement `webdataset.py` (tar shard reader)
+- [ ] Update `TrainingConfig` with new dataset backend fields
+- [ ] CLI integration: `train-actv1 --dataset-backend hf --hf-name wikitext`
+- [ ] Integration tests with small HF dataset and local tar shards
+
+**Acceptance**:
+- HF backend: Train 10 steps on wikitext, metrics JSONL contains 10 records
+- WebDataset backend: Train 10 steps from 2 local tar shards, no errors
+- Custom backend: Existing tests still pass (backward compatibility)
+
+### Week 5-6: GUI and Production Hardening
+**Owner**: GUI + DevOps  
+**Deliverables**:
+- [ ] GUI integration: `HRMTrainingPanel` dropdown for dataset backend selection
+- [ ] Conditional UI fields for HF and WebDataset options
+- [ ] Configuration validation (prevent missing required fields)
+- [ ] Error handling for missing Qdrant service, HF auth failures, invalid shard patterns
+- [ ] Documentation: User guide for dataset backends and vector store setup
+- [ ] PowerShell examples for Windows users
+
+**Acceptance**:
+- GUI: Select HF backend, populate fields, launch training successfully
+- Error handling: Missing Qdrant service shows clear error message
+- Docs: New user can follow guide to set up Qdrant and run HF training
+
+### Week 6.5-7.5: Cognitive Memory Integration (Optional)
+**Prerequisites**: 
+- PF-005 vector store complete (Weeks 1-6)
+- Persistent Traces Phase 0-2 complete (see `PERSISTENT_TRACES_SEMANTIC_CRYSTALLIZATION.md`)
+
+**Owner**: Cognitive architecture team  
+**Deliverables**:
+- [ ] Implement `TraceVectorStore` wrapper class
+- [ ] Implement `MotifVectorStore` wrapper class
+- [ ] Implement `TraceEmbedder` (sparse trace → 128D vector)
+- [ ] Implement `MotifEmbedder` (expert sequence → 256D vector)
+- [ ] Integration tests: Trace persistence/retrieval cycle
+- [ ] Cross-model motif transfer test
+
+**Acceptance**:
+- TraceVectorStore: Persist 10K traces, reload, verify salience within 1% error
+- MotifVectorStore: Query similar motifs, cosine similarity > 0.8 for same-task motifs
+- Works with both Qdrant and LanceDB backends
+
+**Notes**:
+- This phase is implemented by the Persistent Traces team, not PF-005 core team
+- See `PERSISTENT_TRACES_SEMANTIC_CRYSTALLIZATION.md` Phase 2.5 for detailed spec
+- Can be skipped if cognitive memory features not needed
+
+### Week 8: Deployment and Monitoring (Final)
+**Owner**: DevOps  
+**Deliverables**:
+- [ ] Production Qdrant deployment guide (cloud or self-hosted)
+- [ ] Monitoring dashboard for vector store metrics (latency, storage size)
+- [ ] Backup/restore scripts for Qdrant collections
+- [ ] Performance benchmarks: Dataset iteration speed, vector query latency
+
+**Acceptance**:
+- Qdrant service runs in production with health checks
+- Monitoring shows vector store query p95 latency < 50ms
+- Backup script successfully exports and restores 1M vectors
+
+---
+
+## Coordination with Persistent Traces plan
+
+**Parallel development strategy**:
+- **Weeks 1-6**: PF-005 (this document) and Persistent Traces Phases 0-2 proceed **independently**
+- **Week 6.5-7.5**: Integration phase requires **both systems complete**
+- **Week 7+**: Persistent Traces continues independently, optionally using vector store
+
+**Critical dependencies**:
+1. `VectorStoreClient` interface must be finalized by end of Week 2
+2. Qdrant or LanceDB must be deployable by end of Week 4
+3. TraceVectorStore/MotifVectorStore depend on VectorStoreClient being stable
+
+**Configuration namespace**:
+Both plans share unified `memory:` section in `config/default.yaml` (see Unified Configuration Schema below).
+
+**Cross-references**:
+- For cognitive memory use cases, see: `PERSISTENT_TRACES_SEMANTIC_CRYSTALLIZATION.md`
+- For trace/motif embedding specifications, see: `PERSISTENT_TRACES_SEMANTIC_CRYSTALLIZATION.md` § Vector Store Integration
+- For unified config schema, see: Unified Configuration Schema section below
+
+---
+
+## Unified configuration schema
+
+**Location**: `config/default.yaml`
+
+**Namespace**: All memory-related features unified under `memory:` top-level key to avoid conflicts.
+
+```yaml
+# Memory Architecture (Unified Schema)
+# Covers: Dataset backends (PF-005), Vector stores (PF-005), 
+#         Persistent traces (Cognitive), Semantic crystallization (Cognitive)
+memory:
+  # ============================================
+  # Dataset Backends (PF-005)
+  # ============================================
+  dataset:
+    backend: "custom"  # custom|hf|webdataset
+    
+    # HuggingFace Datasets streaming
+    hf:
+      name: null                      # e.g., "wikitext"
+      config: null                    # e.g., "wikitext-103-raw-v1"
+      split: "train"                  # train|validation|test
+      streaming: true                 # Enable streaming mode
+      cache_dir: null                 # Optional cache directory
+      num_workers: 2                  # Tokenization workers
+      token_env: "HUGGING_FACE_HUB_TOKEN"  # Auth token env var
+    
+    # WebDataset tar shards
+    webdataset:
+      pattern: null                   # e.g., "data/shards/shard-{000000..000099}.tar"
+      resampled: false                # Use ResampledShards for infinite iteration
+      shuffle: 1000                   # Shuffle buffer size
+      decode: "text"                  # text|bytes
+      key: "txt"                      # Key to extract from tar entries
+  
+  # ============================================
+  # Vector Storage Backend (PF-005)
+  # ============================================
+  vector_store:
+    backend: "qdrant"  # qdrant|lancedb|disabled
+    
+    # Qdrant configuration
+    qdrant:
+      host: "localhost"
+      port: 6333
+      collection_prefix: "aios_memory"  # Collections: aios_memory_traces, aios_memory_motifs
+      api_key: null                     # Optional authentication
+    
+    # LanceDB configuration
+    lancedb:
+      path: "artifacts/memory/lancedb" # Embedded database path
+  
+  # ============================================
+  # Persistent Attention Traces (Cognitive)
+  # See: PERSISTENT_TRACES_SEMANTIC_CRYSTALLIZATION.md
+  # ============================================
+  persistent_traces:
+    enabled: false                    # Enable persistent trace memory
+    
+    # Core trace parameters
+    sparsity: 0.001                   # Capture top 0.1% of attention edges
+    quota_per_head: 2048              # Max traces per attention head
+    salience_threshold: 0.05          # Minimum salience to persist
+    retention_rate: 0.95              # λ (EMA momentum)
+    decay_rate: 0.98                  # γ (forgetting rate for unused traces)
+    bias_strength: 0.1                # α (injection strength into attention)
+    update_interval: 100              # Steps between trace consolidation
+    warmup_steps: 1000                # Standard attention before trace capture
+    
+    # Vector store integration (optional - requires vector_store.backend != disabled)
+    persist_to_vector_store: false    # Enable cross-session persistence
+    trace_sync_interval: 1000         # Steps between DB syncs
+    embedding_dim: 128                # Trace embedding dimensionality
+    warm_start: false                 # Load traces from DB on training start
+    task_tag: null                    # Filter traces by task type ("QA", "generation", etc.)
+  
+  # ============================================
+  # Semantic Crystallization (Cognitive)
+  # See: PERSISTENT_TRACES_SEMANTIC_CRYSTALLIZATION.md
+  # ============================================
+  semantic_crystallization:
+    enabled: false                    # Enable motif crystallization
+    
+    # Crystallization criteria
+    min_frequency: 100                # f_min (minimum traversals)
+    min_utility: 0.05                 # U_min (5% improvement over baseline)
+    max_entropy: 1.0                  # H_max (routing stability threshold)
+    min_age: 500                      # Temporal stability requirement (steps)
+    max_motifs: 512                   # Hard limit on crystallized primitives
+    
+    # Vector store integration (optional)
+    persist_motifs: false             # Auto-save crystallized motifs to DB
+    motif_embedding_dim: 256          # Motif embedding dimensionality
+    share_across_models: false        # Allow other models to query/reuse motifs
+```
+
+**Validation rules**:
+- If `memory.dataset.backend == "hf"`, require `memory.dataset.hf.name`
+- If `memory.dataset.backend == "webdataset"`, require `memory.dataset.webdataset.pattern`
+- If `memory.persistent_traces.persist_to_vector_store == true`, require `memory.vector_store.backend != "disabled"`
+- If `memory.semantic_crystallization.persist_motifs == true`, require `memory.vector_store.backend != "disabled"`
+
+**Backward compatibility**:
+- Existing `dataset_file` config maps to `memory.dataset.backend == "custom"`
+- All `memory.*` fields default to disabled/conservative values
+- No breaking changes to existing training configs
+
+**Windows compatibility**:
+- All paths use forward slashes internally, converted by PathLib
+- PowerShell examples in documentation
+- Qdrant via Docker Desktop (Windows native)
+- LanceDB pure Python (Windows native)
 
 ---
 

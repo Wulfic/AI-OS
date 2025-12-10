@@ -11,13 +11,151 @@ This module orchestrates application initialization by:
 """
 
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 import faulthandler
 import sys
 import logging
 import time
 import os
+import traceback
+from datetime import datetime
 from pathlib import Path
+
+# ============================================================================
+# EARLY CRASH PROTECTION - Enable before any heavy imports
+# This helps capture crashes that happen during startup before logging is ready
+# ============================================================================
+_CRASH_LOG_PATH: Path | None = None
+
+
+def _get_crash_log_path() -> Path:
+    """Get path for early crash log file."""
+    global _CRASH_LOG_PATH
+    if _CRASH_LOG_PATH is not None:
+        return _CRASH_LOG_PATH
+    
+    # Try multiple locations in order of preference
+    candidates = []
+    
+    # 1. User's Desktop (most visible for troubleshooting)
+    try:
+        desktop = Path.home() / "Desktop"
+        if desktop.exists():
+            candidates.append(desktop / "AIOS_crash.log")
+    except Exception:
+        pass
+    
+    # 2. User's local app data
+    try:
+        local_appdata = Path(os.environ.get("LOCALAPPDATA", "")) / "aios"
+        if local_appdata.parent.exists():
+            local_appdata.mkdir(parents=True, exist_ok=True)
+            candidates.append(local_appdata / "crash.log")
+    except Exception:
+        pass
+    
+    # 3. Current working directory
+    try:
+        candidates.append(Path.cwd() / "logs" / "crash.log")
+    except Exception:
+        pass
+    
+    # 4. Temp directory as last resort
+    try:
+        import tempfile
+        candidates.append(Path(tempfile.gettempdir()) / "aios_crash.log")
+    except Exception:
+        pass
+    
+    # Try to create and write to each candidate
+    for candidate in candidates:
+        try:
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            # Test write
+            with open(candidate, "a", encoding="utf-8") as f:
+                f.write("")
+            _CRASH_LOG_PATH = candidate
+            return candidate
+        except Exception:
+            continue
+    
+    # Absolute fallback
+    _CRASH_LOG_PATH = Path("aios_crash.log")
+    return _CRASH_LOG_PATH
+
+
+def _write_crash_log(message: str, exc: Exception | None = None) -> None:
+    """Write to crash log file immediately (synchronous, no buffering)."""
+    try:
+        crash_path = _get_crash_log_path()
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        
+        with open(crash_path, "a", encoding="utf-8") as f:
+            f.write(f"\n{'='*80}\n")
+            f.write(f"[{timestamp}] {message}\n")
+            if exc:
+                f.write(f"Exception: {type(exc).__name__}: {exc}\n")
+                f.write("Traceback:\n")
+                f.write(traceback.format_exc())
+            f.write(f"{'='*80}\n")
+            f.flush()
+            os.fsync(f.fileno())  # Force write to disk
+    except Exception:
+        pass  # Can't do anything if crash log fails
+
+
+def _setup_early_crash_protection() -> None:
+    """Set up early crash protection before heavy imports."""
+    try:
+        # Enable faulthandler immediately for native crashes
+        faulthandler.enable()
+        
+        # Try to write to a crash log file
+        crash_file = _get_crash_log_path()
+        try:
+            crash_file_handle = open(crash_file, "a", encoding="utf-8")
+            faulthandler.enable(file=crash_file_handle)
+        except Exception:
+            pass
+        
+        # Install global exception handler
+        _original_excepthook = sys.excepthook
+        
+        def _crash_excepthook(exc_type, exc_value, exc_tb):
+            _write_crash_log(
+                f"Unhandled exception in main thread: {exc_type.__name__}",
+                exc_value
+            )
+            _original_excepthook(exc_type, exc_value, exc_tb)
+        
+        sys.excepthook = _crash_excepthook
+        
+        # Install threading exception handler (Python 3.8+)
+        import threading
+        _original_threading_excepthook = getattr(threading, 'excepthook', None)
+        
+        def _threading_excepthook(args):
+            _write_crash_log(
+                f"Unhandled exception in thread '{args.thread.name if args.thread else 'unknown'}': {args.exc_type.__name__}",
+                args.exc_value
+            )
+            if _original_threading_excepthook:
+                _original_threading_excepthook(args)
+        
+        threading.excepthook = _threading_excepthook
+        
+        _write_crash_log("AI-OS GUI starting - crash protection enabled")
+        
+    except Exception as e:
+        # Even crash protection setup can fail - log it
+        try:
+            print(f"[CRASH PROTECTION] Setup failed: {e}", file=sys.stderr)
+        except Exception:
+            pass
+
+
+# Enable crash protection immediately
+_setup_early_crash_protection()
 
 try:  # pragma: no cover - bootstrap guard
     from aios.system import paths as system_paths
@@ -92,6 +230,7 @@ def run_app(app_instance: Any) -> None:
     """
     
     app = app_instance
+    _write_crash_log("run_app: Starting application initialization")
     logger.info("Starting application initialization")
     start_time = time.time()
     last_time = start_time
@@ -104,10 +243,12 @@ def run_app(app_instance: Any) -> None:
         total_duration = current - start_time
         msg = f"[TIMING] {step_name}: {step_duration:.3f}s (total: {total_duration:.3f}s)"
         logger.info(msg)
+        _write_crash_log(f"run_app: {step_name} ({step_duration:.3f}s)")
         last_time = current
     
     _faulthandler_timer_active = False
     try:
+        _write_crash_log("run_app: Applying artifacts override")
         _apply_saved_artifacts_override()
         # Use existing loading screen (created in __init__)
         def update_status(text):
@@ -135,24 +276,28 @@ def run_app(app_instance: Any) -> None:
                 pass
         
         # 1. Initialize resources (threads, timers, async loop)
+        _write_crash_log("run_app: Step 1 - Initializing resources")
         logger.info("Initializing resources...")
         update_status("Initializing resources...")
         setup_resources(app, app.root, False)  # start_minimized handled elsewhere
         log_timing("Resources initialized")
         
         # 2. Initialize logging system
+        _write_crash_log("run_app: Step 2 - Initializing logging")
         logger.info("Initializing logging...")
         update_status("Initializing logging...")
         initialize_logging(app, app._project_root)
         log_timing("Logging initialized")
         
         # 3. Initialize state management
+        _write_crash_log("run_app: Step 3 - Initializing state management")
         logger.info("Initializing state management...")
         update_status("Initializing state management...")
         initialize_state(app, app._project_root)
         log_timing("State management initialized")
         
         # 4. Create UI structure (notebook with tabs)
+        _write_crash_log("run_app: Step 4 - Creating UI structure")
         logger.info("Creating UI structure...")
         update_status("Creating interface layout...")
         create_ui_structure(app, app.root)
@@ -167,6 +312,7 @@ def run_app(app_instance: Any) -> None:
         log_timing("UI structure created")
         
         # 5. Set up operation handlers (BEFORE panels - they depend on these)
+        _write_crash_log("run_app: Step 5 - Setting up operations")
         logger.info("Setting up operations...")
         update_status("Initializing core systems...")
         setup_chat_operations(app)
@@ -209,12 +355,14 @@ def run_app(app_instance: Any) -> None:
         app.schedule_state_save = schedule_state_save
         
         # 6. Set up event handlers
+        _write_crash_log("run_app: Step 6 - Setting up event handlers")
         logger.info("Setting up event handlers...")
         update_status("Connecting event handlers...")
         setup_event_handlers(app)
         log_timing("Event handlers set up")
         
         # 7. Set up system tray (optional)
+        _write_crash_log("run_app: Step 7 - Initializing system tray")
         update_status("Initializing system tray...")
         try:
             init_tray(app)
@@ -223,6 +371,7 @@ def run_app(app_instance: Any) -> None:
         log_timing("System tray initialized")
         
         # 8. Initialize all panels (with progress updates)
+        _write_crash_log("run_app: Step 8 - Initializing panels")
         logger.info("Initializing panels...")
         update_status("Building interface panels...")
         initialize_panels(app)
@@ -238,6 +387,7 @@ def run_app(app_instance: Any) -> None:
         
         # 9. Load panel data synchronously while keeping loading screen visible
         # This ensures all data is loaded before user can interact
+        _write_crash_log("run_app: Step 9 - Loading panel data (parallel)")
         logger.info("Loading panel data...")
         update_status("Loading application data...")
         from .panel_setup import load_all_panel_data
@@ -245,6 +395,7 @@ def run_app(app_instance: Any) -> None:
         log_timing("Panel data loaded")
         
         # 10. Load and restore saved state
+        _write_crash_log("run_app: Step 10 - Restoring saved state")
         logger.info("Loading saved state...")
         update_status("Restoring your preferences...")
         state = load_state(app)
@@ -258,6 +409,7 @@ def run_app(app_instance: Any) -> None:
         
         # 10b. Re-apply theme after all panels are fully initialized
         # This ensures theme is applied to all components including late-loaded ones
+        _write_crash_log("run_app: Step 10b - Applying theme")
         if hasattr(app, 'settings_panel') and app.settings_panel:
             try:
                 current_theme = app.settings_panel.theme_var.get()
@@ -290,6 +442,7 @@ def run_app(app_instance: Any) -> None:
                 logger.error(f"Failed to re-apply theme: {e}", exc_info=True)
         
         # 11. Configure log levels based on settings
+        _write_crash_log("run_app: Step 11 - Configuring log levels")
         update_status("Finalizing configuration...")
         log_level_setting = "Normal"  # Default
         if hasattr(app, 'settings_panel') and app.settings_panel:
@@ -302,12 +455,14 @@ def run_app(app_instance: Any) -> None:
         log_timing("Log levels configured")
         
         # 12. Setup periodic tasks
+        _write_crash_log("run_app: Step 12 - Setting up periodic tasks")
         update_status("Starting background tasks...")
         setup_periodic_tasks(app)
         
         # NOTE: Help index building is now handled by HelpPanel itself during initialization
         # No need to build it here - removed to prevent race condition with HelpPanel's own index build
         
+        _write_crash_log("run_app: Initialization complete, entering main loop")
         logger.info("AI-OS GUI initialized successfully")
         
         total_startup = time.time() - start_time

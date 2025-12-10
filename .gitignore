@@ -129,3 +129,7 @@ artifacts/diagnostics/device_info_cache.json
 training_datasets/huggingface_documentation-images/dataset_info.json
 training_datasets/huggingface_documentation-images/state.json
 .gitignore
+installers/dependencies/winget/ui_xaml_x64.appx
+installers/dependencies/winget/vclibs_x64.appx
+installers/dependencies/winget/windowsappruntime_x64.exe
+installers/dependencies/winget/winget.msixbundle
