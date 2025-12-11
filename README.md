@@ -47,6 +47,10 @@ TLDR; Have a fast ass GPU with lots of VRAM if you're impatient.
 ### Installers
 Find the official installers also in the [Releases section](https://github.com/Wulfic/AI-OS/releases).
 See [installers/README.md](installers/README.md) for Windows (.exe) and Ubuntu (.deb) info.
+If you broke your install or are missing dependencies in terminal use: 
+```bash
+aios doctor --repair
+```
 ### APT
 ```bash
 sudo add-apt-repository ppa:wulfic/ppa-aios
