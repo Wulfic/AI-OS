@@ -28,7 +28,7 @@ Key features in v1.0.0:
 
 ## Authors Note
 While the minimum specs listed below will allow you to train and run models, please bare in mind, that training could take weeks on smaller/older cards.
-The Optional model that ships alongside this program was trained on 2x RTX 2080ti(11GB) cards. The model is a utilizing the qwen tokenizer, sMoE enabled 268M Params with 8 experts, context length of 1024 resulting in about ~6000 characters for output. Trained 1/10th the Tiny Stories Dataset in ~8 hours.
+The Optional model that ships alongside this program was trained on 2x RTX 2080ti(11GB) cards. The model is a utilizing the qwen tokenizer, sMoE enabled 268M Params with 8 experts, context length of 1024 resulting in about ~6000 characters for output. Trained 1/10th the Tiny Stories Dataset in ~6 hours.
 
 TLDR; Have a fast ass GPU with lots of VRAM if you're impatient.
 
@@ -39,7 +39,9 @@ TLDR; Have a fast ass GPU with lots of VRAM if you're impatient.
 
 ### Prerequisites
 - ~8-10GB Storage for the program, however having at a least a 1 TB SSD/NVME is ideal!
-- Windows 10/11 or Ubuntu 24
+- Windows 11 or Ubuntu 24
+- Internet connection(Faster is better)
+*Note*: If you have a metered connection(limited monthly bandwidth), be mindful of the datasets you choose.
 
 ## Quick Install Info
 ### Installers
