@@ -148,6 +148,7 @@ copy_item() {
       tar -C "$REPO_ROOT" \
         --exclude "installers/_builds" \
         --exclude "installers/releases" \
+        --exclude "installers/dependencies" \
         -cf - "$item" | tar -C "$STAGING_ROOT/opt/ai-os" -xf -
     else
       cp -a "$src" "$STAGING_ROOT/opt/ai-os/"
@@ -156,7 +157,7 @@ copy_item() {
     log_info "Copying file $item"
     install -Dm644 "$src" "$STAGING_ROOT/opt/ai-os/$item"
   else
-    log_error "Skipping missing item: $item"
+    log_info "Skipping missing item: $item"
   fi
 }
 
@@ -189,6 +190,7 @@ PROJECT_ITEMS=(
   "NOTICE"
   "ruff.toml"
   "checklist.txt"
+  "launcher.bat"
 )
 
 for item in "${PROJECT_ITEMS[@]}"; do
