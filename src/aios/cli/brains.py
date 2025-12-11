@@ -501,6 +501,20 @@ def fetch_brain(
     # Log path resolution for debugging
     typer.echo(f"Brain storage directory: {brains_root}")
     
+    # Verify write access to brains directory
+    try:
+        brains_root.mkdir(parents=True, exist_ok=True)
+        test_file = brains_root / ".write_test"
+        test_file.write_text("test")
+        test_file.unlink()
+    except PermissionError:
+        typer.echo(f"Error: No write permission to {brains_root}")
+        typer.echo("Try running the command as administrator or choose a different location.")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        typer.echo(f"Error: Cannot write to {brains_root}: {e}")
+        raise typer.Exit(code=1)
+    
     # Define presets
     presets = {
         "English-v1": {
@@ -522,14 +536,37 @@ def fetch_brain(
         return
 
     typer.echo(f"Downloading {preset} from {info['url']}...")
+    typer.echo("This may take a few minutes depending on your connection speed...")
     
     try:
-        with httpx.Client(follow_redirects=True) as client:
-            resp = client.get(info["url"])
-            resp.raise_for_status()
+        # Use longer timeout for large files and stream the download
+        with httpx.Client(follow_redirects=True, timeout=httpx.Timeout(300.0, connect=30.0)) as client:
+            with client.stream("GET", info["url"]) as resp:
+                resp.raise_for_status()
+                
+                # Get content length if available
+                total_size = int(resp.headers.get("content-length", 0))
+                if total_size > 0:
+                    typer.echo(f"File size: {total_size / (1024*1024):.1f} MB")
+                
+                # Download to memory with progress
+                chunks = []
+                downloaded = 0
+                last_percent = -1
+                for chunk in resp.iter_bytes(chunk_size=65536):
+                    chunks.append(chunk)
+                    downloaded += len(chunk)
+                    if total_size > 0:
+                        percent = int(downloaded * 100 / total_size)
+                        if percent != last_percent and percent % 10 == 0:
+                            typer.echo(f"  Downloaded: {percent}%")
+                            last_percent = percent
+                
+                content = b"".join(chunks)
+                typer.echo(f"Download complete ({downloaded / (1024*1024):.1f} MB)")
             
             typer.echo("Extracting...")
-            with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
+            with zipfile.ZipFile(io.BytesIO(content)) as z:
                 # Extract to parent of target_path (e.g. brains/actv1)
                 # assuming zip contains English-v1 folder
                 extract_root = target_path.parent
@@ -539,6 +576,17 @@ def fetch_brain(
                 
         typer.echo(f"Installed to {target_path}")
         
+        # Verify extraction succeeded
+        if not target_path.exists():
+            typer.echo(f"Warning: Expected path {target_path} not found after extraction.")
+            typer.echo("The zip file structure may be different than expected.")
+            # List what was extracted
+            try:
+                extracted = list(extract_root.iterdir())
+                typer.echo(f"Extracted contents: {[p.name for p in extracted]}")
+            except Exception:
+                pass
+        
         # Register as master
         registry_management.load_master_brains(reg)
         reg.masters.add(info["brain_name"])
@@ -546,8 +594,27 @@ def fetch_brain(
         
         typer.echo(f"Marked '{info['brain_name']}' as master brain.")
         
+    except httpx.TimeoutException:
+        typer.echo("Error: Download timed out. Please check your internet connection and try again.")
+        raise typer.Exit(code=1)
+    except httpx.HTTPStatusError as e:
+        typer.echo(f"Error: HTTP {e.response.status_code} - Failed to download from server.")
+        if e.response.status_code == 404:
+            typer.echo("The brain file may not be available at this URL.")
+        raise typer.Exit(code=1)
+    except httpx.RequestError as e:
+        typer.echo(f"Error: Network error during download: {e}")
+        typer.echo("Please check your internet connection and try again.")
+        raise typer.Exit(code=1)
+    except zipfile.BadZipFile:
+        typer.echo("Error: Downloaded file is not a valid zip archive.")
+        raise typer.Exit(code=1)
+    except PermissionError as e:
+        typer.echo(f"Error: Permission denied while extracting: {e}")
+        typer.echo("Try running the command as administrator.")
+        raise typer.Exit(code=1)
     except Exception as e:
-        typer.echo(f"Error fetching brain: {e}")
+        typer.echo(f"Error fetching brain: {type(e).__name__}: {e}")
         raise typer.Exit(code=1)
 
 

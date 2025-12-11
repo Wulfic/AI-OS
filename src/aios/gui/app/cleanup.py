@@ -108,6 +108,15 @@ def cleanup(app: Any) -> None:
     import time as time_module
     time_module.sleep(0.1)
     
+    # Disconnect LogRouter from dispatcher BEFORE stopping it to prevent
+    # the flood of "dropping task" messages during shutdown logging
+    if hasattr(app, '_log_router') and app._log_router:
+        try:
+            logger.debug("Disconnecting log router from UI dispatcher...")
+            app._log_router.set_dispatcher(None)
+        except Exception as e:
+            logger.debug(f"Error disconnecting log router: {e}")
+    
     # Stop UI dispatcher to prevent further queued UI work
     if hasattr(app, '_ui_dispatcher') and app._ui_dispatcher:
         try:

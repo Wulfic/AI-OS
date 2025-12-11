@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+import time
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,9 @@ class TkUiDispatcher:
         self._running = False
         self._main_thread_id = threading.get_ident()
         self._lock = threading.Lock()
+        # Track dropped tasks to avoid log spam during shutdown
+        self._dropped_count = 0
+        self._last_drop_log_time = 0.0
         logger.info(
             "TkUiDispatcher initializing (poll_interval_ms=%s, queue_maxsize=%s, main_thread_id=%s)",
             self._poll_interval_ms,
@@ -61,11 +65,15 @@ class TkUiDispatcher:
                 return
             self._running = False
             after_id, self._after_id = self._after_id, None
+            # Reset drop counter for next run
+            dropped = self._dropped_count
+            self._dropped_count = 0
         if after_id is not None:
             try:
                 self._root.after_cancel(after_id)
             except Exception:
                 pass
+        logger.debug("UI dispatcher stopped (had %d tasks dropped during shutdown)", dropped)
 
     def is_ui_thread(self) -> bool:
         """Return ``True`` when executing on the Tk main thread."""
@@ -81,7 +89,16 @@ class TkUiDispatcher:
             return
 
         if not self._running:
-            logger.debug("UI dispatcher stopped; dropping task %r", getattr(func, "__name__", func))
+            # Rate-limit dropped task messages to avoid log spam during shutdown
+            self._dropped_count += 1
+            now = time.time()
+            if now - self._last_drop_log_time >= 1.0:  # Log at most once per second
+                if self._dropped_count == 1:
+                    logger.debug("UI dispatcher stopped; dropping task %r", getattr(func, "__name__", func))
+                else:
+                    logger.debug("UI dispatcher stopped; dropped %d tasks (latest: %r)", 
+                               self._dropped_count, getattr(func, "__name__", func))
+                self._last_drop_log_time = now
             return
 
         try:

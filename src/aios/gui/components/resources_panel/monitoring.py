@@ -502,6 +502,9 @@ def schedule_monitor_update(panel: "ResourcesPanel") -> None:
     try:
         update_monitor(panel)
     finally:
+        # Check again after update - panel may have been shut down during update
+        if not _is_monitor_active(panel):
+            return
         try:
             root = _get_panel_root(panel)
             if root is not None:
