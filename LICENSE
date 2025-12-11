@@ -58,10 +58,47 @@ derivative works. It is not an OSI-approved open source license.
 		  consulting, installation, or training), provided the Software remains
 		  freely available under this license.
 
-5. No Trademark License
-	This license does not grant permission to use the trade names, trademarks,
-	service marks, or product names of the licensor, except as required for
-	reasonable and customary use in describing the origin of the Software.
+5. Trademark and Brand Protection
+	5.1. Reserved Marks. The following are trademarks and/or service marks of
+		  WulNet Designs LLC (collectively, the "Marks"):
+		  (a) "AI-OS" (name);
+		  (b) "WulNet Designs" and "Wulfnet Designs" (company names);
+		  (c) The WulNet Designs wolf logo and any substantially similar wolf
+		      head designs associated with the Software;
+		  (d) Any other logos, icons, or visual branding included in the
+		      Software's official distribution.
+	5.2. No Trademark License. This license does not grant permission to use
+		  the Marks, except as expressly permitted in Section 5.3.
+	5.3. Permitted Use. You may use the Marks solely for:
+		  (a) Factual attribution statements describing the origin of the
+		      Software (e.g., "Based on AI-OS by WulNet Designs LLC");
+		  (b) Unmodified reproduction of the Marks in the LICENSE and NOTICE
+		      files as required by Section 4.
+	5.4. Prohibited Use. Without prior written permission from WulNet Designs
+		  LLC, You may not:
+		  (a) Use any of the Marks as part of Your own product name, service
+		      name, company name, domain name, or social media handle;
+		  (b) Display the Marks in a manner that suggests sponsorship,
+		      endorsement, or affiliation with WulNet Designs LLC;
+		  (c) Use the wolf logo or any confusingly similar design in connection
+		      with derivative works or forks of the Software;
+		  (d) Modify, distort, or alter the Marks in any way;
+		  (e) Use the Marks in any manner that could tarnish, disparage, or
+		      reflect negatively on WulNet Designs LLC or the Software.
+	5.5. Derivative Works Branding. If You distribute a modified version of
+		  the Software, You must:
+		  (a) Remove or replace all instances of the Marks (except in the
+		      LICENSE, NOTICE, and attribution statements);
+		  (b) Use a distinct name and branding that does not incorporate or
+		      imitate the Marks;
+		  (c) Include a clear statement that Your version is a modified
+		      derivative and is not affiliated with or endorsed by WulNet
+		      Designs LLC.
+	5.6. Enforcement. WulNet Designs LLC reserves the right to revoke the
+		  permissions granted in Section 5.3 at any time if, in its sole
+		  discretion, Your use of the Marks is deemed harmful to its reputation
+		  or interests. Unauthorized use of the Marks may constitute trademark
+		  infringement and unfair competition under applicable law.
 
 6. Disclaimer of Warranty
 	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
