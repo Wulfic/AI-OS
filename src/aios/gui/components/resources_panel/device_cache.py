@@ -8,6 +8,11 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+try:
+    from aios.system import paths as system_paths
+except ImportError:
+    system_paths = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 _CACHE_RELATIVE_DIR = Path("artifacts") / "diagnostics"
@@ -17,6 +22,14 @@ _DEFAULT_MAX_AGE_SECONDS = 12 * 3600  # 12 hours
 
 def _detect_repository_root() -> Path:
     """Best-effort detection of the repository root for cache placement."""
+    # Try centralized paths first
+    if system_paths is not None:
+        try:
+            return system_paths.get_install_root()
+        except Exception:
+            logger.debug("Failed to get install root from system paths", exc_info=True)
+    
+    # Fallback to module-based detection
     current = Path(__file__).resolve()
     for candidate in current.parents:
         if (candidate / "pyproject.toml").exists():
@@ -46,6 +59,13 @@ def _normalize_root(project_root: Path | str | None) -> Path:
 
 def _cache_path(project_root: Path | str | None) -> Path:
     """Return the filesystem path to the device cache file."""
+    # Use centralized paths if available and no explicit root provided
+    if project_root is None and system_paths is not None:
+        try:
+            return system_paths.get_artifacts_root() / "diagnostics" / _CACHE_FILENAME
+        except Exception:
+            logger.debug("Failed to get artifacts root from system paths", exc_info=True)
+    
     root = _normalize_root(project_root)
     return root / _CACHE_RELATIVE_DIR / _CACHE_FILENAME
 

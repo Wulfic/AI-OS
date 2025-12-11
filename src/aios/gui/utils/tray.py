@@ -243,21 +243,38 @@ class TrayManager:
         self.root.after(0, _hide)
     
     def destroy(self) -> None:
-        """Clean up tray resources."""
+        """Clean up tray resources.
+        
+        This method is designed to be non-blocking. If the tray icon
+        doesn't stop within a reasonable time, we continue anyway.
+        """
         if not HAS_TRAY_SUPPORT:
             return
         
+        # Stop the tray icon - this signals the tray thread to exit
         if self._tray_icon:
             try:
+                # pystray's stop() is generally fast but we wrap it just in case
                 self._tray_icon.stop()  # type: ignore[union-attr]
+                logger.debug("Tray icon stop called")
             except Exception as e:
                 logger.error(f"Error stopping tray icon: {e}")
         
+        # Wait for tray thread to finish with timeout
+        # Don't block forever - if it doesn't stop, move on
         if self._tray_thread and self._tray_thread.is_alive():
             try:
-                self._tray_thread.join(timeout=1.0)
+                self._tray_thread.join(timeout=2.0)
+                if self._tray_thread.is_alive():
+                    logger.warning("Tray thread did not stop within timeout - continuing anyway")
+                else:
+                    logger.debug("Tray thread stopped successfully")
             except Exception as e:
                 logger.error(f"Error joining tray thread: {e}")
+        
+        # Clear references
+        self._tray_icon = None
+        self._tray_thread = None
         
         logger.info("Tray manager destroyed")
     

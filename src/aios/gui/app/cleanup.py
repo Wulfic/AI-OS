@@ -39,6 +39,15 @@ def cleanup(app: Any) -> None:
     logger.info("AI-OS GUI Application Shutting Down")
     logger.info("=" * 60)
     
+    # Stop tray manager first to prevent tray thread from blocking shutdown
+    if hasattr(app, '_tray_manager') and app._tray_manager:
+        try:
+            logger.info("Stopping system tray manager...")
+            app._tray_manager.destroy()
+            logger.info("System tray manager stopped")
+        except Exception as e:
+            logger.warning(f"Error stopping tray manager: {e}")
+    
     # Clean up Tkinter variables first to prevent "main thread is not in main loop" errors
     try:
         logger.debug("Cleaning up Tkinter variables...")
@@ -73,20 +82,16 @@ def cleanup(app: Any) -> None:
     except Exception as e:
         logger.warning(f"Error cleaning up Tkinter variables: {e}")
     
-    # Stop UI dispatcher to prevent further queued UI work
-    if hasattr(app, '_ui_dispatcher') and app._ui_dispatcher:
-        try:
-            logger.debug("Stopping UI dispatcher...")
-            app._ui_dispatcher.stop()
-        except Exception as e:
-            logger.debug(f"Error stopping UI dispatcher: {e}")
-
-    # Ask panels to wind down background work before stopping worker threads
+    # Ask panels to wind down background work FIRST (before stopping dispatcher/worker pool)
+    # This prevents panels from submitting new tasks while we're shutting down
     try:
         for panel_attr, label in (
             ("resources_panel", "resources"),
             ("dataset_download_panel", "dataset download"),
             ("evaluation_panel", "evaluation"),
+            ("hrm_training_panel", "hrm training"),
+            ("chat_panel", "chat"),
+            ("brains_panel", "brains"),
         ):
             panel = getattr(app, panel_attr, None)
             if panel and hasattr(panel, "cleanup"):
@@ -98,6 +103,23 @@ def cleanup(app: Any) -> None:
                     logger.debug("%s panel pre-shutdown cleanup failed: %s", label.capitalize(), exc)
     except Exception as exc:
         logger.debug("Panel pre-shutdown coordination error: %s", exc)
+    
+    # Small delay to let pending UI callbacks drain naturally
+    import time as time_module
+    time_module.sleep(0.1)
+    
+    # Stop UI dispatcher to prevent further queued UI work
+    if hasattr(app, '_ui_dispatcher') and app._ui_dispatcher:
+        try:
+            logger.debug("Stopping UI dispatcher...")
+            # Flush any remaining callbacks first
+            try:
+                app._ui_dispatcher.flush()
+            except Exception:
+                pass
+            app._ui_dispatcher.stop()
+        except Exception as e:
+            logger.debug(f"Error stopping UI dispatcher: {e}")
 
     # Shutdown worker pool
     if hasattr(app, '_worker_pool') and app._worker_pool:

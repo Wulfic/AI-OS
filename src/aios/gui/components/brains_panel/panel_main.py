@@ -269,6 +269,18 @@ class BrainsPanel(ttk.LabelFrame):  # type: ignore[misc]
         from .goals_operations import remove_selected_goals
         remove_selected_goals(self)
 
+    def cleanup(self) -> None:
+        """Clean up resources before shutdown.
+        
+        Signals the panel to stop any pending background operations.
+        """
+        # Signal that refresh should not run anymore
+        self._refresh_in_progress = True
+        
+        # Clear any pending refresh callbacks
+        if hasattr(self, '_last_refresh_time'):
+            self._last_refresh_time = float('inf')  # Prevent future refreshes
+
     def _resolve_store_dir(self) -> str:
         """Return the brains storage directory, ensuring it exists."""
         if system_paths is not None:

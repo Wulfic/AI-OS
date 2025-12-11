@@ -7,6 +7,7 @@ avoid excessive disk I/O while staying responsive to user actions.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import threading
@@ -20,6 +21,8 @@ try:
     from aios.system import paths as system_paths
 except Exception:  # pragma: no cover - fallback for early init
     system_paths = None
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "list_brains",
@@ -56,14 +59,47 @@ def _legacy_repo_brains_root() -> Path:
     return Path(__file__).resolve().parents[3] / "artifacts" / "brains"
 
 
+def _ensure_brains_directory_initialized(store_dir: str) -> None:
+    """Ensure the brains directory exists and has required JSON files.
+    
+    On fresh install, the installer should create these files, but we
+    defensively create them here if missing to handle edge cases.
+    """
+    store_path = Path(store_dir)
+    try:
+        store_path.mkdir(parents=True, exist_ok=True)
+        logger.debug("Brains directory ensured at: %s", store_path)
+    except Exception as e:
+        logger.warning("Could not create brains directory at %s: %s", store_path, e)
+        return  # Can't create directory, skip initialization
+    
+    # Create empty masters.json and pinned.json if they don't exist
+    for filename in ("masters.json", "pinned.json"):
+        filepath = store_path / filename
+        if not filepath.exists():
+            try:
+                filepath.write_text("[]", encoding="utf-8")
+                logger.info("Created missing brains registry file: %s", filepath)
+            except Exception as e:
+                logger.warning("Could not create %s: %s", filepath, e)
+
+
 def _normalize_store_dir(store_dir: str | None) -> str:
     if store_dir:
         base_path = Path(store_dir)
+        logger.debug("Using provided store_dir: %s", store_dir)
     elif system_paths is not None:
         base_path = system_paths.get_brains_root()
+        logger.debug("Using system_paths brains root: %s", base_path)
     else:
         base_path = _legacy_repo_brains_root()
-    return os.path.abspath(str(base_path))
+        logger.debug("Using legacy repo brains root: %s", base_path)
+    normalized = os.path.abspath(str(base_path))
+    
+    # Ensure directory is properly initialized
+    _ensure_brains_directory_initialized(normalized)
+    
+    return normalized
 
 
 def _build_registry(store_dir: str) -> BrainRegistry:

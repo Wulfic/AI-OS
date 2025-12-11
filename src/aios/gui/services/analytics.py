@@ -32,6 +32,11 @@ try:  # pragma: no cover - optional dependency safeguard
 except Exception:  # pragma: no cover - degrade gracefully if httpx missing
     httpx = None  # type: ignore[assignment]
 
+try:
+    from aios.system import paths as system_paths
+except ImportError:
+    system_paths = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 _GA_ENDPOINT = "https://www.google-analytics.com/mp/collect"
@@ -43,9 +48,31 @@ _OPTOUT_ENV_KEYS = (
     "AIOS_DISABLE_ANALYTICS",
 )
 
-_ANALYTICS_DIR = Path("artifacts/diagnostics")
-_EVENTS_PATH = _ANALYTICS_DIR / "analytics_events.jsonl"
-_CLIENT_ID_PATH = _ANALYTICS_DIR / "analytics_client_id"
+
+def _get_analytics_dir() -> Path:
+    """Get the analytics directory using the centralized paths system."""
+    if system_paths is not None:
+        try:
+            return system_paths.get_artifacts_root() / "diagnostics"
+        except Exception:
+            logger.debug("Failed to resolve analytics dir via system paths", exc_info=True)
+    # Fallback: use module file location to find project root
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        if (parent / "pyproject.toml").exists():
+            return parent / "artifacts" / "diagnostics"
+    # Last resort fallback
+    return Path(__file__).resolve().parents[4] / "artifacts" / "diagnostics"
+
+
+def _get_events_path() -> Path:
+    """Get the analytics events file path."""
+    return _get_analytics_dir() / "analytics_events.jsonl"
+
+
+def _get_client_id_path() -> Path:
+    """Get the analytics client ID file path."""
+    return _get_analytics_dir() / "analytics_client_id"
 
 _client_id_lock = threading.Lock()
 _client_id_cache: str | None = None
@@ -79,7 +106,7 @@ def analytics_enabled() -> bool:
 
 def _ensure_analytics_dir() -> None:
     try:
-        _ANALYTICS_DIR.mkdir(parents=True, exist_ok=True)
+        _get_analytics_dir().mkdir(parents=True, exist_ok=True)
     except Exception:
         logger.debug("Failed to ensure analytics directory exists", exc_info=True)
 
@@ -91,8 +118,9 @@ def _get_client_id() -> str:
             return _client_id_cache
         try:
             _ensure_analytics_dir()
-            if _CLIENT_ID_PATH.exists():
-                cached = _CLIENT_ID_PATH.read_text(encoding="utf-8").strip()
+            client_id_path = _get_client_id_path()
+            if client_id_path.exists():
+                cached = client_id_path.read_text(encoding="utf-8").strip()
                 if cached:
                     _client_id_cache = cached
                     return cached
@@ -102,7 +130,7 @@ def _get_client_id() -> str:
         generated = uuid.uuid4().hex
         try:
             _ensure_analytics_dir()
-            _CLIENT_ID_PATH.write_text(generated, encoding="ascii")
+            _get_client_id_path().write_text(generated, encoding="ascii")
         except Exception:
             logger.debug("Failed to persist analytics client identifier", exc_info=True)
         _client_id_cache = generated
@@ -129,7 +157,7 @@ def _normalise_params(params: Mapping[str, Any] | None) -> dict[str, Any]:
 def _write_local_event(event: dict[str, Any]) -> None:
     try:
         _ensure_analytics_dir()
-        with _EVENTS_PATH.open("a", encoding="utf-8") as handle:
+        with _get_events_path().open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event, ensure_ascii=True) + "\n")
     except Exception:
         logger.debug("Failed to persist analytics event locally", exc_info=True)
