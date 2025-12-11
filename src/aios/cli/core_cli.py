@@ -117,18 +117,35 @@ def gui(
 ):
     """Launch the AI-OS Tkinter GUI."""
     import time
-    gui_start = time.time()
-    
-    # Ensure HF cache is configured (redundant but safe if aios.py wasn't the entry point)
+    import sys
     import os
     from pathlib import Path
     
-    print(f"[GUI TIMING] Imports done: {time.time() - gui_start:.3f}s")
+    gui_start = time.time()
+    
+    # Helper function to safely print (stdout might be broken when running via exe wrapper)
+    def safe_print(msg: str) -> None:
+        try:
+            # Only print if stdout is available and writable
+            if sys.stdout is not None and hasattr(sys.stdout, 'write'):
+                print(msg)
+                sys.stdout.flush()
+        except Exception:
+            pass  # Silently ignore if stdout is unavailable
+    
+    # Ensure stdout/stderr are valid to prevent crashes in Tkinter
+    # When launched via pythonw.exe or certain wrappers, these can be None or broken
+    if sys.stdout is None or not hasattr(sys.stdout, 'write'):
+        sys.stdout = open(os.devnull, 'w')
+    if sys.stderr is None or not hasattr(sys.stderr, 'write'):
+        sys.stderr = open(os.devnull, 'w')
+    
+    safe_print(f"[GUI TIMING] Imports done: {time.time() - gui_start:.3f}s")
     
     # Initialize logging early so all GUI components can use it
     cfg = load_config(None)
     setup_logging(cfg)
-    print(f"[GUI TIMING] Logging configured: {time.time() - gui_start:.3f}s")
+    safe_print(f"[GUI TIMING] Logging configured: {time.time() - gui_start:.3f}s")
     
     # Only set if not already set by aios.py
     if not os.environ.get("HF_HOME"):
@@ -165,14 +182,14 @@ def gui(
         os.environ["HF_DATASETS_CACHE"] = str((_hf_cache_dir / "datasets").resolve())
         os.environ["HF_HUB_CACHE"] = str((_hf_cache_dir / "hub").resolve())
     
-    print(f"[GUI TIMING] HF cache configured: {time.time() - gui_start:.3f}s")
+    safe_print(f"[GUI TIMING] HF cache configured: {time.time() - gui_start:.3f}s")
     
     try:
-        print(f"[GUI TIMING] About to import aios.gui...")
+        safe_print(f"[GUI TIMING] About to import aios.gui...")
         from aios.gui import run as _run_gui
-        print(f"[GUI TIMING] aios.gui imported: {time.time() - gui_start:.3f}s")
+        safe_print(f"[GUI TIMING] aios.gui imported: {time.time() - gui_start:.3f}s")
     except ImportError as e:
-        print({"launched": False, "error": str(e)})
+        safe_print(str({"launched": False, "error": str(e)}))
         return
     _run_gui(
         exit_after=exit_after if exit_after and exit_after > 0 else None,

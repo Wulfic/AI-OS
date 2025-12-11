@@ -141,7 +141,13 @@ def configure_log_levels(app: Any, log_level_setting: str = "Normal") -> None:
     updated_handlers = 0
     for handler in logging.getLogger().handlers:
         handler_count += 1
-        if isinstance(handler, logging.StreamHandler) and handler.stream.name in ('<stderr>', '<stdout>'):
+        # Check that handler.stream exists and has a name attribute before accessing
+        # This handles edge cases on fresh installs where streams may be None
+        if (
+            isinstance(handler, logging.StreamHandler)
+            and handler.stream is not None
+            and getattr(handler.stream, 'name', None) in ('<stderr>', '<stdout>')
+        ):
             handler.setLevel(python_level)
             updated_handlers += 1
     handler_duration = time.perf_counter() - handler_start

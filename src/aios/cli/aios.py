@@ -6,6 +6,48 @@ import tempfile
 import warnings
 from pathlib import Path
 
+# ============================================================================
+# Early Windows VC++ Runtime Check - MUST be before any torch imports
+# PyTorch requires Visual C++ Redistributable to load its DLLs
+# ============================================================================
+def _check_vcpp_runtime() -> None:
+    """Check for Visual C++ Runtime on Windows before torch tries to load."""
+    if os.name != "nt":
+        return  # Only needed on Windows
+    
+    vcruntime = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "vcruntime140.dll"
+    vcruntime_1 = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "vcruntime140_1.dll"
+    
+    if not vcruntime.exists() or not vcruntime_1.exists():
+        # Try to show a message box on Windows
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                "Microsoft Visual C++ Redistributable is required but not installed.\n\n"
+                "Please download and install it from:\n"
+                "https://aka.ms/vs/17/release/vc_redist.x64.exe\n\n"
+                "After installing, restart AI-OS.",
+                "AI-OS - Missing Dependency",
+                0x10  # MB_ICONERROR
+            )
+        except Exception:
+            pass
+        
+        print("\n" + "=" * 70, file=sys.stderr)
+        print("ERROR: Microsoft Visual C++ Redistributable is not installed!", file=sys.stderr)
+        print("=" * 70, file=sys.stderr)
+        print("\nPyTorch requires the Visual C++ Redistributable to run on Windows.", file=sys.stderr)
+        print("\nPlease download and install it from:", file=sys.stderr)
+        print("  https://aka.ms/vs/17/release/vc_redist.x64.exe", file=sys.stderr)
+        print("\nAfter installing, restart AI-OS.", file=sys.stderr)
+        print("=" * 70 + "\n", file=sys.stderr)
+        sys.exit(1)
+
+# Run the check immediately
+_check_vcpp_runtime()
+
+
 try:  # pragma: no cover - import guard for bootstrap contexts
     from aios.system import paths as system_paths
 except Exception:  # pragma: no cover
@@ -306,92 +348,88 @@ app.add_typer(eval_cli.app, name="eval")
 
 @app.command()
 def doctor(
-    permissions: bool = typer.Option(False, "--permissions", help="Check file permissions only"),
+    permissions: bool = typer.Option(False, "--permissions", "-p", help="Check file permissions only"),
+    dependencies: bool = typer.Option(True, "--dependencies/--no-dependencies", "-d", help="Check Python package dependencies"),
+    gpu: bool = typer.Option(True, "--gpu/--no-gpu", "-g", help="Check GPU availability and configuration"),
+    disk: bool = typer.Option(True, "--disk/--no-disk", help="Check disk space"),
+    network: bool = typer.Option(True, "--network/--no-network", "-n", help="Check network connectivity"),
+    env_vars: bool = typer.Option(True, "--env/--no-env", "-e", help="Display environment variables"),
+    config: bool = typer.Option(True, "--config/--no-config", "-c", help="Validate configuration files"),
+    memory: bool = typer.Option(True, "--memory/--no-memory", "-m", help="Check system memory"),
+    repair: bool = typer.Option(False, "--repair", "-r", help="Attempt to automatically fix issues"),
+    json_output: bool = typer.Option(False, "--json", "-j", help="Output results as JSON"),
 ):
-    """Diagnose installation and runtime issues."""
-    import ctypes
+    """Comprehensive diagnostic tool for AI-OS installation and runtime.
     
-    typer.echo("AI-OS Doctor - Diagnostic Tool")
-    typer.echo("==============================")
+    Checks platform compatibility, dependencies, GPU configuration, disk space,
+    network connectivity, environment variables, configuration files, and memory.
     
-    # 1. Check Elevation
-    try:
-        is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
-    except Exception:
-        is_admin = False
-        
-    if is_admin:
-        typer.echo("[+] Running as Administrator")
-    else:
-        typer.echo("[!] Running as Standard User")
-        typer.echo("    Note: Admin rights are required for full functionality (ProgramData access, GPU scheduling).")
-        
-    # 2. Check Paths
-    if system_paths:
-        paths_to_check = {
-            "Logs": system_paths.get_logs_dir(),
-            "Config": system_paths.get_user_config_dir(),
-            "State": system_paths.get_state_file_path().parent,
-            "Artifacts": system_paths.get_artifacts_root(),
-            "Cache": system_paths.get_user_cache_root(),
-        }
-        
-        typer.echo("\nChecking Directory Permissions:")
-        for name, path in paths_to_check.items():
-            p = Path(path)
-            status = "OK"
-            try:
-                if not p.exists():
-                    p.mkdir(parents=True, exist_ok=True)
-                    status = "Created"
-                
-                # Test write
-                test_file = p / ".write_test"
-                test_file.write_text("test")
-                test_file.unlink()
-                typer.echo(f"[+] {name}: {p} ({status}) - Writable")
-            except Exception as e:
-                typer.echo(f"[!] {name}: {p} - NOT WRITABLE ({e})")
-                if "Artifacts" in name and not is_admin:
-                    typer.echo("    -> Try running as Administrator")
-
-    if permissions:
-        return
-
-    # 3. Check Dependencies
-    typer.echo("\nChecking Dependencies:")
+    Examples:
+        aios doctor                    # Run all checks
+        aios doctor --json             # Output as JSON for scripting
+        aios doctor --repair           # Auto-fix issues where possible
+        aios doctor --permissions      # Check only file permissions
+        aios doctor --no-network       # Skip network connectivity checks
+    """
+    import asyncio
     
-    # lm_eval
+    from .doctor import run_diagnostics, DiagnosticSeverity, save_report_to_log
+    from .doctor.runner import format_report_text
+    
+    # If --permissions flag is used alone, limit to permission checks only
+    if permissions and not any([
+        # These flags indicate user wants more than just permissions
+    ]):
+        dependencies = False
+        gpu = False
+        disk = False
+        network = False
+        env_vars = False
+        config = False
+        memory = False
+    
+    # Run diagnostics
     try:
-        import lm_eval
-        typer.echo(f"[+] lm_eval: Installed ({lm_eval.__version__})")
-    except ImportError:
-        typer.echo("[!] lm_eval: MISSING")
-        typer.echo("    -> Run: pip install lm-eval[api]")
-
-    # tkinterweb
-    try:
-        import tkinterweb
-        typer.echo("[+] tkinterweb: Installed")
-    except ImportError:
-        typer.echo("[!] tkinterweb: MISSING")
-        typer.echo("    -> Run: pip install tkinterweb>=3.23.8")
-        
-    # Flash Attention (if CUDA)
-    try:
-        import torch
-        if torch.cuda.is_available():
-            try:
-                import flash_attn
-                typer.echo(f"[+] flash_attn: Installed ({flash_attn.__version__})")
-            except ImportError:
-                typer.echo("[!] flash_attn: MISSING (Recommended for CUDA)")
+        report = asyncio.run(run_diagnostics(
+            check_permissions=True,  # Always check permissions
+            check_dependencies=dependencies,
+            check_gpu=gpu,
+            check_disk=disk,
+            check_network=network,
+            check_env_vars=env_vars,
+            check_config=config,
+            check_memory=memory,
+            auto_repair=repair,
+            json_output=json_output,
+        ))
+    except Exception as e:
+        if json_output:
+            import json
+            typer.echo(json.dumps({"error": str(e), "status": "failed"}))
         else:
-            typer.echo("[i] flash_attn: Skipped (No CUDA)")
-    except ImportError:
-        typer.echo("[!] torch: MISSING")
-
-    typer.echo("\nDiagnostics complete.")
+            typer.echo(f"[!!] Diagnostics failed: {e}", err=True)
+        raise typer.Exit(code=1)
+    
+    # Save report to log file
+    try:
+        log_path = save_report_to_log(report)
+        if not json_output:
+            typer.echo(f"\n📋 Report saved to: {log_path}")
+    except Exception as e:
+        if not json_output:
+            typer.echo(f"\n[!] Could not save report to log: {e}", err=True)
+    
+    # Output results
+    if json_output:
+        typer.echo(report.to_json())
+    else:
+        typer.echo(format_report_text(report))
+    
+    # Exit with appropriate code
+    if report.summary.get("critical", 0) > 0:
+        raise typer.Exit(code=2)
+    elif report.summary.get("error", 0) > 0:
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":

@@ -498,6 +498,9 @@ def fetch_brain(
     
     brains_root = Path(reg.store_dir)
     
+    # Log path resolution for debugging
+    typer.echo(f"Brain storage directory: {brains_root}")
+    
     # Define presets
     presets = {
         "English-v1": {

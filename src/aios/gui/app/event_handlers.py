@@ -29,7 +29,26 @@ def setup_event_handlers(app: Any) -> None:
     # Window close handler
     def _on_close() -> None:
         """Handle window close event."""
+        import threading
+        import sys
+        
         logger.info("User action: Closing application window")
+        
+        # Set a forced exit timeout in case cleanup hangs
+        def _force_exit() -> None:
+            logger.warning("Cleanup taking too long, forcing application exit")
+            try:
+                app.root.destroy()
+            except Exception:
+                pass
+            # Force exit after giving Tk a moment to clean up
+            import os
+            os._exit(0)
+        
+        force_timer = threading.Timer(10.0, _force_exit)
+        force_timer.daemon = True
+        force_timer.start()
+        
         try:
             # Save state before closing
             app._save_state(sync=True)
@@ -39,12 +58,16 @@ def setup_event_handlers(app: Any) -> None:
             app._cleanup()
             logger.debug("Resources cleaned up")
             
+            # Cancel force timer since cleanup succeeded
+            force_timer.cancel()
+            
             # Destroy window
             app.root.destroy()
             logger.info("Application window closed successfully")
         except Exception as e:
             logger.error(f"Error during close: {e}")
-            # Force close anyway
+            # Cancel force timer and force close anyway
+            force_timer.cancel()
             try:
                 app.root.destroy()
             except Exception:

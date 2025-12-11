@@ -17,6 +17,12 @@ derivative works. It is not an OSI-approved open source license.
 		  hosted service. Charging for ancillary services (e.g., consulting,
 		  training, custom integration) where the fee is not for the Software
 		  itself is not considered Selling.
+	1.4. "User-Created Content" means any machine learning models, neural
+		  network weights, datasets, fine-tuned models, trained adapters,
+		  embeddings, or other outputs generated or created by You through
+		  Your use of the Software. User-Created Content is expressly not
+		  considered a "derivative work" of the Software for purposes of
+		  this license.
 
 2. Grant of Rights
 	Subject to the Conditions below, You are hereby granted a perpetual,
@@ -24,7 +30,16 @@ derivative works. It is not an OSI-approved open source license.
 	- use, copy, modify, and create derivative works of the Software;
 	- distribute the Software and derivative works in any medium.
 
-3. Conditions
+3. User-Created Content Rights
+	You retain full and exclusive ownership of all User-Created Content.
+	The licensor claims no rights, title, or interest in any User-Created
+	Content. You may use, copy, modify, distribute, sell, license,
+	commercialize, or otherwise dispose of Your User-Created Content in any
+	manner You choose, without restriction and without any obligation to the
+	licensor. The restrictions in this license regarding Selling and
+	attribution do not apply to User-Created Content.
+
+4. Conditions
 	Your rights above are conditioned on all of the following:
 	3.1. Attribution & Link Back. You must preserve all copyright notices and
 		  include a prominent notice of attribution in all copies and derivative
@@ -43,12 +58,12 @@ derivative works. It is not an OSI-approved open source license.
 		  consulting, installation, or training), provided the Software remains
 		  freely available under this license.
 
-4. No Trademark License
+5. No Trademark License
 	This license does not grant permission to use the trade names, trademarks,
 	service marks, or product names of the licensor, except as required for
 	reasonable and customary use in describing the origin of the Software.
 
-5. Disclaimer of Warranty
+6. Disclaimer of Warranty
 	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -57,7 +72,7 @@ derivative works. It is not an OSI-approved open source license.
 	FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 	DEALINGS IN THE SOFTWARE.
 
-6. Limitation of Liability
+7. Limitation of Liability
 	TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE
 	AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY INDIRECT, INCIDENTAL,
 	SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
@@ -67,13 +82,13 @@ derivative works. It is not an OSI-approved open source license.
 	OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THE SOFTWARE, EVEN IF
 	ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-7. Termination
+8. Termination
 	Any breach of this license automatically terminates the rights granted
 	herein. Upon termination, You must cease all distribution of the Software
-	and derivative works, but Your obligations under Sections 3, 5, and 6 shall
+	and derivative works, but Your obligations under Sections 4, 6, and 7 shall
 	survive.
 
-8. Severability
+9. Severability
 	If any provision of this license is held to be unenforceable, such
 	provision shall be reformed only to the extent necessary to make it
 	enforceable, and the remaining provisions shall remain in full force and

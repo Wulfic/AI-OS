@@ -1,7 +1,7 @@
 """AI-OS GUI Application Entry Point.
 
 This module provides a simplified entry point for running the AI-OS GUI.
-It creates the AiosTkApp instance and delegates to app_main.run_app().
+It creates the AiosTkApp instance which handles all initialization internally.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from multiprocessing import freeze_support
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from aios.gui.app import AiosTkApp, run_app
+from aios.gui.app import AiosTkApp
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,11 +31,13 @@ def main() -> None:
     
     try:
         # Create app instance
+        # Note: AiosTkApp.__init__ already calls run_app(self) internally,
+        # which initializes all components and starts the main loop
         logger.info("Creating AiosTkApp instance...")
         app = AiosTkApp()
         
-        # Run app (orchestrates all initialization)
-        run_app(app)
+        # No need to call run_app(app) here - it's already called in __init__
+        # The main loop has already run and exited when we reach this point
         
     except KeyboardInterrupt:
         logger.info("Shutdown requested via keyboard interrupt")

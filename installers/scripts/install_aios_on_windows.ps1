@@ -843,8 +843,9 @@ function Test-Python() {
         $vclibsUrl = "https://github.com/M1k3G0/Win10_LTSC_VP9_Installer/raw/refs/heads/master/Microsoft.VCLibs.140.00.UWPDesktop_14.0.33728.0_x64__8wekyb3d8bbwe.Appx"
         $vclibsFallbackUrl = "https://aka.ms/Microsoft.VCLibs.x64.14.00.Desktop.appx"
         $uiXamlUrl = "https://github.com/microsoft/microsoft-ui-xaml/releases/download/v2.8.6/Microsoft.UI.Xaml.2.8.x64.appx"
-        # Direct download URL for WindowsAppRuntime 1.8.3 (latest stable as of Dec 2025)
-        $appRuntimeUrl = "https://aka.ms/windowsappsdk/1.8/stable/windowsappruntimeinstall-x64.exe"
+        # Direct download URL for WindowsAppRuntime (latest stable)
+        # Note: Use /latest/ instead of /stable/ - the /stable/ URL returns HTML error pages
+        $appRuntimeUrl = "https://aka.ms/windowsappsdk/1.8/latest/windowsappruntimeinstall-x64.exe"
         $wingetUrl = "https://github.com/microsoft/winget-cli/releases/download/v1.9.25200/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle"
         
         # Temporary download locations
@@ -947,7 +948,17 @@ function Test-Python() {
             # Download and install WindowsAppRuntime (optional, enhances Winget 1.27+)
             # Made non-fatal because core Winget functionality works without it
             try {
-                Download-WithRetry -Url $appRuntimeUrl -OutFile $tempAppRuntime -Description "WindowsAppRuntime" -TimeoutSec 120
+                Download-WithRetry -Url $appRuntimeUrl -OutFile $tempAppRuntime -Description "WindowsAppRuntime" -TimeoutSec 180
+                
+                # Validate that the downloaded file is actually an executable (not HTML error page)
+                if (Test-Path $tempAppRuntime) {
+                    $fileBytes = [System.IO.File]::ReadAllBytes($tempAppRuntime)
+                    if ($fileBytes.Length -lt 2 -or $fileBytes[0] -ne 0x4D -or $fileBytes[1] -ne 0x5A) {
+                        # Not a valid PE executable (doesn't start with MZ)
+                        throw "Downloaded file is not a valid Windows executable (likely an error page from the server)"
+                    }
+                }
+                
                 Write-Host "[i] Installing WindowsAppRuntime..." -ForegroundColor Cyan
                 $proc = Start-Process -FilePath $tempAppRuntime -ArgumentList '--quiet' -Wait -PassThru -NoNewWindow
                 if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 1638) {
@@ -1192,7 +1203,7 @@ function Test-VCRedist() {
     } catch {}
   }
   
-  # Alternative check: look for the actual DLL
+  # Alternative check: look for the actual DLLs
   if (-not $vcInstalled) {
     $vcruntime = "$env:SystemRoot\System32\vcruntime140.dll"
     $vcruntime_1 = "$env:SystemRoot\System32\vcruntime140_1.dll"
@@ -1210,17 +1221,29 @@ function Test-VCRedist() {
   Write-Host "[!] Microsoft Visual C++ Redistributable not found." -ForegroundColor Yellow
   Write-Host "[!] This is REQUIRED for PyTorch to work on Windows." -ForegroundColor Yellow
   
-  # Always try to install if not present (respects -Yes flag via Confirm-Choice)
-  if (Confirm-Choice "Install Microsoft Visual C++ Redistributable now?" -DefaultYes:$true) {
+  # Always install VC++ Redistributable automatically (respects -Yes flag)
+  # This is critical for PyTorch - do not skip this step
+  $shouldInstall = $true
+  if (-not $Yes) {
+    $shouldInstall = Confirm-Choice "Install Microsoft Visual C++ Redistributable now?" -DefaultYes:$true
+  }
+  
+  if ($shouldInstall) {
     $installSuccess = $false
     
-    # Try multiple download methods for robustness
+    # Download URL for VC++ Redistributable 2015-2022 (x64)
     $vcRedistUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
     $vcRedistPath = Join-Path $env:TEMP "vc_redist.x64.exe"
     
     Write-Host "[i] Downloading Visual C++ Redistributable 2015-2022 (x64)..." -ForegroundColor Cyan
     
+    # Clean up any previous download
+    if (Test-Path $vcRedistPath) {
+      Remove-Item $vcRedistPath -Force -ErrorAction SilentlyContinue
+    }
+    
     # Method 1: Invoke-WebRequest
+    $downloadSuccess = $false
     try {
       $ProgressPreference = 'SilentlyContinue'
       Invoke-WebRequest -Uri $vcRedistUrl -OutFile $vcRedistPath -UseBasicParsing -TimeoutSec 180
@@ -1228,43 +1251,49 @@ function Test-VCRedist() {
         $fileSize = (Get-Item $vcRedistPath).Length
         if ($fileSize -gt 1000000) {  # At least 1MB
           Write-Host "[+] Downloaded VC++ Redistributable ($([math]::Round($fileSize / 1MB, 1)) MB)" -ForegroundColor Green
+          $downloadSuccess = $true
         } else {
           throw "Downloaded file too small - likely incomplete"
         }
       }
     } catch {
       Write-Host "[!] Download method 1 failed: $_" -ForegroundColor Yellow
-      
-      # Method 2: Start-BitsTransfer
+    }
+    
+    # Method 2: Start-BitsTransfer
+    if (-not $downloadSuccess) {
       try {
         Write-Host "[i] Trying alternative download method (BITS)..." -ForegroundColor Cyan
         Start-BitsTransfer -Source $vcRedistUrl -Destination $vcRedistPath -ErrorAction Stop
+        if (Test-Path $vcRedistPath) {
+          $downloadSuccess = $true
+        }
       } catch {
         Write-Host "[!] Download method 2 failed: $_" -ForegroundColor Yellow
-        
-        # Method 3: .NET WebClient
-        try {
-          Write-Host "[i] Trying fallback download method (.NET)..." -ForegroundColor Cyan
-          $webClient = New-Object System.Net.WebClient
-          $webClient.DownloadFile($vcRedistUrl, $vcRedistPath)
-        } catch {
-          Write-Host "[!] All download methods failed: $_" -ForegroundColor Red
+      }
+    }
+    
+    # Method 3: .NET WebClient
+    if (-not $downloadSuccess) {
+      try {
+        Write-Host "[i] Trying fallback download method (.NET)..." -ForegroundColor Cyan
+        $webClient = New-Object System.Net.WebClient
+        $webClient.DownloadFile($vcRedistUrl, $vcRedistPath)
+        if (Test-Path $vcRedistPath) {
+          $downloadSuccess = $true
         }
+      } catch {
+        Write-Host "[!] All download methods failed: $_" -ForegroundColor Red
       }
     }
     
     # Try to install if we have the file
-    if (Test-Path $vcRedistPath) {
+    if ($downloadSuccess -and (Test-Path $vcRedistPath)) {
       try {
         Write-Host "[i] Installing Visual C++ Redistributable..." -ForegroundColor Cyan
         
-        # Run installer silently with admin privileges
-        $proc = Start-Process -FilePath $vcRedistPath -ArgumentList '/install', '/quiet', '/norestart' -PassThru -Wait -Verb RunAs -ErrorAction SilentlyContinue
-        
-        # If -Verb RunAs fails (no elevation), try without
-        if (-not $proc) {
-          $proc = Start-Process -FilePath $vcRedistPath -ArgumentList '/install', '/quiet', '/norestart' -PassThru -Wait
-        }
+        # Run installer silently - we're already running as admin from Inno Setup
+        $proc = Start-Process -FilePath $vcRedistPath -ArgumentList '/install', '/quiet', '/norestart' -PassThru -Wait -ErrorAction Stop
         
         if ($proc.ExitCode -eq 0) {
           Write-Host "[+] Visual C++ Redistributable installed successfully!" -ForegroundColor Green
@@ -1276,8 +1305,17 @@ function Test-VCRedist() {
           Write-Host "[+] Visual C++ Redistributable installed. A reboot may be required." -ForegroundColor Yellow
           $installSuccess = $true
         } elseif ($proc.ExitCode -eq 5) {
-          Write-Host "[!] Access denied - installer may need to be run as Administrator." -ForegroundColor Red
-          Write-Host "[!] Please install manually from: https://aka.ms/vs/17/release/vc_redist.x64.exe" -ForegroundColor Yellow
+          Write-Host "[!] Access denied - trying with elevation..." -ForegroundColor Yellow
+          # Try with explicit elevation
+          try {
+            $proc = Start-Process -FilePath $vcRedistPath -ArgumentList '/install', '/quiet', '/norestart' -PassThru -Wait -Verb RunAs
+            if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 1638 -or $proc.ExitCode -eq 3010) {
+              Write-Host "[+] Visual C++ Redistributable installed with elevation." -ForegroundColor Green
+              $installSuccess = $true
+            }
+          } catch {
+            Write-Host "[!] Failed to elevate VC++ installer: $_" -ForegroundColor Red
+          }
         } else {
           Write-Host "[!] VC++ Redistributable installer exited with code $($proc.ExitCode)" -ForegroundColor Yellow
         }
@@ -1404,6 +1442,20 @@ function Install-LauncherWrapper {
 function Install-Aios() {
   Write-Host "--- Starting AI-OS Windows Installation ---"
   
+  # Set PowerShell execution policy for current user to allow running scripts
+  # This is needed for the user to run PowerShell scripts and profiles
+  try {
+    $currentPolicy = Get-ExecutionPolicy -Scope CurrentUser
+    if ($currentPolicy -eq 'Restricted' -or $currentPolicy -eq 'Undefined') {
+      Write-Host "[i] Setting PowerShell execution policy to RemoteSigned for current user..." -ForegroundColor Cyan
+      Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction SilentlyContinue
+      Write-Host "[+] PowerShell execution policy updated." -ForegroundColor Green
+    }
+  } catch {
+    Write-Host "[!] Could not set PowerShell execution policy: $_" -ForegroundColor Yellow
+    Write-Host "[!] You may need to run: Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser" -ForegroundColor Yellow
+  }
+  
   # CRITICAL: Install Visual C++ Redistributable FIRST - required for PyTorch DLLs
   Test-VCRedist
   
@@ -1464,7 +1516,7 @@ function Install-Aios() {
             $shortcut.TargetPath = $wrapperExe
             $shortcut.Arguments = "gui"
             $shortcut.WorkingDirectory = $repoRoot
-            $shortcut.Description = "AI-OS - Advanced AI Operating System"
+            $shortcut.Description = "AI-OS - Artificially Intelligent Operating System"
             if (Test-Path $iconPath) { $shortcut.IconLocation = $iconPath }
             $shortcut.Save()
           } catch {}
@@ -1662,7 +1714,7 @@ def installed_cuda_version(name=""):
     }
 
     $shortcut.WorkingDirectory = $repoRoot
-    $shortcut.Description = "AI-OS - Advanced AI Operating System"
+    $shortcut.Description = "AI-OS - Artificially Intelligent Operating System"
     if (Test-Path $iconPath) {
       $shortcut.IconLocation = $iconPath
     }
@@ -1691,7 +1743,7 @@ def installed_cuda_version(name=""):
       }
 
       $shortcut.WorkingDirectory = $repoRoot
-      $shortcut.Description = "AI-OS - Advanced AI Operating System"
+      $shortcut.Description = "AI-OS - Artificially Intelligent Operating System"
       if (Test-Path $iconPath) {
         $shortcut.IconLocation = $iconPath
       }

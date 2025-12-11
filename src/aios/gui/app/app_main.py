@@ -28,8 +28,32 @@ from pathlib import Path
 _CRASH_LOG_PATH: Path | None = None
 
 
+def _get_install_root() -> Path:
+    """Get the AI-OS install root directory.
+    
+    This is a simplified version for early crash protection,
+    before we can import the full paths module.
+    """
+    # Walk up from this file to find install root markers
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        if (parent / "launcher.bat").exists():
+            return parent
+        if (parent / ".venv").exists():
+            return parent
+        if (parent / "pyproject.toml").exists():
+            return parent
+    # Fallback: 4 levels up from this file
+    # (app_main.py -> app -> gui -> aios -> src -> root)
+    return current.parents[4]
+
+
 def _get_crash_log_path() -> Path:
-    """Get path for early crash log file."""
+    """Get path for early crash log file.
+    
+    On Windows, uses the install location's logs folder.
+    This keeps all logs together and avoids scattered files in AppData/Desktop.
+    """
     global _CRASH_LOG_PATH
     if _CRASH_LOG_PATH is not None:
         return _CRASH_LOG_PATH
@@ -37,30 +61,24 @@ def _get_crash_log_path() -> Path:
     # Try multiple locations in order of preference
     candidates = []
     
-    # 1. User's Desktop (most visible for troubleshooting)
+    # 1. Install location's logs folder (preferred on Windows)
     try:
-        desktop = Path.home() / "Desktop"
-        if desktop.exists():
-            candidates.append(desktop / "AIOS_crash.log")
+        install_root = _get_install_root()
+        logs_dir = install_root / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        candidates.append(logs_dir / "crash.log")
     except Exception:
         pass
     
-    # 2. User's local app data
+    # 2. Current working directory's logs folder
     try:
-        local_appdata = Path(os.environ.get("LOCALAPPDATA", "")) / "aios"
-        if local_appdata.parent.exists():
-            local_appdata.mkdir(parents=True, exist_ok=True)
-            candidates.append(local_appdata / "crash.log")
+        cwd_logs = Path.cwd() / "logs"
+        cwd_logs.mkdir(parents=True, exist_ok=True)
+        candidates.append(cwd_logs / "crash.log")
     except Exception:
         pass
     
-    # 3. Current working directory
-    try:
-        candidates.append(Path.cwd() / "logs" / "crash.log")
-    except Exception:
-        pass
-    
-    # 4. Temp directory as last resort
+    # 3. Temp directory as last resort
     try:
         import tempfile
         candidates.append(Path(tempfile.gettempdir()) / "aios_crash.log")

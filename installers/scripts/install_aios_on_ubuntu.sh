@@ -574,7 +574,7 @@ create_desktop_entry() {
 [Desktop Entry]
 Type=Application
 Name=AI-OS
-Comment=AI-OS - Advanced AI Operating System
+Comment=AI-OS - Artificially Intelligent Operating System
 Exec=$venv_realpath/bin/python -m aios.cli.aios gui
 Icon=$icon_path
 Terminal=false

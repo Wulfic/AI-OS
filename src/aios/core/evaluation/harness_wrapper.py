@@ -660,7 +660,19 @@ cli_evaluate()
     
     @staticmethod
     def is_lm_eval_installed() -> bool:
-        """Check if lm-evaluation-harness is installed."""
+        """Check if lm-evaluation-harness is installed.
+        
+        First tries to import the lm_eval module directly (more reliable),
+        then falls back to checking the CLI command (for backwards compatibility).
+        """
+        # Primary check: try importing the module
+        try:
+            import lm_eval
+            return True
+        except ImportError:
+            pass
+        
+        # Fallback check: try CLI (in case installed differently)
         try:
             result = subprocess.run(
                 ["lm_eval", "--help"],

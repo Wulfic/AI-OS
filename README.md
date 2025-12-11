@@ -12,26 +12,28 @@ License: AI-OS Non‑Selling Attribution License (ANSL) v1.0. You may use, copy,
 
 ## What is AI-OS?
 
-- Today: Train Hierarchical Reasoning Models (HRM) with Sparse Mixture‑of‑Experts (MoE) on consumer GPUs. Optimizations enable long context training on almost any sized card!
+- Today: Train Hierarchical Reasoning Models (HRM) with Sparse Mixture‑of‑Experts (MoE) on consumer GPUs. Optimizations enable long context training on almost any sized card! Designed to be a streamlined, pipeline, from data prep to model training/inference to evaluation for users of all skill levels. No need to be an ML expert to get started!
 - Tomorrow: Deeper OS integration and autonomous, idle‑time learning.
+- Bleeding edge technologies, pushing the boundaries of consumer hardware.
 - Tons more features! Check out the Planned_Features section
 
 Key features in v1.0.0:
-- Long-context training strategies and memory optimizations (experimental)
+- Windows and Ubuntu Support!
+- Long-context training strategies and memory optimizations 
 - Multi‑GPU training (DDP/Parallel/Sharding)
-- GUI + CLI
+- GUI + CLI(TUI coming soon!)
 - End to End pipeline for HRM based models
 - Integration with huggingface
-- Base model with extremely basic english comprehension
+- (Optional) Base model with extremely basic english comprehension
 
 ## Authors Note
-While the minimum specs listed above will allow you to train and run models, please bare in mind, that training could take weeks on smaller/older cards.
-The model that ships with this program was trained on 2x RTX 2080ti(11GB) cards. The model is a utilizing the qwen tokenizer, sMoE enabled 268M Params with 8 experts, context length of 1024 resulting in about 6000 characters for output. Trained 1/10th the Tiny Stories Dataset in ~8 hours.
+While the minimum specs listed below will allow you to train and run models, please bare in mind, that training could take weeks on smaller/older cards.
+The Optional model that ships alongside this program was trained on 2x RTX 2080ti(11GB) cards. The model is a utilizing the qwen tokenizer, sMoE enabled 268M Params with 8 experts, context length of 1024 resulting in about ~6000 characters for output. Trained 1/10th the Tiny Stories Dataset in ~8 hours.
 
 TLDR; Have a fast ass GPU with lots of VRAM if you're impatient.
 
 ## Minimum Recommended Specs!
-- GPU: 6GB VRAM **NOTE** (Nvidia:Full Support|AMD:UNTESTED|INTEL(ARC):UNTESTED)
+- GPU: 6GB VRAM **NOTE** (Nvidia:Full Support|AMD:UNTESTED|INTEL(ARC):UNTESTED|CPU:Partial Support)
 - System Memory: 16GB
 - CPU: 4 Core
 

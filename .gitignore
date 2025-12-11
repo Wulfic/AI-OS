@@ -99,6 +99,9 @@ artifacts/evaluation/
 # User-specific GUI state
 src/gui_state.json
 
+# Session state (user-specific)
+cache/logging/.session_state.json
+
 # GPU metrics and monitoring
 **/gpu_metrics.jsonl
 **/gpu_metrics.log

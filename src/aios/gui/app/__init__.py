@@ -581,6 +581,20 @@ def run(exit_after: float | None = None, minimized: bool = False):
         exit_after: if provided (>0), auto-close the window after N seconds (CI/headless smoke).
         minimized: if True, start with window minimized to tray
     """
+    import sys
+    import os
+    
+    # Ensure stdout/stderr are valid to prevent crashes in Tkinter
+    # When launched via pythonw.exe or certain wrappers, these can be None or broken
+    # This is critical for Windows where GUI apps may not have a console
+    try:
+        if sys.stdout is None or not hasattr(sys.stdout, 'write'):
+            sys.stdout = open(os.devnull, 'w')
+        if sys.stderr is None or not hasattr(sys.stderr, 'write'):
+            sys.stderr = open(os.devnull, 'w')
+    except Exception:
+        pass
+    
     if tk is None:
         logger.warning("Tkinter is not available - GUI cannot start")
         return
