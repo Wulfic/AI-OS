@@ -1,0 +1,79 @@
+name: Stale Issues & PRs
+
+on:
+  schedule:
+    # Run daily at midnight UTC
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    name: Mark Stale Issues and PRs
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Mark stale issues and PRs
+        uses: actions/stale@v9
+        with:
+          # Issue configuration
+          stale-issue-message: |
+            👋 This issue has been automatically marked as stale because it has not had recent activity.
+            
+            It will be closed in **14 days** if no further activity occurs.
+            
+            If this issue is still relevant:
+            - Comment with an update or additional information
+            - Remove the `stale` label
+            
+            Thank you for your contributions to AI-OS! 🚀
+          
+          stale-issue-label: 'stale'
+          days-before-issue-stale: 60
+          days-before-issue-close: 14
+          close-issue-message: |
+            🔒 This issue has been automatically closed due to inactivity.
+            
+            If you believe this issue should be reopened, please:
+            - Leave a comment explaining why
+            - Or create a new issue with updated information
+            
+            Thank you for using AI-OS!
+          
+          # PR configuration
+          stale-pr-message: |
+            👋 This pull request has been automatically marked as stale because it has not had recent activity.
+            
+            It will be closed in **14 days** if no further activity occurs.
+            
+            If this PR is still needed:
+            - Rebase/update the branch
+            - Address any review comments
+            - Remove the `stale` label
+          
+          stale-pr-label: 'stale'
+          days-before-pr-stale: 45
+          days-before-pr-close: 14
+          close-pr-message: |
+            🔒 This pull request has been automatically closed due to inactivity.
+            
+            Feel free to reopen it if you'd like to continue working on it.
+          
+          # Labels to exempt from stale processing
+          exempt-issue-labels: 'pinned,security,bug,enhancement,help wanted,good first issue'
+          exempt-pr-labels: 'pinned,security,work-in-progress,do-not-close'
+          
+          # Don't process locked issues/PRs
+          exempt-all-milestones: true
+          
+          # Operations per run (to avoid rate limiting)
+          operations-per-run: 100
+          
+          # Remove stale label when updated
+          remove-stale-when-updated: true
+          
+          # Ascending order (oldest first)
+          ascending: true
