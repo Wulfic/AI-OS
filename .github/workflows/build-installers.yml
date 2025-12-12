@@ -3,6 +3,8 @@ name: Build Installers
 on:
   push:
     branches: [main]
+    tags:
+      - 'v*'  # Trigger on version tags for releases
     paths:
       - 'src/**'
       - 'config/**'
