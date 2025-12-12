@@ -3,7 +3,8 @@
 On Windows, all paths default to the install location (where AI-OS is installed).
 This keeps logs, cache, config, and artifacts in the same directory structure.
 
-On Linux/Mac, standard XDG paths are used (unless overridden).
+On Linux/Mac, user-local XDG paths are used by default to avoid permission issues.
+System-wide paths can be configured via environment variables for packaged installs.
 
 Environment variable overrides:
 - AIOS_INSTALL_ROOT: Override the detected install location
@@ -88,9 +89,14 @@ def get_install_root() -> Path:
 
 @lru_cache(maxsize=1)
 def get_program_data_root() -> Path:
-    """Return the root directory for shared, machine-wide data.
+    """Return the root directory for shared program data.
     
     On Windows, uses the install location for portability.
+    On Linux/Mac, uses user-local paths by default since system paths
+    like /var/lib require root permissions.
+    
+    For system-wide installs (e.g., .deb package), set AIOS_PROGRAM_DATA
+    to a writable location or ensure proper permissions.
     """
     override = _env_path("AIOS_PROGRAM_DATA")
     if override:
@@ -100,11 +106,14 @@ def get_program_data_root() -> Path:
         # Use install location on Windows for portability
         return _ensure_dir(get_install_root())
     elif _DARWIN:
-        base = Path("/Library/Application Support")
+        # Use user-local path on macOS
+        base = Path.home() / "Library" / "Application Support"
     else:
-        base = Path(os.environ.get("AIOS_LINUX_GLOBAL", "/var/lib"))
+        # On Linux, prefer user-local path to avoid permission issues
+        # Users can override with AIOS_PROGRAM_DATA for system-wide installs
+        base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
 
-    return _ensure_dir(base / "AI-OS")
+    return _ensure_dir(base / "aios")
 
 
 @lru_cache(maxsize=1)

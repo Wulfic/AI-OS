@@ -351,7 +351,7 @@ Depends: python3 (>= 3.10), python3-venv, python3-pip, python3-tk, libgdk-pixbuf
 Maintainer: Wulfic <support@ai-os.invalid>
 Installed-Size: $INSTALLED_SIZE
 Homepage: https://github.com/Wulfic/AI-OS
-Description: HRM-sMoE LLM training toolkit with a clean GUI, CLI, and installers
+Description: HRM-sMoE LLM Training Toolkit
  Future-facing architecture for OS-integrated autonomous assistance.
 EOF
 
