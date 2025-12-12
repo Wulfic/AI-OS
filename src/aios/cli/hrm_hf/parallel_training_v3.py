@@ -1009,7 +1009,7 @@ def run_parallel_training_v3(
     if is_primary:
         print(f"[OK] ChunkTracker initialized\n")
     
-    # Parse cuda_ids
+    # Parse cuda_ids from config
     cuda_ids = config.cuda_ids
     if isinstance(cuda_ids, str):
         cuda_ids = [int(x.strip()) for x in cuda_ids.split(',')]
@@ -1028,11 +1028,30 @@ def run_parallel_training_v3(
             "No CUDA devices are visible to PyTorch. Ensure GPU drivers are installed or adjust --cuda-ids/--device options."
         )
 
-    invalid_ids = [gpu for gpu in cuda_ids if gpu < 0 or gpu >= visible_device_count]
-    if invalid_ids:
-        raise RuntimeError(
-            f"Requested CUDA device IDs {invalid_ids} but only {visible_device_count} device(s) are visible. Set --cuda-ids accordingly."
-        )
+    # When CUDA_VISIBLE_DEVICES is set, PyTorch remaps device indices to 0, 1, 2, ...
+    # For example, if CUDA_VISIBLE_DEVICES="1,2", then physical GPU 1 becomes cuda:0 and GPU 2 becomes cuda:1
+    # We need to use these remapped indices (0, 1, ...) instead of the original GPU IDs
+    cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    if cuda_visible_devices:
+        # CUDA_VISIBLE_DEVICES is set - use remapped indices (0, 1, 2, ...) up to visible_device_count
+        num_requested = len(cuda_ids)
+        if num_requested > visible_device_count:
+            raise RuntimeError(
+                f"Requested {num_requested} GPU(s) but only {visible_device_count} device(s) are visible via CUDA_VISIBLE_DEVICES={cuda_visible_devices}. "
+                "Adjust GPU selection in Resources tab."
+            )
+        # Use remapped indices: 0, 1, 2, ... instead of original GPU IDs
+        original_cuda_ids = cuda_ids
+        cuda_ids = list(range(num_requested))
+        if is_primary and original_cuda_ids != cuda_ids:
+            print(f"[GPU] Remapped GPU IDs {original_cuda_ids} → {cuda_ids} (CUDA_VISIBLE_DEVICES={cuda_visible_devices})")
+    else:
+        # No CUDA_VISIBLE_DEVICES - validate original IDs directly
+        invalid_ids = [gpu for gpu in cuda_ids if gpu < 0 or gpu >= visible_device_count]
+        if invalid_ids:
+            raise RuntimeError(
+                f"Requested CUDA device IDs {invalid_ids} but only {visible_device_count} device(s) are visible. Set --cuda-ids accordingly."
+            )
 
     num_gpus = len(cuda_ids)
     

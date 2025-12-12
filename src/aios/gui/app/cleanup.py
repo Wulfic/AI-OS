@@ -130,12 +130,12 @@ def cleanup(app: Any) -> None:
         except Exception as e:
             logger.debug(f"Error stopping UI dispatcher: {e}")
 
-    # Shutdown worker pool
+    # Shutdown worker pool - reduced timeout for faster shutdown
     if hasattr(app, '_worker_pool') and app._worker_pool:
         try:
             logger.info("Shutting down worker pool...")
             start_time = time.time()
-            app._worker_pool.shutdown(wait=True, timeout=5.0)
+            app._worker_pool.shutdown(wait=True, timeout=3.0)  # Reduced from 5.0 to 3.0
             duration = time.time() - start_time
             logger.info(f"Worker pool shutdown complete (took {duration:.2f}s)")
         except Exception as e:
@@ -157,7 +157,7 @@ def cleanup(app: Any) -> None:
                     pass
             logger.debug(f"Cancelled {cancelled}/{timer_count} timers")
     
-    # Shutdown process reaper
+    # Shutdown process reaper - reduced timeout for faster shutdown
     if hasattr(app, '_process_reaper') and app._process_reaper:
         try:
             # Get process count before cleanup if available
@@ -167,7 +167,7 @@ def cleanup(app: Any) -> None:
             
             logger.info(f"Shutting down process reaper (cleaning up {process_count} processes)...")
             start_time = time.time()
-            app._process_reaper.cleanup_all(timeout=5.0)
+            app._process_reaper.cleanup_all(timeout=3.0)  # Reduced from 5.0 to 3.0
             duration = time.time() - start_time
             logger.info(f"Process reaper shutdown complete (took {duration:.2f}s)")
         except Exception as e:
@@ -206,54 +206,8 @@ def cleanup(app: Any) -> None:
     except Exception as e:
         logger.warning(f"Error shutting down async logging: {e}")
     
-    # Clean up panels
-    try:
-        if hasattr(app, 'chat_panel') and app.chat_panel:
-            if hasattr(app.chat_panel, 'cleanup'):
-                logger.debug("Cleaning up chat panel...")
-                try:
-                    app.chat_panel.cleanup()
-                    logger.debug("Chat panel cleanup: success")
-                except Exception as e:
-                    logger.debug(f"Chat panel cleanup: failed - {e}")
-        
-        if hasattr(app, 'hrm_training_panel') and app.hrm_training_panel:
-            if hasattr(app.hrm_training_panel, 'cleanup'):
-                logger.debug("Cleaning up HRM training panel...")
-                try:
-                    app.hrm_training_panel.cleanup()
-                    logger.debug("HRM training panel cleanup: success")
-                except Exception as e:
-                    logger.debug(f"HRM training panel cleanup: failed - {e}")
-        
-        if hasattr(app, 'resources_panel') and app.resources_panel:
-            if hasattr(app.resources_panel, 'cleanup'):
-                logger.debug("Cleaning up resources panel...")
-                try:
-                    app.resources_panel.cleanup()
-                    logger.debug("Resources panel cleanup: success")
-                except Exception as e:
-                    logger.debug(f"Resources panel cleanup: failed - {e}")
-
-        if hasattr(app, 'evaluation_panel') and app.evaluation_panel:
-            if hasattr(app.evaluation_panel, 'cleanup'):
-                logger.debug("Cleaning up evaluation panel...")
-                try:
-                    app.evaluation_panel.cleanup()
-                    logger.debug("Evaluation panel cleanup: success")
-                except Exception as e:
-                    logger.debug(f"Evaluation panel cleanup: failed - {e}")
-
-        if hasattr(app, 'dataset_download_panel') and app.dataset_download_panel:
-            if hasattr(app.dataset_download_panel, 'cleanup'):
-                logger.debug("Cleaning up dataset download panel...")
-                try:
-                    app.dataset_download_panel.cleanup()
-                    logger.debug("Dataset download panel cleanup: success")
-                except Exception as e:
-                    logger.debug(f"Dataset download panel cleanup: failed - {e}")
-    except Exception as e:
-        logger.warning(f"Error cleaning up panels: {e}")
+    # NOTE: Panel cleanup is now done ONCE at the start of shutdown (see "Pre-shutdown cleanup" above)
+    # Previously there was duplicate cleanup here which caused issues and doubled shutdown time
     
     logger.info("Cleanup complete - Application terminated")
     logger.info("=" * 60)

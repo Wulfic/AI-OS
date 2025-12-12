@@ -261,10 +261,10 @@ class TrayManager:
                 logger.error(f"Error stopping tray icon: {e}")
         
         # Wait for tray thread to finish with timeout
-        # Don't block forever - if it doesn't stop, move on
+        # Reduced timeout from 2.0 to 1.0 for faster shutdown
         if self._tray_thread and self._tray_thread.is_alive():
             try:
-                self._tray_thread.join(timeout=2.0)
+                self._tray_thread.join(timeout=1.0)
                 if self._tray_thread.is_alive():
                     logger.warning("Tray thread did not stop within timeout - continuing anyway")
                 else:

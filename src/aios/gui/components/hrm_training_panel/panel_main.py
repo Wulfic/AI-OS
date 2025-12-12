@@ -349,70 +349,92 @@ class HRMTrainingPanel(ttk.LabelFrame):  # type: ignore[misc]
         set_arch_widgets_state(self, state)
 
     def cleanup(self) -> None:
-        """Clean up HRM training panel resources on shutdown."""
+        """Clean up HRM training panel resources on shutdown.
+        
+        This must be FAST and synchronous - no background threads or async callbacks.
+        The application is shutting down, so we force-terminate any running processes.
+        """
         logger.info("Cleaning up HRM Training Panel")
         
-        # Stop any running training processes
-        if self._run_in_progress:
-            logger.info("Stopping active training run during cleanup")
-            try:
-                self._on_stop()
-            except Exception as e:
-                logger.warning(f"Error stopping training during cleanup: {e}")
+        # Stop metrics polling FIRST to prevent new UI updates
+        if self._metrics_polling_active:
+            logger.debug("Stopping metrics polling")
+            self._metrics_polling_active = False
         
-        # Cancel any scheduled VRAM updates
+        # Cancel any scheduled callbacks to prevent them from firing during shutdown
         if self._vram_update_after_id:
             try:
                 self.after_cancel(self._vram_update_after_id)
                 logger.debug("Cancelled scheduled VRAM update")
             except Exception as e:
                 logger.debug(f"Error cancelling VRAM update: {e}")
+            self._vram_update_after_id = None
         
-        # Cancel any scheduled state saves
         if self._save_after_id:
             try:
                 self.after_cancel(self._save_after_id)
                 logger.debug("Cancelled scheduled state save")
             except Exception as e:
                 logger.debug(f"Error cancelling state save: {e}")
+            self._save_after_id = None
         
-        # Stop metrics polling
-        if self._metrics_polling_active:
-            logger.debug("Stopping metrics polling")
-            self._metrics_polling_active = False
-        
-        # Clean up subprocess if present
-        if self._proc and self._proc.poll() is None:
-            logger.info(f"Terminating HRM training process (PID: {self._proc.pid})")
+        # FORCE-TERMINATE any running training process immediately
+        # During shutdown we don't have time for graceful stops
+        proc = getattr(self, '_proc', None)
+        if proc is not None:
             try:
-                self._proc.terminate()
-            except Exception as e:
-                logger.error(f"Error terminating HRM training process: {e}")
-            else:
-
-                def _finalize_termination(attempt: int = 0) -> None:
-                    if self._proc is None:
-                        return
-                    if self._proc.poll() is None and attempt < 8:
-                        logger.debug("Waiting for training process to exit…")
-                        try:
-                            self.after(250, lambda: _finalize_termination(attempt + 1))
-                        except Exception:
-                            _finalize_termination(attempt + 1)
-                        return
-                    if self._proc.poll() is None:
-                        logger.warning("Process did not terminate, forcing kill")
-                        try:
-                            self._proc.kill()
-                        except Exception as kill_exc:
-                            logger.error(f"Error forcing HRM process kill: {kill_exc}")
-                    self._proc = None
-
+                is_alive = proc.is_alive() if hasattr(proc, 'is_alive') else (proc.poll() is None)
+            except Exception:
+                is_alive = False
+            
+            if is_alive:
+                logger.info(f"Force-terminating training process during shutdown (PID: {getattr(proc, 'pid', 'unknown')})")
                 try:
-                    self.after(250, _finalize_termination)
-                except Exception:
-                    _finalize_termination()
-        else:
+                    # Try terminate first
+                    proc.terminate()
+                    # Wait briefly for termination
+                    import time
+                    for _ in range(10):  # 1 second max
+                        time.sleep(0.1)
+                        try:
+                            still_alive = proc.is_alive() if hasattr(proc, 'is_alive') else (proc.poll() is None)
+                        except Exception:
+                            still_alive = False
+                        if not still_alive:
+                            logger.debug("Training process terminated successfully")
+                            break
+                    else:
+                        # Still alive after 1s, force kill
+                        logger.warning("Process did not respond to terminate, forcing kill")
+                        try:
+                            proc.kill()
+                        except Exception as kill_err:
+                            logger.error(f"Error killing process: {kill_err}")
+                except Exception as e:
+                    logger.error(f"Error terminating training process: {e}")
+            
             self._proc = None
+        
+        # Clean up multiprocessing manager and events
+        try:
+            manager = getattr(self, '_training_manager', None)
+            if manager is not None:
+                logger.debug("Shutting down multiprocessing manager")
+                try:
+                    manager.shutdown()
+                except Exception as e:
+                    logger.debug(f"Manager shutdown error (may be expected): {e}")
+                self._training_manager = None
+        except Exception as e:
+            logger.debug(f"Error cleaning up manager: {e}")
+        
+        # Clear event references
+        self._stop_event = None
+        self._graceful_stop_event = None
+        self._stop_ack_event = None
+        self._graceful_stop_ack_event = None
+        self._run_in_progress = False
+        self._stop_requested = False
+        self._graceful_stop_requested = False
 
         logger.info("HRM Training Panel cleanup complete")
