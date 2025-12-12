@@ -6,16 +6,30 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from aios.core.evaluation import EvaluationHistory, HarnessWrapper
+# Lazy imports to avoid slow startup from lm_eval/transformers import chain
+if TYPE_CHECKING:
+    from aios.core.evaluation import EvaluationHistory, HarnessWrapper
 
 app = typer.Typer(help="Model evaluation commands")
 console = Console()
+
+
+def _get_harness_wrapper() -> type:
+    """Lazy import of HarnessWrapper to avoid slow startup."""
+    from aios.core.evaluation import HarnessWrapper
+    return HarnessWrapper
+
+
+def _get_evaluation_history() -> type:
+    """Lazy import of EvaluationHistory to avoid slow startup."""
+    from aios.core.evaluation import EvaluationHistory
+    return EvaluationHistory
 
 
 @app.command("run")
@@ -85,6 +99,7 @@ def eval_run(
         aios eval run facebook/opt-125m --tasks arc_challenge --limit 100
         aios eval run ./my_model --tasks humaneval --device cpu
     """
+    HarnessWrapper = _get_harness_wrapper()
     # Check if lm_eval is installed
     if not HarnessWrapper.is_lm_eval_installed():
         console.print(
@@ -165,6 +180,7 @@ def eval_run(
         # Save to history
         if save_to_history and result.status == "completed":
             try:
+                EvaluationHistory = _get_evaluation_history()
                 history = EvaluationHistory()
                 eval_id = history.save_evaluation(
                     result=result,
@@ -210,6 +226,7 @@ def eval_list(
         aios eval list mmlu
         aios eval list code
     """
+    HarnessWrapper = _get_harness_wrapper()
     # Check if lm_eval is installed
     if not HarnessWrapper.is_lm_eval_installed():
         console.print(
@@ -316,6 +333,7 @@ def eval_history(
         aios eval history --status completed --verbose
     """
     try:
+        EvaluationHistory = _get_evaluation_history()
         history = EvaluationHistory()
         
         # Get evaluations
@@ -428,6 +446,7 @@ def eval_compare(
             console.print("[red]Error:[/red] Please provide at least 2 evaluation IDs", style="bold")
             raise typer.Exit(1)
         
+        EvaluationHistory = _get_evaluation_history()
         history = EvaluationHistory()
         comparison = history.compare_evaluations(ids)
         
