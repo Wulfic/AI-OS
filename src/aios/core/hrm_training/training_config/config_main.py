@@ -218,6 +218,16 @@ class TrainingConfig(
             args.append("--resume")
         if self.iterate:
             args.append("--iterate")
+
+        # Dataset progression
+        if self.linear_dataset:
+            args.append("--linear-dataset")
+        else:
+            args.append("--no-linear-dataset")
+
+        # Diagnostics / override behavior
+        if getattr(self, "force_train", False):
+            args.append("--force-train")
         if self.stop_after_epoch:
             args.append("--stop-after-epoch")
         if self.optimize:
@@ -259,6 +269,21 @@ class TrainingConfig(
             args.append("--auto-adjust-lr")
         else:
             args.append("--no-auto-adjust-lr")
+
+        # Adaptive LR scheduler tuning
+        if getattr(self, "adaptive_lr_config", None):
+            args.extend(["--adaptive-lr-config", str(self.adaptive_lr_config)])
+
+        if getattr(self, "adaptive_lr_debug_level", None) is not None:
+            args.extend(["--adaptive-lr-debug-level", str(self.adaptive_lr_debug_level)])
+        if getattr(self, "adaptive_lr_emit_window_summary", None) is not None:
+            args.append("--adaptive-lr-window-summary" if self.adaptive_lr_emit_window_summary else "--no-adaptive-lr-window-summary")
+        if getattr(self, "adaptive_lr_window_summary_every", None) is not None:
+            args.extend(["--adaptive-lr-window-summary-every", str(self.adaptive_lr_window_summary_every)])
+        if getattr(self, "adaptive_lr_state_path", None):
+            args.extend(["--adaptive-lr-state-path", str(self.adaptive_lr_state_path)])
+        if getattr(self, "adaptive_lr_reset_state", False):
+            args.append("--adaptive-lr-reset-state")
         
         # Directories
         args.extend(["--save-dir", self.save_dir])

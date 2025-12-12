@@ -43,6 +43,9 @@ def setup_variables(panel: HRMTrainingPanel) -> None:
     panel.steps_var = safe_variables.StringVar(value="100")
     panel._auto_steps_calculating = False
     panel.lr_var = safe_variables.StringVar(value="0.00005")
+    # Adaptive LR mode selection (UI dropdown). This replaces the old checkbox.
+    # We keep auto_adjust_lr_var for backward compatibility and as a derived flag.
+    panel.adaptive_lr_mode_var = safe_variables.StringVar(value="Auto")
     panel.auto_adjust_lr_var = safe_variables.BooleanVar(value=True)
     panel.halt_steps_var = safe_variables.StringVar(value="1")
     panel.gradient_checkpointing_var = safe_variables.BooleanVar(value=True)
@@ -149,6 +152,7 @@ def setup_variable_traces(panel: HRMTrainingPanel) -> None:
     try:
         _vars_to_watch = [
             ("learning_rate", panel.lr_var),
+            ("adaptive_lr_mode", getattr(panel, "adaptive_lr_mode_var", panel.lr_var)),
             ("batch_size", panel.batch_var),
             ("gradient_accumulation", panel.gradient_accumulation_var),
             ("dataset", panel.dataset_var),

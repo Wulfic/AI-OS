@@ -36,6 +36,7 @@ def execute_training_epoch(
     world_sz: int,
     write_jsonl: Callable,
     should_stop: Callable,
+    adaptive_lr_scheduler: Any = None,
 ) -> Tuple[int, bool, int, Optional[str]]:
     """Execute a single training epoch.
     
@@ -83,6 +84,7 @@ def execute_training_epoch(
         hot_reload_steps=config.hot_reload_steps if inference_manager else 0,
         warmup_steps=warmup_steps,
         base_lr=base_lr,
+        adaptive_lr_scheduler=adaptive_lr_scheduler,
         stop_after_epoch=config.stop_after_epoch,
         step_offset=step_offset,
         config=config,

@@ -213,6 +213,37 @@ def train_actv1(
     # Dataset progression mode
     linear_dataset: bool = typer.Option(True, "--linear-dataset/--no-linear-dataset", help="Process dataset linearly (sequential order) without shuffling. Enables position tracking for pause/resume. Default: linear mode"),
     dataset_start_offset: int = typer.Option(0, "--dataset-start-offset", help="Starting sample index for resuming linear dataset training (use with --linear-dataset). Default: 0"),
+    force_train: bool = typer.Option(False, "--force-train/--no-force-train", help="Ignore chunk-tracker resume-skip and train even if the current chunk is marked already trained. Useful for diagnostics."),
+    adaptive_lr_config: Optional[str] = typer.Option(
+        None,
+        "--adaptive-lr-config",
+        help="Path to an adaptive LR scheduler config file (.json/.toml/.yaml). Used only when --auto-adjust-lr is enabled.",
+    ),
+    adaptive_lr_debug_level: Optional[int] = typer.Option(
+        None,
+        "--adaptive-lr-debug-level",
+        help="Override adaptive LR debug level (0=off,1=adjustments,2=window summaries,3=very verbose).",
+    ),
+    adaptive_lr_emit_window_summary: Optional[bool] = typer.Option(
+        None,
+        "--adaptive-lr-window-summary/--no-adaptive-lr-window-summary",
+        help="Force-enable/disable periodic adaptive LR window summary events/logs.",
+    ),
+    adaptive_lr_window_summary_every: Optional[int] = typer.Option(
+        None,
+        "--adaptive-lr-window-summary-every",
+        help="Emit a window summary every N windows (only relevant when summaries are enabled).",
+    ),
+    adaptive_lr_state_path: Optional[str] = typer.Option(
+        None,
+        "--adaptive-lr-state-path",
+        help="Path to persist adaptive LR scheduler state as JSON (default: <save_dir>/adaptive_lr_state.json).",
+    ),
+    adaptive_lr_reset_state: bool = typer.Option(
+        False,
+        "--adaptive-lr-reset-state/--no-adaptive-lr-reset-state",
+        help="Ignore any persisted adaptive LR state when resuming.",
+    ),
     # Automatic optimization
     optimize: bool = typer.Option(False, "--optimize/--no-optimize", help="Automatically find optimal settings for max context (up to 100K) and batch size based on available VRAM. Overrides max-seq-len and batch-size if enabled."),
     # Memory optimization
@@ -302,6 +333,13 @@ def train_actv1(
     resume=resume,
         linear_dataset=linear_dataset,
         dataset_start_offset=dataset_start_offset,
+        force_train=force_train,
+        adaptive_lr_config=adaptive_lr_config,
+        adaptive_lr_debug_level=adaptive_lr_debug_level,
+        adaptive_lr_emit_window_summary=adaptive_lr_emit_window_summary,
+        adaptive_lr_window_summary_every=adaptive_lr_window_summary_every,
+        adaptive_lr_state_path=adaptive_lr_state_path,
+        adaptive_lr_reset_state=adaptive_lr_reset_state,
         optimize=optimize,
         gradient_checkpointing=gradient_checkpointing,
         use_amp=use_amp,

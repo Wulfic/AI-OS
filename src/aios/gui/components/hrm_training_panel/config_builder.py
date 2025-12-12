@@ -71,9 +71,34 @@ def build_training_config(panel: HRMTrainingPanel) -> Any:
         except Exception:
             return None
     
-    # Debug: Check checkbox state before building config
-    auto_adjust_value = panel.auto_adjust_lr_var.get()
-    logger.debug(f"Building config: auto_adjust_lr checkbox state = {auto_adjust_value}")
+    # Resolve adaptive LR profile from dropdown (fallback to legacy boolean)
+    adaptive_mode_label = ""
+    try:
+        adaptive_mode_label = getattr(panel, "adaptive_lr_mode_var", panel.lr_var).get().strip()
+    except Exception:
+        adaptive_mode_label = ""
+
+    profiles_by_label = getattr(panel, "_adaptive_lr_profiles_by_label", {}) or {}
+    selected_profile = profiles_by_label.get(adaptive_mode_label)
+
+    # Off => disable adaptive LR; everything else enables it.
+    auto_adjust_value = True
+    if adaptive_mode_label.strip().lower() in {"off", "none", "disabled"}:
+        auto_adjust_value = False
+    logger.debug(
+        "Building config: adaptive_lr_mode=%r derived auto_adjust_lr=%r",
+        adaptive_mode_label,
+        auto_adjust_value,
+    )
+
+    adaptive_lr_config_path = None
+    try:
+        if auto_adjust_value and selected_profile is not None:
+            from .adaptive_lr_profiles import resolve_profile_config_path
+
+            adaptive_lr_config_path = resolve_profile_config_path(selected_profile)
+    except Exception:
+        adaptive_lr_config_path = None
     
     # Get device from resources panel if available
     device = "auto"
@@ -187,7 +212,8 @@ def build_training_config(panel: HRMTrainingPanel) -> Any:
         gradient_accumulation_steps=_int(panel.gradient_accumulation_var, 1),
         steps=_int(panel.steps_var, 100),
         lr=_float(panel.lr_var, 5e-5),
-        auto_adjust_lr=panel.auto_adjust_lr_var.get(),
+        auto_adjust_lr=auto_adjust_value,
+        adaptive_lr_config=adaptive_lr_config_path,
         device=device,
         halt_max_steps=_int(panel.halt_steps_var, 1),
         save_dir=_str(panel.bundle_dir_var, default_bundle),

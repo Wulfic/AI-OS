@@ -46,6 +46,7 @@ def train_epoch(
     hot_reload_steps: int = 0,
     warmup_steps: int = 0,
     base_lr: float = 0.0,
+    adaptive_lr_scheduler = None,
     stop_after_epoch: bool = False,
     step_offset: int = 0,
     config = None,
@@ -148,6 +149,49 @@ def train_epoch(
     
     # Track graceful stop flag outside loop
     graceful_stop_pending = False
+
+    def _set_optimizer_lr(lr_value: float) -> None:
+        """Set LR on whichever optimizer is active (DeepSpeed or torch optimizer)."""
+        try:
+            if deepspeed_engine is not None:
+                ds_opt = getattr(deepspeed_engine, "optimizer", None)
+                if ds_opt is not None and hasattr(ds_opt, "param_groups"):
+                    for pg in ds_opt.param_groups:
+                        pg["lr"] = float(lr_value)
+                    return
+        except Exception:
+            pass
+
+        try:
+            if opt is not None and hasattr(opt, "param_groups"):
+                for pg in opt.param_groups:
+                    pg["lr"] = float(lr_value)
+        except Exception:
+            pass
+
+    def _get_optimizer_lr() -> Optional[float]:
+        """Best-effort read of current LR (first param group)."""
+        try:
+            if deepspeed_engine is not None:
+                ds_opt = getattr(deepspeed_engine, "optimizer", None)
+                if ds_opt is not None and hasattr(ds_opt, "param_groups"):
+                    pgs = ds_opt.param_groups
+                    if pgs:
+                        return float(pgs[0].get("lr"))
+        except Exception:
+            pass
+        try:
+            if opt is not None and hasattr(opt, "param_groups"):
+                pgs = opt.param_groups
+                if pgs:
+                    return float(pgs[0].get("lr"))
+        except Exception:
+            pass
+        return None
+
+    # Maintain a loss buffer for gradient-accumulation cycles so the adaptive LR
+    # reacts to an averaged signal per optimizer step.
+    micro_loss_buffer: list[float] = []
     
     for step in range(int(max(1, steps))):
         display_step = step_offset + step + 1
@@ -208,11 +252,9 @@ def train_epoch(
                 if steps_done < warmup_steps:
                     warmup_factor = (steps_done + 1) / warmup_steps
                     current_lr = base_lr * warmup_factor
-                    for param_group in opt.param_groups:
-                        param_group['lr'] = current_lr
+                    _set_optimizer_lr(current_lr)
                 elif steps_done == warmup_steps:
-                    for param_group in opt.param_groups:
-                        param_group['lr'] = base_lr
+                    _set_optimizer_lr(base_lr)
                     write_jsonl({"event": "warmup_complete", "step": steps_done, "lr": base_lr})
             
             try:
@@ -378,6 +420,12 @@ def train_epoch(
                 # Scale loss for gradient accumulation
                 # CRITICAL: This ensures gradients average instead of sum
                 scaled_loss = loss / accumulation_steps
+
+                # Track micro-batch loss for averaged signal.
+                try:
+                    micro_loss_buffer.append(float(loss.detach().cpu().item()))
+                except Exception:
+                    pass
                 
                 # Backward pass (gradients accumulate automatically)
                 if deepspeed_engine is not None:
@@ -387,6 +435,23 @@ def train_epoch(
                     # Only step optimizer every N batches
                     if (steps_done + 1) % accumulation_steps == 0:
                         deepspeed_engine.step()
+
+                        # Adaptive LR: observe once per optimizer step (after warmup).
+                        if (
+                            adaptive_lr_scheduler is not None
+                            and base_lr > 0
+                            and (warmup_steps <= 0 or steps_done >= warmup_steps)
+                        ):
+                            try:
+                                obs_loss = (
+                                    sum(micro_loss_buffer) / max(1, len(micro_loss_buffer))
+                                    if micro_loss_buffer
+                                    else float(loss.detach().cpu().item())
+                                )
+                                adaptive_lr_scheduler.observe(obs_loss)
+                            except Exception:
+                                pass
+                            micro_loss_buffer.clear()
                         
                 elif use_amp and scaler is not None and dev == "cuda":
                     # AMP with gradient accumulation
@@ -397,6 +462,8 @@ def train_epoch(
                         scaler.unscale_(opt)
                         average_gradients_if_distributed(model_student, is_distributed=ddp_actually_working, world_sz=world_sz)
                         grad_norm = torch.nn.utils.clip_grad_norm_(model_student.parameters(), 0.5)
+
+                        did_update = False
                         
                         if torch.isnan(grad_norm) or torch.isinf(grad_norm):
                             opt.zero_grad(set_to_none=True)
@@ -405,6 +472,25 @@ def train_epoch(
                             scaler.step(opt)
                             scaler.update()
                             opt.zero_grad(set_to_none=True)
+                            did_update = True
+
+                        # Adaptive LR: observe once per optimizer step (after warmup).
+                        if (
+                            adaptive_lr_scheduler is not None
+                            and base_lr > 0
+                            and (warmup_steps <= 0 or steps_done >= warmup_steps)
+                        ):
+                            try:
+                                if did_update:
+                                    obs_loss = (
+                                        sum(micro_loss_buffer) / max(1, len(micro_loss_buffer))
+                                        if micro_loss_buffer
+                                        else float(loss.detach().cpu().item())
+                                    )
+                                    adaptive_lr_scheduler.observe(obs_loss)
+                            except Exception:
+                                pass
+                            micro_loss_buffer.clear()
                 else:
                     # Standard mode with gradient accumulation
                     scaled_loss.backward()
@@ -413,12 +499,33 @@ def train_epoch(
                     if (steps_done + 1) % accumulation_steps == 0:
                         average_gradients_if_distributed(model_student, is_distributed=ddp_actually_working, world_sz=world_sz)
                         grad_norm = torch.nn.utils.clip_grad_norm_(model_student.parameters(), 0.5)
+
+                        did_update = False
                         
                         if torch.isnan(grad_norm) or torch.isinf(grad_norm):
                             opt.zero_grad(set_to_none=True)
                         else:
                             opt.step()
                             opt.zero_grad(set_to_none=True)
+                            did_update = True
+
+                        # Adaptive LR: observe once per optimizer step (after warmup).
+                        if (
+                            adaptive_lr_scheduler is not None
+                            and base_lr > 0
+                            and (warmup_steps <= 0 or steps_done >= warmup_steps)
+                        ):
+                            try:
+                                if did_update:
+                                    obs_loss = (
+                                        sum(micro_loss_buffer) / max(1, len(micro_loss_buffer))
+                                        if micro_loss_buffer
+                                        else float(loss.detach().cpu().item())
+                                    )
+                                    adaptive_lr_scheduler.observe(obs_loss)
+                            except Exception:
+                                pass
+                            micro_loss_buffer.clear()
                 
                 # Always increment step counter (counts batches processed)
                 steps_done += 1
@@ -465,6 +572,7 @@ def train_epoch(
                                 "step": steps_done,
                                 "weight_updates": weight_updates,
                                 "loss": float(loss.item()),  # Unscaled loss for logging
+                                "lr": _get_optimizer_lr(),
                                 "gradient_accumulation_steps": accumulation_steps,
                                 "effective_batch_size": batch_size * accumulation_steps,
                                 "physical_batch_size": batch_size,
@@ -633,6 +741,9 @@ def train_epoch(
                 except Exception:
                     cur_loss = None
                 payload: Dict[str, Any] = {"event": "train", "step": int(step_offset + steps_done)}
+                lr_now = _get_optimizer_lr()
+                if lr_now is not None:
+                    payload["lr"] = lr_now
                 try:
                     payload["rank"] = current_rank
                     payload["ddp"] = ddp_actually_working

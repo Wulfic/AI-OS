@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "profiles": [
+    {
+      "id": "auto",
+      "label": "Auto",
+      "description": "Adaptive LR enabled; auto-switches between balanced/conservative/aggressive.",
+      "overrides": {"mode": "auto"}
+    },
+    {
+      "id": "balanced",
+      "label": "Balanced",
+      "description": "Adaptive LR enabled; balanced preset.",
+      "overrides": {"mode": "balanced"}
+    },
+    {
+      "id": "conservative",
+      "label": "Conservative",
+      "description": "Adaptive LR enabled; conservative preset.",
+      "overrides": {"mode": "conservative"}
+    },
+    {
+      "id": "aggressive",
+      "label": "Aggressive",
+      "description": "Adaptive LR enabled; aggressive preset.",
+      "overrides": {"mode": "aggressive"}
+    }
+  ]
+}

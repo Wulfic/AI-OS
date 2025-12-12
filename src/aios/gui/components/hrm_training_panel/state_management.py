@@ -38,6 +38,8 @@ def get_state(panel: HRMTrainingPanel) -> dict:
             "gradient_accumulation_steps": panel.gradient_accumulation_var.get(),
             "steps": panel.steps_var.get(),
             "lr": panel.lr_var.get(),
+            # New adaptive LR mode dropdown (string). Keep legacy bool too.
+            "adaptive_lr_mode": getattr(panel, "adaptive_lr_mode_var", panel.lr_var).get() if hasattr(panel, "adaptive_lr_mode_var") else ("Auto" if panel.auto_adjust_lr_var.get() else "Off"),
             "auto_adjust_lr": panel.auto_adjust_lr_var.get(),
             "halt_steps": panel.halt_steps_var.get(),
             "gradient_checkpointing": bool(panel.gradient_checkpointing_var.get()),
@@ -138,6 +140,22 @@ def set_state(panel: HRMTrainingPanel, state: dict) -> None:
     _set_str(panel.gradient_accumulation_var, "gradient_accumulation_steps")
     _set_str(panel.steps_var, "steps")
     _set_str(panel.lr_var, "lr")
+
+    # Prefer the new adaptive LR mode string; fall back to the legacy boolean.
+    if hasattr(panel, "adaptive_lr_mode_var"):
+        try:
+            v_mode = state.get("adaptive_lr_mode")
+            if isinstance(v_mode, str) and v_mode.strip():
+                panel.adaptive_lr_mode_var.set(v_mode.strip())
+            else:
+                v_old = state.get("auto_adjust_lr")
+                if isinstance(v_old, bool):
+                    panel.adaptive_lr_mode_var.set("Auto" if v_old else "Off")
+                elif isinstance(v_old, (int, float)):
+                    panel.adaptive_lr_mode_var.set("Auto" if bool(v_old) else "Off")
+        except Exception as e:
+            logger.debug(f"Failed to set adaptive_lr_mode: {e}")
+
     _set_bool(panel.auto_adjust_lr_var, "auto_adjust_lr")
     _set_str(panel.halt_steps_var, "halt_steps")
     _set_bool(panel.gradient_checkpointing_var, "gradient_checkpointing")

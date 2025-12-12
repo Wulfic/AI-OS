@@ -104,15 +104,49 @@ def build_optimizations_section(panel: HRMTrainingPanel, parent: any) -> None:  
     panel.zero_combo = zero_combo
     panel._zero_combo_base_values = ('none', 'zero1', 'zero2')
     
-    # Row 6: MoE Learning Rate Auto-Adjust
+    # Row 6: Adaptive Learning Rate (dropdown)
     moe_lr_row = ttk.Frame(opt_frame)
     moe_lr_row.pack(fill="x", pady=2)
-    ttk.Label(moe_lr_row, text="MoE LR:", width=15, anchor="e", font=("TkDefaultFont", 9, "bold")).pack(side="left")
-    moe_lr_auto_btn = ttk.Checkbutton(moe_lr_row, text="Auto-adjust learning rate", variable=panel.auto_adjust_lr_var)
-    moe_lr_auto_btn.pack(side="left")
+    ttk.Label(moe_lr_row, text="Adaptive LR:", width=15, anchor="e", font=("TkDefaultFont", 9, "bold")).pack(side="left")
+
+    # Load dropdown values (supports user-defined profiles)
+    try:
+        from .adaptive_lr_profiles import load_adaptive_lr_profiles
+
+        profiles = load_adaptive_lr_profiles()
+    except Exception:
+        profiles = []
+
+    # Fallback if profile loading fails
+    if not profiles:
+        profiles = [
+            type("P", (), {"label": "Off", "profile_id": "off"})(),
+            type("P", (), {"label": "Auto", "profile_id": "auto"})(),
+            type("P", (), {"label": "Balanced", "profile_id": "balanced"})(),
+            type("P", (), {"label": "Conservative", "profile_id": "conservative"})(),
+            type("P", (), {"label": "Aggressive", "profile_id": "aggressive"})(),
+        ]
+
+    # Map label -> profile id for config_builder
+    try:
+        panel._adaptive_lr_profiles_by_label = {p.label: p for p in profiles}
+    except Exception:
+        panel._adaptive_lr_profiles_by_label = {}
+
+    mode_combo = ttk.Combobox(
+        moe_lr_row,
+        textvariable=getattr(panel, "adaptive_lr_mode_var", panel.lr_var),
+        width=14,
+        state="readonly",
+    )
+    mode_combo["values"] = tuple(getattr(p, "label", str(p)) for p in profiles)
+    mode_combo.pack(side="left")
+    panel.adaptive_lr_mode_combo = mode_combo
+
     ttk.Label(moe_lr_row, text="Manual LR:").pack(side="left", padx=(10, 2))
     lr_entry = ttk.Entry(moe_lr_row, textvariable=panel.lr_var, width=10)
     lr_entry.pack(side="left")
+    panel.lr_entry = lr_entry
     panel.moe_lr_info_lbl = ttk.Label(moe_lr_row, text="")
     panel.moe_lr_info_lbl.pack(side="left", padx=(10, 0))
     
@@ -134,10 +168,51 @@ def build_optimizations_section(panel: HRMTrainingPanel, parent: any) -> None:  
         add_tooltip(zero_combo, "DeepSpeed ZeRO: Distributed memory optimization\n• none: Standard training\n• zero1: Partition optimizer states (↓25% VRAM)\n• zero2: Partition optimizer + gradients (↓50% VRAM) [RECOMMENDED]\n• zero3: Partition everything (↓75% VRAM, slower)")
         add_tooltip(chunk_enable_btn, "Context Chunking: Split long sequences into smaller chunks\nReduces memory for extreme contexts (8K+ tokens)")
         add_tooltip(chunk_size_combo, "Chunk Size: Powers of 2 from 32-8192 tokens\nSmaller = less VRAM, slower • 2048-4096 typical")
-        add_tooltip(moe_lr_auto_btn, "MoE Auto-Adjust: Automatically adjusts learning rate for MoE models to improve router stability\n\nWhen enabled for MoE models:\n• High LR (≥0.002) → adjusted to 0.001 (standard MoE starting rate)\n• Very Low LR (<0.0001) → increased to 0.0001 (minimum threshold)\n• Optimal range (0.0001-0.002) → used as-is\n\nAdjustments use 0.0001 increments for fine control.\n\nUnchecked = use manual LR value below\nChecked = automatic adjustment for stability (recommended)")
-        add_tooltip(lr_entry, "Learning Rate: Controls training step size during optimization\n\nRecommended values:\n• Dense models: 0.00005 (5e-5) typical\n• MoE models: 0.0001 to 0.001 range\n  - Start: 0.001 for initial training\n  - Adjust by: ±0.0001 as needed\n  - Minimum: 0.0001\n\nNote: Auto-adjust checkbox above will optimize this value\nfor MoE models when enabled (recommended)")
+        add_tooltip(mode_combo, "Adaptive Learning Rate:\n\nOff: Use manual LR (editable).\nAuto: Adaptive LR enabled and will auto-switch between built-in modes.\nBalanced/Conservative/Aggressive: Adaptive LR enabled with a fixed built-in mode.\n\nYou can add custom profiles by creating:~/.config/aios/adaptive_lr_profiles.json")
+        add_tooltip(lr_entry, "Manual Learning Rate:\n\nEnabled only when Adaptive LR is Off.\nWhen Adaptive LR is enabled, LR is managed automatically and this field is locked.")
     except Exception:
         pass
+
+    def _set_lr_entry_enabled(enabled: bool) -> None:
+        try:
+            if enabled:
+                lr_entry.state(["!disabled"])
+            else:
+                lr_entry.state(["disabled"])
+        except Exception:
+            try:
+                lr_entry.config(state="normal" if enabled else "disabled")
+            except Exception:
+                pass
+
+    def _sync_adaptive_lr_ui(*args) -> None:
+        # Off => allow manual LR editing, and disable adaptive LR in config builder.
+        try:
+            mode = getattr(panel, "adaptive_lr_mode_var", None)
+            selected = (mode.get() if mode is not None else "").strip().lower()
+        except Exception:
+            selected = ""
+
+        is_off = selected in {"off", "disabled", "none"} or not selected
+
+        # Keep backward-compatible boolean in sync
+        try:
+            panel.auto_adjust_lr_var.set(not is_off)
+        except Exception:
+            pass
+
+        _set_lr_entry_enabled(is_off)
+        try:
+            panel.moe_lr_info_lbl.config(text="Manual" if is_off else "Adaptive")
+        except Exception:
+            pass
+
+    # React to dropdown changes and initialize the correct state
+    try:
+        getattr(panel, "adaptive_lr_mode_var").trace_add("write", _sync_adaptive_lr_ui)
+    except Exception:
+        pass
+    _sync_adaptive_lr_ui()
     
     # Setup label update callbacks
     panel.zero_stage_var.trace_add("write", lambda *args: update_zero_label(panel))

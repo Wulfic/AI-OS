@@ -189,6 +189,27 @@ else:
 
 ## Implementation
 
+### Tuning via Config File
+
+All adaptive LR scheduler knobs can be overridden via a config file.
+
+- CLI: pass `--adaptive-lr-config <path>` (JSON/TOML/YAML)
+- Precedence: safe defaults (derived from `--lr`) → config overrides
+
+Example:
+
+```bash
+aios hrm-hf train-actv1 \
+    --dataset-file training_datasets/actv1/your_dataset.txt \
+    --auto-adjust-lr \
+    --adaptive-lr-config config/adaptive_lr.toml.example
+```
+
+Notes:
+- TOML is dependency-free (Python 3.11+ includes `tomllib`).
+- YAML requires `pip install pyyaml`.
+- You can put keys at the file top-level or nest them under `adaptive_lr:` / `[adaptive_lr]`.
+
 ### Class Design
 
 ```python

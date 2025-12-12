@@ -1,0 +1,66 @@
+# Adaptive LR scheduler overrides
+#
+# This file is OPTIONAL. When provided via `--adaptive-lr-config`, values here
+# override safe defaults derived from `--lr`.
+#
+# Supported formats: .json, .toml, .yaml/.yml
+# YAML requires: `pip install pyyaml`
+#
+# You can either place keys at the top level, or nest them under `adaptive_lr:`.
+
+adaptive_lr:
+  # Required in the dataclass, but normally auto-derived from --lr.
+  # Only set these if you want to override base LR-derived defaults.
+  # initial_lr: 0.0002
+  # lr_min: 0.000002
+  # lr_max: 0.004
+
+  # Windowing / cadence
+  window_size: 50
+  patience: 20
+  cooldown_steps: 20
+
+  # Decision thresholds
+  increase_threshold: 0.02
+  plateau_threshold: 0.001
+  spike_threshold: 1.2
+  stability_threshold: 0.3
+  instability_threshold: 0.5
+
+  # Multipliers
+  increase_factor: 1.1
+  decrease_factor: 0.7
+  spike_factor: 0.5
+
+  # Safety
+  max_change_per_step: 0.3
+
+  # MoE conservative overrides
+  moe_lr_min: 1.0e-5
+  moe_lr_max: 2.0e-3
+  moe_increase_factor: 1.05
+  moe_decrease_factor: 0.85
+
+  # Debug / analysis output
+  # 0=off, 1=adjustments only, 2=periodic window summaries, 3=very verbose
+  debug_level: 0
+  # Emit adaptive_lr_window_summary JSONL events (also implied by debug_level>=2)
+  emit_window_summary: false
+  # Only emit a summary every N windows (to avoid spam)
+  window_summary_every: 5
+
+  # Learning modes (preset behavior on top of the base config values)
+  # - balanced: uses the values in this file directly
+  # - conservative: safer (slower increases, earlier decreases)
+  # - aggressive: faster (quicker increases, less sensitive plateau decreases)
+  # - auto: switches between conservative/balanced/aggressive based on stability
+  mode: balanced
+
+  # Auto-mode switching knobs (only used when mode: auto)
+  auto_mode_initial: balanced
+  # Minimum windows between mode switches (prevents thrashing)
+  auto_mode_cooldown_windows: 2
+  # If plateau persists this many windows (and stable), switch to aggressive
+  auto_plateau_windows: 3
+  # If coefficient-of-variation (CV) exceeds this, switch to conservative
+  auto_cv_conservative: 0.6

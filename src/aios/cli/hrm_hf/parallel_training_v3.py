@@ -268,6 +268,126 @@ def train_gpu_worker(
         use_deepspeed_optimizer=False,
         log_fn=print
     )
+
+    # Optional: Adaptive LR scheduler (enables warmup in this path too).
+    adaptive_lr_scheduler = None
+    warmup_steps = 0
+    base_lr = float(getattr(config, "lr", 0.0) or 0.0)
+    if getattr(config, "auto_adjust_lr", False) and base_lr > 0:
+        try:
+            from .adaptive_lr import AdaptiveLRScheduler, build_adaptive_lr_config
+            from pathlib import Path
+            import json as _json
+
+            use_moe_flag = bool(getattr(config, "use_moe", False))
+
+            override_dict = {}
+            if getattr(config, "adaptive_lr_debug_level", None) is not None:
+                override_dict["debug_level"] = int(getattr(config, "adaptive_lr_debug_level"))
+            if getattr(config, "adaptive_lr_emit_window_summary", None) is not None:
+                override_dict["emit_window_summary"] = bool(getattr(config, "adaptive_lr_emit_window_summary"))
+            if getattr(config, "adaptive_lr_window_summary_every", None) is not None:
+                override_dict["window_summary_every"] = int(getattr(config, "adaptive_lr_window_summary_every"))
+
+            cfg_lr = build_adaptive_lr_config(
+                base_lr=base_lr,
+                steps=int(getattr(config, "steps", 0) or 0) or None,
+                use_moe=use_moe_flag,
+                config_path=getattr(config, "adaptive_lr_config", None),
+                override_dict=override_dict or None,
+            )
+
+            # Per-GPU state file to avoid contention
+            state_path = getattr(config, "adaptive_lr_state_path", None)
+            if not state_path:
+                state_path = str(Path(checkpoint_dir) / f"adaptive_lr_state_gpu{tracker_id}.json")
+
+            # Ensure all adaptive-lr JSONL events are attributed to the worker.
+            def _adaptive_lr_log(payload: dict) -> None:
+                try:
+                    if isinstance(payload, dict) and "gpu_id" not in payload:
+                        payload = {"gpu_id": tracker_id, **payload}
+                    write_jsonl(payload)
+                except Exception:
+                    pass
+
+            restored = False
+            try:
+                p_state = Path(state_path)
+                p_state.parent.mkdir(parents=True, exist_ok=True)
+                if bool(getattr(config, "resume", False)) and not bool(getattr(config, "adaptive_lr_reset_state", False)) and p_state.exists():
+                    state_obj = _json.loads(p_state.read_text(encoding="utf-8"))
+                    adaptive_lr_scheduler = AdaptiveLRScheduler.from_state_dict(
+                        optimizer=optimizer,
+                        state=state_obj,
+                        log_fn=_adaptive_lr_log,
+                        state_path=str(p_state),
+                    )
+                    # Prefer freshly-resolved cfg_lr while keeping restored stats.
+                    try:
+                        if adaptive_lr_scheduler is not None:
+                            if int(getattr(adaptive_lr_scheduler.config, "window_size", 0) or 0) != int(getattr(cfg_lr, "window_size", 0) or 0):
+                                old_vals = list(getattr(adaptive_lr_scheduler, "loss_window", []) or [])
+                                from collections import deque as _deque
+                                adaptive_lr_scheduler.loss_window = _deque(old_vals[-int(cfg_lr.window_size):], maxlen=int(cfg_lr.window_size))  # type: ignore[attr-defined]
+                            adaptive_lr_scheduler.config = cfg_lr  # type: ignore[assignment]
+                    except Exception:
+                        pass
+                    restored = True
+                    write_jsonl(
+                        {
+                            "event": "adaptive_lr_state_restored",
+                            "gpu_id": tracker_id,
+                            "path": str(p_state),
+                            "window_index": int(getattr(adaptive_lr_scheduler, "window_index", 0) or 0),
+                            "step": int(getattr(adaptive_lr_scheduler, "total_observations", 0) or 0),
+                            "lr": float(getattr(adaptive_lr_scheduler, "current_lr", base_lr) or base_lr),
+                            "mode_requested": str(getattr(adaptive_lr_scheduler, "_mode_requested", "")),
+                            "mode_active": str(getattr(adaptive_lr_scheduler, "_mode", "")),
+                        }
+                    )
+            except Exception as _e_state:
+                try:
+                    write_jsonl({"event": "adaptive_lr_state_restore_failed", "gpu_id": tracker_id, "error": str(_e_state), "path": state_path})
+                except Exception:
+                    pass
+
+            if adaptive_lr_scheduler is None:
+                adaptive_lr_scheduler = AdaptiveLRScheduler(
+                    optimizer=optimizer,
+                    config=cfg_lr,
+                    use_moe=use_moe_flag,
+                    log_fn=_adaptive_lr_log,
+                    state_path=str(state_path),
+                )
+
+            # Warmup matches the single/DDD HRM HF path: 10% of configured steps, capped.
+            try:
+                warmup_steps = min(200, max(10, int(getattr(config, "steps", 0) or 0) // 10))
+            except Exception:
+                warmup_steps = 10
+
+            write_jsonl({
+                "event": "adaptive_lr_enabled",
+                "gpu_id": tracker_id,
+                "base_lr": base_lr,
+                "warmup_steps": warmup_steps,
+                "window_size": cfg_lr.window_size,
+                "lr_min": cfg_lr.lr_min,
+                "lr_max": cfg_lr.lr_max,
+                "use_moe": use_moe_flag,
+                "config_path": getattr(config, "adaptive_lr_config", None),
+                "debug_level": int(getattr(cfg_lr, "debug_level", 0) or 0),
+                "emit_window_summary": bool(getattr(cfg_lr, "emit_window_summary", False) or int(getattr(cfg_lr, "debug_level", 0) or 0) >= 2),
+                "window_summary_every": int(getattr(cfg_lr, "window_summary_every", 1) or 1),
+                "state_path": str(state_path),
+                "state_restored": bool(restored),
+            })
+        except Exception as _e:
+            try:
+                write_jsonl({"event": "adaptive_lr_init_failed", "gpu_id": tracker_id, "error": str(_e)})
+            except Exception:
+                pass
     
     # Configure chunking
     segment_rollout, use_chunking, final_chunk_size = configure_chunking(
@@ -518,6 +638,23 @@ def train_gpu_worker(
                     # Only step optimizer after accumulating gradients
                     is_accumulation_end = (micro_batch_count % grad_accum_steps == 0)
                     if is_accumulation_end or batch_start + config.batch_size >= len(chunk_samples):
+                        # Warmup (per optimizer step) when adaptive LR is enabled.
+                        if adaptive_lr_scheduler is not None and warmup_steps > 0 and base_lr > 0:
+                            try:
+                                # total_steps_this_gpu counts completed optimizer steps so far.
+                                next_step_idx = total_steps_this_gpu + 1
+                                if total_steps_this_gpu < warmup_steps:
+                                    warmup_factor = next_step_idx / warmup_steps
+                                    current_lr = base_lr * warmup_factor
+                                    for pg in optimizer.param_groups:
+                                        pg["lr"] = float(current_lr)
+                                elif total_steps_this_gpu == warmup_steps:
+                                    for pg in optimizer.param_groups:
+                                        pg["lr"] = float(base_lr)
+                                    write_jsonl({"event": "warmup_complete", "gpu_id": tracker_id, "step": total_steps_this_gpu, "lr": base_lr})
+                            except Exception:
+                                pass
+
                         # This is an optimizer step
                         if use_amp:
                             scaler.unscale_(optimizer)
@@ -534,6 +671,15 @@ def train_gpu_worker(
                         
                         total_steps_this_gpu += 1
                         step_in_chunk += 1
+
+                        # Adaptive LR: observe once per optimizer step after warmup.
+                        if adaptive_lr_scheduler is not None and base_lr > 0 and (warmup_steps <= 0 or total_steps_this_gpu >= warmup_steps):
+                            try:
+                                lookback = min(len(chunk_losses), max(1, int(grad_accum_steps)))
+                                obs_loss = sum(chunk_losses[-lookback:]) / max(1, lookback)
+                                adaptive_lr_scheduler.observe(float(obs_loss))
+                            except Exception:
+                                pass
                         
                         # Report progress every optimizer step or at end of chunk
                         # Only report AFTER completing an optimizer step to avoid duplicate prints during gradient accumulation
@@ -903,6 +1049,122 @@ def run_parallel_training_v3(
     save_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_dir = save_dir / "parallel_checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    # --------------------------------------------------------------------
+    # Resume precedence + config source logging
+    # --------------------------------------------------------------------
+    # In this training path, checkpoint loading is controlled by `student_init`.
+    # For resume runs, we make that explicit and deterministic:
+    # - If `--resume` is set and a checkpoint exists in `save_dir`, we load from `save_dir`.
+    # - If `--resume` is set but no checkpoint exists, we disable resume (fresh start).
+    # - If `--resume` is NOT set, we start fresh (and we do NOT reuse chunk-tracker state).
+    resume_requested = bool(getattr(config, "resume", False))
+    original_student_init = getattr(config, "student_init", None)
+    checkpoint_expected = save_dir / "actv1_student.safetensors"
+    checkpoint_legacy = save_dir / "final_model.safetensors"
+    checkpoint_exists = checkpoint_expected.exists() or checkpoint_legacy.exists()
+    chunk_state_file = save_dir / "chunk_tracker_state.json"
+
+    effective_resume = bool(resume_requested and checkpoint_exists)
+    if resume_requested and not checkpoint_exists:
+        # Avoid a surprising "resume" that does not actually load weights.
+        try:
+            write_jsonl({
+                "event": "resume_disabled",
+                "reason": "checkpoint_missing",
+                "save_dir": str(save_dir),
+                "expected_checkpoint": str(checkpoint_expected),
+                "legacy_checkpoint": str(checkpoint_legacy),
+            })
+        except Exception:
+            pass
+        if is_primary:
+            print(f"[WARN] --resume requested but no checkpoint found in {save_dir}; starting fresh")
+        try:
+            setattr(config, "resume", False)
+        except Exception:
+            pass
+
+    # If we are resuming, force checkpoint load from this brain directory.
+    # This makes resume behavior consistent even if GUI/CLI did not set --student-init.
+    resolved_student_init = original_student_init
+    student_init_source = "cli"
+    if effective_resume:
+        resolved_student_init = str(save_dir)
+        student_init_source = "resume(save_dir)"
+        if original_student_init and str(original_student_init) != str(resolved_student_init):
+            if is_primary:
+                print(f"[INFO] Resume precedence: ignoring student_init={original_student_init!r} and loading from {save_dir}")
+        try:
+            setattr(config, "student_init", resolved_student_init)
+        except Exception:
+            pass
+
+    # Chunk-tracker precedence: if not resuming, do not reuse historical chunk progress.
+    chunk_state_action = "load" if effective_resume else "reset"
+    chunk_state_existed = chunk_state_file.exists()
+    if not effective_resume and chunk_state_existed:
+        try:
+            from datetime import datetime
+
+            ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            backup_path = chunk_state_file.with_name(f"{chunk_state_file.name}.bak_{ts}")
+            try:
+                chunk_state_file.rename(backup_path)
+            except Exception:
+                # If rename fails (e.g., cross-device), fall back to delete.
+                chunk_state_file.unlink(missing_ok=True)  # type: ignore[arg-type]
+                backup_path = None
+
+            # Also remove lock file if present to avoid stale lock issues.
+            try:
+                lock_path = chunk_state_file.with_suffix(".lock")
+                lock_path.unlink(missing_ok=True)  # type: ignore[arg-type]
+            except Exception:
+                pass
+
+            try:
+                write_jsonl({
+                    "event": "chunk_tracker_state_reset",
+                    "reason": "resume_disabled_or_not_requested",
+                    "path": str(chunk_state_file),
+                    "backup": str(backup_path) if backup_path else None,
+                })
+            except Exception:
+                pass
+            if is_primary:
+                msg = f"[INFO] Starting fresh: cleared prior chunk-tracker state ({chunk_state_file})"
+                if backup_path:
+                    msg += f" -> {backup_path.name}"
+                print(msg)
+        except Exception:
+            pass
+
+    # Emit a single structured snapshot of where key settings came from.
+    try:
+        write_jsonl({
+            "event": "config_source",
+            "training_path": "parallel_training_v3",
+            "resume": {
+                "requested": bool(resume_requested),
+                "effective": bool(effective_resume),
+                "checkpoint_exists": bool(checkpoint_exists),
+                "expected_checkpoint": str(checkpoint_expected),
+                "legacy_checkpoint": str(checkpoint_legacy),
+            },
+            "student_init": {
+                "original": str(original_student_init) if original_student_init else None,
+                "resolved": str(resolved_student_init) if resolved_student_init else None,
+                "source": student_init_source,
+            },
+            "chunk_tracker_state": {
+                "path": str(chunk_state_file),
+                "existed": bool(chunk_state_existed),
+                "action": chunk_state_action,
+            },
+        })
+    except Exception:
+        pass
     
     # Load tokenizer - check brain.json in save_dir even if student_init is None (fresh start)
     from .brain_metadata import load_brain_metadata, extract_tokenizer_from_metadata
@@ -958,7 +1220,7 @@ def run_parallel_training_v3(
         print(f"[INFO] Detected {total_blocks_detected} total blocks in dataset")
     
     # Initialize ChunkTracker in brain directory for proper resume detection
-    state_file = save_dir / "chunk_tracker_state.json"
+    state_file = chunk_state_file
     if is_primary:
         print(f"[INIT] Initializing ChunkTracker...")
         print(f"   Save directory (config.save_dir): {config.save_dir}")

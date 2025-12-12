@@ -55,6 +55,7 @@ test_results/
 *.backup
 *~
 *.bak
+*.bak_*
 *.swp
 *.swo
 
@@ -63,6 +64,15 @@ test_results/
 *.log
 artifacts/brains/
 artifacts/diagnostics/
+# Keep diagnostic tooling/configs in git; ignore run outputs.
+!artifacts/diagnostics/*.py
+!artifacts/diagnostics/*.yaml
+!artifacts/diagnostics/*.yml
+!artifacts/diagnostics/*.txt
+!artifacts/diagnostics/*.md
+!artifacts/diagnostics/**/validate_*.py
+!artifacts/diagnostics/**/adaptive_lr_*_config.yaml
+!artifacts/diagnostics/**/adaptive_lr_*_dataset.txt
 artifacts/experts/
 
 # Only ignore specific checkpoint patterns if they're temporary
@@ -86,6 +96,14 @@ installers/_builds/ubuntu/snap/
 # Local training outputs (ignored)
 training_data/
 **/metrics.jsonl
+
+# Live training tensor artifacts (do not commit)
+artifacts/training_datasets/**/*.safetensors
+artifacts/training_datasets/**/*.safetensors.*
+
+# Chunk tracker state backups (generated)
+**/chunk_tracker_state.json.bak_*
+**/chunk_tracker_state.json.bak_*.json
 
 # Diagnostics files (generated with user-specific paths)
 artifacts/diagnostics/diagnostics_latest.json

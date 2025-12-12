@@ -62,7 +62,7 @@ def detect_dataset_size(
 
 def _detect_file_size(p: Path, ascii_only: bool) -> Tuple[Optional[int], Optional[int], Optional[int]]:
     """Detect size of a single text file."""
-    from .archive_readers import _is_archive
+    from aios.data.datasets.archive_readers import _is_archive
     
     # Archive file - use sampling estimation
     if _is_archive(p):
@@ -100,7 +100,7 @@ def _detect_archive_size(p: Path, ascii_only: bool) -> Tuple[Optional[int], Opti
     We sample and estimate based on the sample.
     """
     try:
-        from .archive_readers import read_archive_text_lines
+        from aios.data.datasets.archive_readers import read_archive_text_lines
         
         # Sample 5000 lines to estimate
         sample_size = 5000

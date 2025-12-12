@@ -646,6 +646,119 @@ def train_actv1_impl(
     # ========================================================================
     # TRAINING EXECUTION
     # ========================================================================
+
+    # Adaptive LR scheduler (persist across cycles). For the HRM HF path, we
+    # treat auto_adjust_lr as enabling both the preflight clamp and the
+    # adaptive in-training adjustment.
+    adaptive_lr_scheduler = None
+    try:
+        if getattr(config, "auto_adjust_lr", False) and float(lr) > 0:
+            from .adaptive_lr import AdaptiveLRScheduler, build_adaptive_lr_config
+            from pathlib import Path
+            import json as _json
+
+            use_moe_flag = bool(getattr(config, "use_moe", False))
+
+            # Choose the correct optimizer handle:
+            # - DeepSpeed: engine has .optimizer
+            # - Otherwise: opt
+            opt_handle = opt
+            if opt_handle is None and deepspeed_engine is not None:
+                opt_handle = getattr(deepspeed_engine, "optimizer", None)
+
+            if opt_handle is not None and hasattr(opt_handle, "param_groups"):
+                # Resolve scheduler config (file + CLI overrides)
+                override_dict = {}
+                if getattr(config, "adaptive_lr_debug_level", None) is not None:
+                    override_dict["debug_level"] = int(getattr(config, "adaptive_lr_debug_level"))
+                if getattr(config, "adaptive_lr_emit_window_summary", None) is not None:
+                    override_dict["emit_window_summary"] = bool(getattr(config, "adaptive_lr_emit_window_summary"))
+                if getattr(config, "adaptive_lr_window_summary_every", None) is not None:
+                    override_dict["window_summary_every"] = int(getattr(config, "adaptive_lr_window_summary_every"))
+
+                cfg_lr = build_adaptive_lr_config(
+                    base_lr=float(lr),
+                    steps=int(getattr(config, "steps", 0) or 0) or None,
+                    use_moe=use_moe_flag,
+                    config_path=getattr(config, "adaptive_lr_config", None),
+                    override_dict=override_dict or None,
+                )
+
+                # Best-effort state persistence (for smooth resume)
+                state_path = getattr(config, "adaptive_lr_state_path", None)
+                if not state_path:
+                    state_path = str(Path(str(getattr(config, "save_dir", "."))) / "adaptive_lr_state.json")
+
+                # Restore scheduler state when resuming (unless explicitly reset)
+                restored = False
+                try:
+                    p_state = Path(state_path)
+                    p_state.parent.mkdir(parents=True, exist_ok=True)
+                    if bool(getattr(config, "resume", False)) and not bool(getattr(config, "adaptive_lr_reset_state", False)) and p_state.exists():
+                        state_obj = _json.loads(p_state.read_text(encoding="utf-8"))
+                        adaptive_lr_scheduler = AdaptiveLRScheduler.from_state_dict(
+                            optimizer=opt_handle,
+                            state=state_obj,
+                            log_fn=write_jsonl,
+                            state_path=str(p_state),
+                        )
+                        # If a config file / CLI overrides were provided, prefer the freshly
+                        # resolved cfg_lr while keeping the restored window stats / LR.
+                        try:
+                            if adaptive_lr_scheduler is not None:
+                                if int(getattr(adaptive_lr_scheduler.config, "window_size", 0) or 0) != int(getattr(cfg_lr, "window_size", 0) or 0):
+                                    # Rebuild the deque maxlen while preserving recent samples.
+                                    old_vals = list(getattr(adaptive_lr_scheduler, "loss_window", []) or [])
+                                    from collections import deque as _deque
+                                    adaptive_lr_scheduler.loss_window = _deque(old_vals[-int(cfg_lr.window_size):], maxlen=int(cfg_lr.window_size))  # type: ignore[attr-defined]
+                                adaptive_lr_scheduler.config = cfg_lr  # type: ignore[assignment]
+                        except Exception:
+                            pass
+                        restored = True
+                        write_jsonl(
+                            {
+                                "event": "adaptive_lr_state_restored",
+                                "path": str(p_state),
+                                "window_index": int(getattr(adaptive_lr_scheduler, "window_index", 0) or 0),
+                                "step": int(getattr(adaptive_lr_scheduler, "total_observations", 0) or 0),
+                                "lr": float(getattr(adaptive_lr_scheduler, "current_lr", float(lr)) or float(lr)),
+                                "mode_requested": str(getattr(adaptive_lr_scheduler, "_mode_requested", "")),
+                                "mode_active": str(getattr(adaptive_lr_scheduler, "_mode", "")),
+                            }
+                        )
+                except Exception as _e_state:
+                    try:
+                        write_jsonl({"event": "adaptive_lr_state_restore_failed", "error": str(_e_state), "path": state_path})
+                    except Exception:
+                        pass
+
+                if adaptive_lr_scheduler is None:
+                    adaptive_lr_scheduler = AdaptiveLRScheduler(
+                        optimizer=opt_handle,
+                        config=cfg_lr,
+                        use_moe=use_moe_flag,
+                        log_fn=write_jsonl,
+                        state_path=str(state_path),
+                    )
+                write_jsonl({
+                    "event": "adaptive_lr_enabled",
+                    "base_lr": float(lr),
+                    "window_size": cfg_lr.window_size,
+                    "lr_min": cfg_lr.lr_min,
+                    "lr_max": cfg_lr.lr_max,
+                    "use_moe": use_moe_flag,
+                    "config_path": getattr(config, "adaptive_lr_config", None),
+                    "debug_level": int(getattr(cfg_lr, "debug_level", 0) or 0),
+                    "emit_window_summary": bool(getattr(cfg_lr, "emit_window_summary", False) or int(getattr(cfg_lr, "debug_level", 0) or 0) >= 2),
+                    "window_summary_every": int(getattr(cfg_lr, "window_summary_every", 1) or 1),
+                    "state_path": str(getattr(config, "adaptive_lr_state_path", None) or str(state_path)),
+                    "state_restored": bool(restored),
+                })
+    except Exception as _e:
+        try:
+            write_jsonl({"event": "adaptive_lr_init_failed", "error": str(_e)})
+        except Exception:
+            pass
     def load_new_lines(cycle: int = 0) -> list[str]:
         return _get_training_lines(
             dataset_file=config.dataset_file,
@@ -702,6 +815,7 @@ def train_actv1_impl(
             world_sz=world_sz,
             write_jsonl=write_jsonl,
             should_stop=should_stop,
+            adaptive_lr_scheduler=adaptive_lr_scheduler,
         )
         steps_done += s_done
         stopped_early = early
@@ -730,6 +844,36 @@ def train_actv1_impl(
                 # Save tracker state alongside training artifacts
                 state_dir = Path(config.save_dir) if config.save_dir else _default_brain_family_dir()
                 tracker_state_file = state_dir / "chunk_tracker_state.json"
+
+                # Resume precedence: if not resuming, do not reuse historical chunk-tracker progress.
+                if not bool(getattr(config, "resume", False)) and tracker_state_file.exists():
+                    try:
+                        from datetime import datetime
+
+                        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+                        backup_path = tracker_state_file.with_name(f"{tracker_state_file.name}.bak_{ts}")
+                        try:
+                            tracker_state_file.rename(backup_path)
+                        except Exception:
+                            tracker_state_file.unlink(missing_ok=True)  # type: ignore[arg-type]
+                            backup_path = None
+
+                        try:
+                            lock_path = tracker_state_file.with_suffix(".lock")
+                            lock_path.unlink(missing_ok=True)  # type: ignore[arg-type]
+                        except Exception:
+                            pass
+
+                        if (not is_distributed) or (rank_id == 0):
+                            write_jsonl({
+                                "event": "chunk_tracker_state_reset",
+                                "reason": "resume_disabled_or_not_requested",
+                                "path": str(tracker_state_file),
+                                "backup": str(backup_path) if backup_path else None,
+                            })
+                    except Exception:
+                        pass
+
                 tracker_obj = _ChunkTracker(state_file=tracker_state_file)
                 if (not is_distributed) or (rank_id == 0):
                     write_jsonl({
@@ -765,6 +909,36 @@ def train_actv1_impl(
                 from .chunk_tracker import ChunkTracker as _ChunkTracker
                 state_dir = Path(config.save_dir) if config.save_dir else _default_brain_family_dir()
                 tracker_state_file = state_dir / "chunk_tracker_state.json"
+
+                # Resume precedence: if not resuming, do not reuse historical chunk-tracker progress.
+                if not bool(getattr(config, "resume", False)) and tracker_state_file.exists():
+                    try:
+                        from datetime import datetime
+
+                        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+                        backup_path = tracker_state_file.with_name(f"{tracker_state_file.name}.bak_{ts}")
+                        try:
+                            tracker_state_file.rename(backup_path)
+                        except Exception:
+                            tracker_state_file.unlink(missing_ok=True)  # type: ignore[arg-type]
+                            backup_path = None
+
+                        try:
+                            lock_path = tracker_state_file.with_suffix(".lock")
+                            lock_path.unlink(missing_ok=True)  # type: ignore[arg-type]
+                        except Exception:
+                            pass
+
+                        if (not is_distributed) or (rank_id == 0):
+                            write_jsonl({
+                                "event": "chunk_tracker_state_reset",
+                                "reason": "resume_disabled_or_not_requested",
+                                "path": str(tracker_state_file),
+                                "backup": str(backup_path) if backup_path else None,
+                            })
+                    except Exception:
+                        pass
+
                 tracker_obj = _ChunkTracker(state_file=tracker_state_file)
                 if (not is_distributed) or (rank_id == 0):
                     write_jsonl({
@@ -793,14 +967,24 @@ def train_actv1_impl(
                 # CRITICAL: Check if chunk was already trained (resume detection)
                 can_claim = tracker_obj.claim_chunk(int(current_block_id), int(chunk_id_in_block), gpu_id=gpu_rank)
                 if not can_claim:
-                    chunk_already_trained = True
-                    write_jsonl({
-                        "event": "chunk_skipped",
-                        "reason": "already_trained",
-                        "block_id": int(current_block_id),
-                        "chunk_id": int(chunk_id_in_block),
-                        "note": "Chunk already trained in previous session - skipping"
-                    })
+                    if bool(getattr(config, "force_train", False)):
+                        write_jsonl({
+                            "event": "chunk_skip_overridden",
+                            "reason": "force_train",
+                            "block_id": int(current_block_id),
+                            "chunk_id": int(chunk_id_in_block),
+                            "note": "Chunk was already marked trained, but --force-train is enabled; proceeding anyway",
+                        })
+                    else:
+                        chunk_already_trained = True
+                        write_jsonl({
+                            "event": "chunk_skipped",
+                            "reason": "already_trained",
+                            "block_id": int(current_block_id),
+                            "chunk_id": int(chunk_id_in_block),
+                            "note": "Chunk already trained in previous session - skipping",
+                            "hint": "Use --force-train, pick a new --save-dir, or pass --no-linear-dataset",
+                        })
         except Exception:
             pass
 

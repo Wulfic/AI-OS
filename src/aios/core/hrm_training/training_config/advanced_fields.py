@@ -213,6 +213,70 @@ class AdvancedFields:
     
     Default: False (shuffled mode for better generalization)
     """
+
+    force_train: bool = False
+    """Force training even if the chunk tracker thinks the chunk is already trained.
+
+    This is primarily a diagnostics/escape hatch for cases where:
+    - you want to rerun a short smoke test without changing --save-dir, or
+    - the chunk tracker state file got out of sync with your intent.
+
+    When True, training will proceed even if the current chunk is marked
+    complete in chunk_tracker_state.json.
+
+    Default: False (respect chunk tracker and skip already-trained chunks).
+    """
+
+    adaptive_lr_config: Optional[str] = None
+    """Optional path to an adaptive LR config file (JSON/TOML/YAML).
+
+    When provided and auto_adjust_lr is enabled, the adaptive LR scheduler will
+    load overrides from this file on top of safe defaults derived from --lr.
+
+    Supported formats:
+    - .json (built-in)
+    - .toml (built-in via tomllib)
+    - .yaml/.yml (requires PyYAML)
+    """
+
+    adaptive_lr_debug_level: Optional[int] = None
+    """Override adaptive LR debug_level without editing the scheduler config file.
+
+    Values:
+    - 0: off
+    - 1: adjustments only
+    - 2: periodic window summaries
+    - 3: very verbose
+
+    If None (default), uses whatever the scheduler config resolves to.
+    """
+
+    adaptive_lr_emit_window_summary: Optional[bool] = None
+    """Override emit_window_summary for adaptive LR.
+
+    If None (default), uses whatever the scheduler config resolves to.
+    """
+
+    adaptive_lr_window_summary_every: Optional[int] = None
+    """Override window_summary_every for adaptive LR (emit every N windows).
+
+    If None (default), uses whatever the scheduler config resolves to.
+    """
+
+    adaptive_lr_state_path: Optional[str] = None
+    """Optional path to persist AdaptiveLRScheduler.state_dict() as JSON.
+
+    If provided, the scheduler will write a JSON state file as it runs.
+    When resuming, this file can be loaded to continue LR behavior smoothly.
+
+    If None (default), uses <save_dir>/adaptive_lr_state.json.
+    """
+
+    adaptive_lr_reset_state: bool = False
+    """If True, ignore any persisted adaptive LR state when resuming.
+
+    Default: False (attempt to restore scheduler state when available).
+    """
     
     dataset_start_offset: int = 0
     """Starting sample index for resuming linear dataset training.
