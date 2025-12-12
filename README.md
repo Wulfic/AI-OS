@@ -55,7 +55,7 @@ aios doctor --repair
 ```bash
 sudo add-apt-repository ppa:wulfic/ppa-aios
 sudo apt update
-sudo apt install ai-os
+sudo apt install ai-os -y
 ```
 ### Ubuntu
 ```bash
