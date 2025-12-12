@@ -7,8 +7,6 @@
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/S6S31MS4TK)
 
 
-### THIS IS THE DEVELOPMENT BRANCH! MORE OFTEN THAN NOT THIS CODE WILL BE UNSTABLE AND BROKEN. FOR STABLE RELEASES,  PLEASE SEE THE MAIN BRANCH OR RELEASES PAGE!
-
 
 HRM-sMoE LLM training toolkit with a clean GUI, CLI, and installers. Future-facing architecture for OS-integrated autonomous assistance.
 
