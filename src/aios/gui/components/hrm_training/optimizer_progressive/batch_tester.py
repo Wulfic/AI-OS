@@ -118,7 +118,7 @@ def test_single_batch(
     
     # Also clean graceful stop file
     try:
-        graceful_stop = Path("training_data/actv1/GRACEFUL_STOP")
+        graceful_stop = Path("training_datasets/actv1/GRACEFUL_STOP")
         if graceful_stop.exists():
             graceful_stop.unlink()
     except:

@@ -165,7 +165,7 @@ def build_limits_ui(panel: "ResourcesPanel") -> None:
     # Add tooltip
     try:
         from ..tooltips import add_tooltip
-        add_tooltip(dataset_cap_entry, "Maximum disk space for dataset downloads (GB). Empty = unlimited. Enforced in training_data folder.")
+        add_tooltip(dataset_cap_entry, "Maximum disk space for dataset downloads (GB). Empty = unlimited. Enforced in training_datasets folder.")
     except Exception:
         pass
     

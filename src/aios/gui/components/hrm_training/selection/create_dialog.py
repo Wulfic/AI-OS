@@ -318,7 +318,7 @@ def _create_custom_architecture_section(parent: ttk.Frame) -> tuple:
     pos_var = safe_variables.StringVar(value="rope")
     custom_vars["pos"] = pos_var
     pos_combo = ttk.Combobox(pos_row, textvariable=pos_var, width=10, state="readonly")
-    pos_combo['values'] = ('rope', 'learned', 'sincos')
+    pos_combo['values'] = ('rope', 'learned')
     pos_combo.pack(side="left")
     
     # Model dtype

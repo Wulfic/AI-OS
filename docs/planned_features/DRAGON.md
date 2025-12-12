@@ -18,11 +18,11 @@
 4. [Technical Components](#technical-components)
 5. [User Experience](#user-experience)
 6. [Backend Infrastructure](#backend-infrastructure)
-7. [Security & Privacy](#security--privacy)
+7. [Security & Privacy](#security-privacy)
 8. [Implementation Phases](#implementation-phases)
 9. [Implementation Checklist](#implementation-checklist)
 10. [Technical Quick Reference](#technical-quick-reference)
-11. [Testing & Deployment](#testing--deployment)
+11. [Testing & Deployment](#testing-deployment)
 12. [Success Metrics](#success-metrics)
 
 ---

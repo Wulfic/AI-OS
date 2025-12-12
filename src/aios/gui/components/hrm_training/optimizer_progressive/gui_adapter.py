@@ -33,7 +33,7 @@ def optimize_from_gui_progressive(panel) -> Dict[str, Any]:
     
     # Extract configuration from panel
     model = getattr(panel, 'model_var', None) and panel.model_var.get() or "base_model"
-    dataset_file = "training_data/curated_datasets/test_sample.txt"
+    dataset_file = "training_datasets/curated_datasets/test_sample.txt"
     
     if hasattr(panel, 'dataset_var'):
         try:

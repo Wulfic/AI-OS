@@ -1,5 +1,5 @@
 # Multi-GPU GUI Guide
-**Last Updated**: October 21, 2025  
+**Last Updated**: December 12, 2025  
 **Purpose**: Explain how the AI-OS desktop GUI exposes multi-GPU selection and fallbacks across operating systems.  
 **Status**: Linux multi-GPU routing supported; Windows currently falls back to a single CUDA device.
 
@@ -56,13 +56,13 @@ After updating the variable, restart the GUI so the selector refreshes the list 
 
 ## FAQ
 **Why does chat still label GPU 0 as primary on Linux?**  
-Tensor-parallel scaffolding is in place, but the router still executes on the first device until tensor slicing ships. Track progress in [planned DDP/tensor parallel work](../planned_features/DEEPSPEED_ZERO_INFINITY.md).
+Tensor-parallel scaffolding is in place, but the router still executes on the first device until tensor slicing ships. Track progress in [planned DDP/tensor parallel work](../../planned_features/DEEPSPEED_ZERO_INFINITY.md).
 
 **Why do I see a Windows warning even after switching to Linux?**  
 If you carried over a persisted state file from Windows, the GUI logs that the OS changed and re-normalises your selections. Open the Resources panel once to re-save the Linux layout.
 
 **Where is the full roadmap for chat-time multi-GPU?**  
-See [MULTIGPU_INFERENCE_TODO.md](../planned_features/MULTIGPU_INFERENCE_TODO.md) for outstanding tasks and design notes.
+See [DeepSpeed ZeRO-Infinity](../../planned_features/DEEPSPEED_ZERO_INFINITY.md) for planned tensor parallelism and distributed inference features.
 
 ---
 

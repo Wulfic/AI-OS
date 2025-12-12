@@ -190,25 +190,36 @@ class SystemStatusUpdater:
         if gpu_duration > 0.75:
             logger.debug(f"GPU section latency: {gpu_duration:.3f}s")
 
-        # Datasets usage: size of training_data directory
+        # Datasets usage: size of training_datasets directory
         try:
             td_root = None
             try:
-                # Project root where pyproject.toml lives
-                cur = os.path.abspath(os.getcwd())
-                for _ in range(8):
-                    if os.path.exists(os.path.join(cur, "pyproject.toml")):
-                        td_root = os.path.join(cur, "training_data")
-                        break
-                    parent = os.path.dirname(cur)
-                    if parent == cur:
-                        break
-                    cur = parent
+                # Check HF_HOME first for user-configured location
+                hf_home = os.environ.get("HF_HOME")
+                if hf_home:
+                    hf_path = os.path.abspath(hf_home)
+                    # Parent of .hf_cache is the datasets root
+                    if os.path.basename(hf_path) in (".hf_cache", "hf_cache"):
+                        td_root = os.path.dirname(hf_path)
+                    else:
+                        td_root = os.path.dirname(hf_path)
+                
+                # Fall back to project training_datasets folder
+                if not td_root or not os.path.isdir(td_root):
+                    cur = os.path.abspath(os.getcwd())
+                    for _ in range(8):
+                        if os.path.exists(os.path.join(cur, "pyproject.toml")):
+                            td_root = os.path.join(cur, "training_datasets")
+                            break
+                        parent = os.path.dirname(cur)
+                        if parent == cur:
+                            break
+                        cur = parent
                 if td_root is None:
-                    td_root = os.path.join(os.path.abspath(os.getcwd()), "training_data")
+                    td_root = os.path.join(os.path.abspath(os.getcwd()), "training_datasets")
             except Exception as e:
-                logger.debug(f"Failed to locate project root for training_data: {e}")
-                td_root = os.path.join(os.path.abspath(os.getcwd()), "training_data")
+                logger.debug(f"Failed to locate datasets root: {e}")
+                td_root = os.path.join(os.path.abspath(os.getcwd()), "training_datasets")
             total_bytes = 0
             if os.path.isdir(td_root):
                 for _root, _dirs, files in os.walk(td_root):

@@ -1,12 +1,12 @@
-# AI-OS v1.0.14
+# AI-OS v1.0.15
 
 [![CI](https://github.com/Wulfic/AI-OS/actions/workflows/ci.yml/badge.svg)](https://github.com/Wulfic/AI-OS/actions/workflows/ci.yml)
 [![Link Check](https://github.com/Wulfic/AI-OS/actions/workflows/link-check.yml/badge.svg)](https://github.com/Wulfic/AI-OS/actions/workflows/link-check.yml)
-[![Version](https://img.shields.io/badge/version-1.0.14-blue.svg)](https://github.com/Wulfic/AI-OS/releases/tag/Official)
+[![Version](https://img.shields.io/badge/version-1.0.15-blue.svg)](https://github.com/Wulfic/AI-OS/releases/tag/Official)
 [![License](https://img.shields.io/badge/license-ANSL--v1.0-blue.svg)](LICENSE)
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/S6S31MS4TK)
 
-
+# Fancy Documentation: https://wulfic.github.io/AI-OS/
 
 HRM-sMoE LLM training toolkit with a clean GUI, CLI, and installers. Future-facing architecture for OS-integrated autonomous assistance.
 
@@ -19,7 +19,7 @@ License: AI-OS Non‑Selling Attribution License (ANSL) v1.0. You may use, copy,
 - Bleeding edge technologies, pushing the boundaries of consumer hardware.
 - Tons more features! Check out the Planned_Features section
 
-Key features in v1.0.14:
+Key features in v1.0.15:
 - Windows and Ubuntu Support!
 - Long-context training strategies and memory optimizations 
 - Multi‑GPU training (DDP/Parallel/Sharding)
@@ -93,10 +93,10 @@ aios
 ```
 ## Documentation
 
-- Start here: [docs/INDEX.md](docs/INDEX.md)
+- Start here: [Guide Index](docs/guide/INDEX.MD)
 - Maintenance and guides: [docs/README.md](docs/README.md)
 - Attributions and upstream projects: [REFERENCES.md](REFERENCES.md)
-- One-page Quick Start: [docs/QUICK_START.md](docs/QUICK_START.md)
+- One-page Quick Start: [Quick Start Guide](docs/guide/QUICK_START.md)
 
 ## References and third‑party integrations
 

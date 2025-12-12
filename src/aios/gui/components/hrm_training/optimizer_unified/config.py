@@ -14,7 +14,7 @@ class OptimizationConfig:
     model: str = "base_model"
     teacher_model: str = ""
     max_seq_len: int = 512
-    dataset_file: str = "training_data/curated_datasets/test_sample.txt"  # Dataset for optimization
+    dataset_file: str = "training_datasets/curated_datasets/test_sample.txt"  # Dataset for optimization
     
     # Optimization parameters
     test_duration: int = 45  # seconds per test - increased for real work

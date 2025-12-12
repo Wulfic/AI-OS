@@ -223,7 +223,7 @@ All parameters available in TrainingConfig:
 - `num_heads` (int) - Attention heads, default: 8
 - `h_cycles` (int) - High-level cycles, default: 2
 - `l_cycles` (int) - Low-level cycles, default: 2
-- `pos_encodings` (str) - Position encoding: rope|alibi|none, default: "rope"
+- `pos_encodings` (str) - Position encoding: rope|learned, default: "rope"
 
 ### Optimization:
 - `optimize` (bool) - Auto-optimize for VRAM, default: False
@@ -238,11 +238,9 @@ All parameters available in TrainingConfig:
 - `world_size` (int|None) - Number of GPUs, default: None
 - `strict` (bool) - No device fallbacks, default: False
 
-### Deprecated (Still in Config for Compatibility):
-- `teacher` (str|None) - Not used, default: None
-- `teacher_device` (str) - Not used, default: "cuda"
-- `kl` (float) - Not used, default: 0.0
-- `kl_temp` (float) - Not used, default: 1.0
+### Advanced:
+- `kl` (float) - KL divergence scaling factor, default: 0.0
+- `kl_temp` (float) - KL temperature annealing, default: 1.0
 
 ---
 
@@ -274,6 +272,6 @@ print(" ".join(cli_args))  # See what CLI command this config represents
 ---
 
 **Questions?** Check the full docs:
-- `docs/REFACTORING_PHASE2_COMPLETE.md` - Phase 2 details
-- `docs/DEPRECATION_CLEANUP_COMPLETE.md` - What was removed
+- [Advanced Features](../features/ADVANCED_FEATURES.md) - Training configuration options
+- [Feature Combination Matrix](../features/FEATURE_COMBINATION_MATRIX.md) - What works together
 - `src/aios/core/hrm_training/training_config.py` - Source code

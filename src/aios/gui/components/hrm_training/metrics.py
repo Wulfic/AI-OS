@@ -896,7 +896,7 @@ def show_stopped_dialog(panel: Any) -> None:
                 pass
         def _clear_stop():
             try:
-                sf = os.path.join(panel._project_root, "training_data", "actv1", "STOP")
+                sf = os.path.join(panel._project_root, "training_datasets", "actv1", "STOP")
                 if sf and os.path.exists(sf):
                     os.remove(sf)
                     panel._log(f"[hrm] Cleared stop file: {sf}")

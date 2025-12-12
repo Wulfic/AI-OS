@@ -1,5 +1,5 @@
 # Datasets - AI-OS
-Generated: October 20, 2025
+Generated: December 12, 2025
 Purpose: Dataset system, readers, registry, and streaming
 Status: Implemented
 

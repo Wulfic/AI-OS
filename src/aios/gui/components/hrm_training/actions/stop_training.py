@@ -190,9 +190,9 @@ def _do_graceful_stop_request(panel: Any) -> None:
 def get_default_stop_file(panel: Any) -> str:
     """Get default STOP file path."""
     try:
-        return os.path.join(panel._project_root, "training_data", "actv1", "STOP")
+        return os.path.join(panel._project_root, "training_datasets", "actv1", "STOP")
     except Exception:
-        return "training_data/actv1/STOP"
+        return "training_datasets/actv1/STOP"
 
 
 def _stop_optimizer(panel: Any) -> None:

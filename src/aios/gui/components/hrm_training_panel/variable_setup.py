@@ -32,7 +32,7 @@ def setup_variables(panel: HRMTrainingPanel) -> None:
         panel: The HRMTrainingPanel instance
     """
     # Core inputs
-    panel.dataset_var = safe_variables.StringVar(value="training_data")
+    panel.dataset_var = safe_variables.StringVar(value="training_datasets")
     panel.dataset_chunk_size_var = safe_variables.StringVar(value="4000")
     panel.model_var = safe_variables.StringVar(value=str(get_default_model_base()))
     panel.max_seq_var = safe_variables.StringVar(value="128")
@@ -67,7 +67,7 @@ def setup_variables(panel: HRMTrainingPanel) -> None:
     panel.strict_var = safe_variables.BooleanVar(value=True)
     panel.eval_file_var = safe_variables.StringVar(value="")
     panel.eval_batches_var = safe_variables.StringVar(value="10")
-    panel.stop_file_var = safe_variables.StringVar(value="training_data/actv1/STOP")
+    panel.stop_file_var = safe_variables.StringVar(value="training_datasets/actv1/STOP")
     panel.log_file_var = safe_variables.StringVar(value=str(get_default_metrics_file()))
     panel.student_init_var = safe_variables.StringVar(value=str(get_default_student_checkpoint()))
     panel.brain_name_var = safe_variables.StringVar(value="default")
@@ -252,7 +252,7 @@ def _update_dataset_display(panel: HRMTrainingPanel, *args) -> None:
             return
         
         dataset_str = panel.dataset_var.get().strip()
-        if not dataset_str or dataset_str == "training_data":
+        if not dataset_str or dataset_str == "training_datasets":
             panel.epoch_dataset_lbl.config(text="-")
             panel._dataset_name = None
             return

@@ -21,11 +21,11 @@ Quick links:
 5. [PEFT Methods Comparison](#peft-methods-comparison)
 6. [Target Modules Explained](#target-modules-explained)
 7. [Configuration Presets](#configuration-presets)
-8. [Memory & Performance Impact](#memory--performance-impact)
+8. [Memory & Performance Impact](#memory-performance-impact)
 9. [Best Practices](#best-practices)
-10. [Testing & Validation](#testing--validation)
+10. [Testing & Validation](#testing-validation)
 11. [Commands (CLI)](#commands-cli)
-12. [Inputs & Outputs](#inputs--outputs)
+12. [Inputs & Outputs](#inputs-outputs)
 13. [Try it (PowerShell)](#try-it-powershell)
 
 ---

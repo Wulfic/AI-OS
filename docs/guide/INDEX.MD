@@ -1,5 +1,5 @@
 # AI-OS User Guide - Index
-**Last Updated**: October 18, 2025  
+**Last Updated**: December 12, 2025  
 **Purpose**: Primary navigation hub for all AI-OS documentation  
 **Audience**: Users, developers, and contributors
 
@@ -165,17 +165,14 @@ See `scripts/README.md` for available diagnostic scripts and how to run them.
 - ⚠️ **Unit Tests**: Minimal coverage (needs expansion)
 - ❌ **Integration Tests**: Not implemented
 
-### Bug Status
-- 🔴 **Critical Bugs**: 2 open
-- 🟠 **High Priority**: 9 open
-- 🟡 **Medium Priority**: 9 open
-- 🟢 **Low Priority**: 3 open
-- **Total**: 26 tracked bugs
+### Bug Tracking
+Bugs are tracked in GitHub Issues:
+- **Open Issues**: [github.com/Wulfic/AI-OS/issues](https://github.com/Wulfic/AI-OS/issues)
 
 ### Documentation Quality
 - ✅ **Feature Documentation**: 100+ features documented
-- ⚠️ **Accuracy**: Some false claims identified
-- ✅ **Bug Tracking**: Comprehensive
+- ✅ **Accuracy**: Verified against source code
+- ✅ **Bug Tracking**: Comprehensive via GitHub Issues
 - ✅ **Testing**: 67 automated tests
 
 ---
@@ -286,8 +283,8 @@ See `scripts/README.md` for available diagnostic scripts and how to run them.
 These documents are NOT in the guide folder but may be referenced:
 
 - **Main README**: `../../README.md` (project root)
-- **Quick Start**: `../QUICK_START.md`
-- **Docs Index**: `../INDEX.md`
+- **Quick Start**: `QUICK_START.md` (this folder)
+- **Docs README**: `../README.md`
 - **Tests**: `../../tests/` folder
 
 ---

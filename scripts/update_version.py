@@ -3,15 +3,21 @@
 AI-OS Version Updater Script
 
 This script updates version strings across the entire codebase.
-Run with: python scripts/update_version.py
+Run with: python scripts/update_version.py [version]
 
 Supports both Windows and Ubuntu.
+
+Features:
+- Updates version in pyproject.toml, __init__.py, orchestrator.py, and README.md
+- Automatically commits, pushes, and updates the Official tag
+- Can be run with version as argument for non-interactive mode
 """
 
 import re
+import subprocess
 import sys
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 # Root directory of the project
 ROOT_DIR = Path(__file__).parent.parent.resolve()
@@ -141,6 +147,111 @@ def update_all_versions(new_version: str, dry_run: bool = False) -> List[Tuple[s
     return results
 
 
+def run_git_command(args: List[str], check: bool = True) -> Tuple[bool, str]:
+    """
+    Run a git command and return (success, output).
+    
+    Args:
+        args: Git command arguments (without 'git' prefix)
+        check: If True, treat non-zero exit as failure
+    
+    Returns:
+        Tuple of (success, output/error message)
+    """
+    try:
+        result = subprocess.run(
+            ["git"] + args,
+            cwd=ROOT_DIR,
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        
+        if check and result.returncode != 0:
+            error_msg = result.stderr.strip() or result.stdout.strip() or "Unknown error"
+            return False, error_msg
+        
+        return True, result.stdout.strip()
+    except subprocess.TimeoutExpired:
+        return False, "Command timed out"
+    except FileNotFoundError:
+        return False, "Git not found in PATH"
+    except Exception as e:
+        return False, str(e)
+
+
+def get_current_branch() -> Optional[str]:
+    """Get the current git branch name."""
+    success, output = run_git_command(["rev-parse", "--abbrev-ref", "HEAD"])
+    return output if success else None
+
+
+def git_commit_and_push(version: str) -> List[Tuple[str, bool, str]]:
+    """
+    Commit changes, push to origin, and update the Official tag.
+    
+    Returns:
+        List of (operation, success, message) tuples
+    """
+    results = []
+    
+    # Get current branch
+    branch = get_current_branch()
+    if not branch:
+        results.append(("Get branch", False, "Could not determine current branch"))
+        return results
+    results.append(("Get branch", True, f"Current branch: {branch}"))
+    
+    # Stage all changes
+    success, msg = run_git_command(["add", "-A"])
+    if not success:
+        results.append(("Stage changes", False, msg))
+        return results
+    results.append(("Stage changes", True, "Staged all changes"))
+    
+    # Commit
+    commit_msg = f"chore: bump version to {version}"
+    success, msg = run_git_command(["commit", "-m", commit_msg])
+    if not success:
+        # Check if it's just "nothing to commit"
+        if "nothing to commit" in msg.lower():
+            results.append(("Commit", True, "Nothing to commit (already up to date)"))
+        else:
+            results.append(("Commit", False, msg))
+            return results
+    else:
+        results.append(("Commit", True, f"Committed: {commit_msg}"))
+    
+    # Push to origin
+    success, msg = run_git_command(["push", "origin", branch])
+    if not success:
+        results.append(("Push", False, msg))
+        return results
+    results.append(("Push", True, f"Pushed to origin/{branch}"))
+    
+    # Delete local Official tag (ignore errors - tag may not exist)
+    run_git_command(["tag", "-d", "Official"], check=False)
+    
+    # Delete remote Official tag (ignore errors - tag may not exist)
+    run_git_command(["push", "origin", "--delete", "Official"], check=False)
+    
+    # Create new Official tag
+    success, msg = run_git_command(["tag", "-a", "Official", "-m", f"Official Release v{version}"])
+    if not success:
+        results.append(("Create tag", False, msg))
+        return results
+    results.append(("Create tag", True, f"Created tag: Official (v{version})"))
+    
+    # Push the new tag
+    success, msg = run_git_command(["push", "origin", "Official"])
+    if not success:
+        results.append(("Push tag", False, msg))
+        return results
+    results.append(("Push tag", True, "Pushed Official tag to origin"))
+    
+    return results
+
+
 def main():
     """Main entry point."""
     print("=" * 60)
@@ -157,12 +268,22 @@ def main():
     
     print()
     
-    # Prompt for new version
-    try:
-        new_version = input("Enter new version (e.g., 1.0.15): ").strip()
-    except (KeyboardInterrupt, EOFError):
-        print("\n\nCancelled.")
-        sys.exit(0)
+    # Check for command-line argument
+    new_version = None
+    auto_git = False
+    
+    if len(sys.argv) >= 2:
+        new_version = sys.argv[1].strip()
+        # Check for --auto flag for fully automated mode
+        auto_git = "--auto" in sys.argv or "-y" in sys.argv
+    
+    # Prompt for new version if not provided
+    if not new_version:
+        try:
+            new_version = input("Enter new version (e.g., 1.0.15): ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\n\nCancelled.")
+            sys.exit(0)
     
     if not new_version:
         print("No version entered. Exiting.")
@@ -177,17 +298,20 @@ def main():
         print(f"New version is the same as current version ({current_version}). No changes made.")
         sys.exit(0)
     
-    # Confirm
+    # Confirm (skip if --auto flag)
     print(f"\nUpdating version: {current_version} → {new_version}")
-    try:
-        confirm = input("Proceed? [y/N]: ").strip().lower()
-    except (KeyboardInterrupt, EOFError):
-        print("\n\nCancelled.")
-        sys.exit(0)
-    
-    if confirm != 'y':
-        print("Cancelled.")
-        sys.exit(0)
+    if not auto_git:
+        try:
+            confirm = input("Proceed? [y/N]: ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            print("\n\nCancelled.")
+            sys.exit(0)
+        
+        if confirm != 'y':
+            print("Cancelled.")
+            sys.exit(0)
+    else:
+        print("Auto mode enabled, proceeding...")
     
     # Perform updates
     print("\nUpdating files...")
@@ -209,15 +333,48 @@ def main():
     print(f"Done! {success_count} files updated, {fail_count} failures.")
     
     if fail_count == 0:
-        print("\nNext steps:")
-        print(f"  1. Review changes: git diff")
-        print(f"  2. Commit: git add -A && git commit -m \"chore: bump version to {new_version}\"")
-        print(f"  3. Push: git push origin main")
-        print(f"  4. Update Official tag:")
-        print(f"     git tag -d Official")
-        print(f"     git push origin --delete Official")
-        print(f"     git tag -a Official -m \"Official Release v{new_version}\"")
-        print(f"     git push origin Official")
+        # Ask about git operations (auto if --auto flag)
+        print("\n" + "-" * 60)
+        print("Git Operations")
+        print("-" * 60)
+        
+        if auto_git:
+            do_git = 'y'
+            print("\nAuto mode: Running git operations...")
+        else:
+            try:
+                do_git = input("\nCommit, push, and update Official tag? [Y/n]: ").strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                print("\n\nSkipping git operations.")
+                do_git = 'n'
+        
+        if do_git != 'n':
+            print("\nRunning git operations...")
+            git_results = git_commit_and_push(new_version)
+            
+            print()
+            git_success = True
+            for operation, success, message in git_results:
+                if success:
+                    print(f"  ✓ {operation}: {message}")
+                else:
+                    print(f"  ✗ {operation}: {message}")
+                    git_success = False
+            
+            if git_success:
+                print(f"\n✓ Version {new_version} released successfully!")
+            else:
+                print("\n⚠ Some git operations failed. Please check and complete manually.")
+        else:
+            print("\nGit operations skipped. Manual steps:")
+            print(f"  1. Review changes: git diff")
+            print(f"  2. Commit: git add -A && git commit -m \"chore: bump version to {new_version}\"")
+            print(f"  3. Push: git push origin main")
+            print(f"  4. Update Official tag:")
+            print(f"     git tag -d Official")
+            print(f"     git push origin --delete Official")
+            print(f"     git tag -a Official -m \"Official Release v{new_version}\"")
+            print(f"     git push origin Official")
 
 
 if __name__ == "__main__":

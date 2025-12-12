@@ -558,7 +558,7 @@ def _clear_stale_stop_file(panel: Any, config: Any) -> None:
     
     # Also clear GRACEFUL_STOP file
     try:
-        graceful_sf = os.path.join(panel._project_root, "training_data", "actv1", "GRACEFUL_STOP")
+        graceful_sf = os.path.join(panel._project_root, "training_datasets", "actv1", "GRACEFUL_STOP")
         if os.path.exists(graceful_sf):
             os.remove(graceful_sf)
             panel._log(f"[hrm] Cleared stale GRACEFUL_STOP file: {graceful_sf}")

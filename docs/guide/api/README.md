@@ -1,5 +1,5 @@
 # API References - Guide
-**Last Updated**: October 18, 2025  
+**Last Updated**: December 12, 2025  
 **Purpose**: Index of API reference documents within `docs/guide/api/`
 
 ---

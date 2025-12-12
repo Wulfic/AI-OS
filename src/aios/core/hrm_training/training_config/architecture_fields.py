@@ -57,8 +57,7 @@ class ArchitectureFields:
     
     Options:
     - "rope": Rotary Position Embeddings (recommended, handles long contexts)
-    - "alibi": ALiBi position bias
-    - "none": No position encodings (not recommended)
+    - "learned": Learned absolute position embeddings
     """
     
     use_flash_attn: bool = False
