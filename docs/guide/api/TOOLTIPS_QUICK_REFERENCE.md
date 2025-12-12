@@ -117,9 +117,6 @@ Position encoding method:
 
 • learned: Absolute positions,
   trained embeddings, fixed max length.
-
-• sincos: Classic Transformer approach,
-  no learned params, absolute positions.
 ```
 
 ## Visual Map

@@ -4,6 +4,9 @@ artifacts/*.out.log
 artifacts/*.err.log
 debug_html_output.html
 
+# MkDocs generated site
+site/
+
 # Centralized logs directory
 logs/
 !logs/README.md

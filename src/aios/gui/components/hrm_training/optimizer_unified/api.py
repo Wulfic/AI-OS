@@ -97,7 +97,7 @@ def optimize_from_gui(panel) -> Tuple[Dict[str, Any], UnifiedOptimizer]:
         return getattr(panel, '_stop_requested', False)
     
     # Get dataset file from panel
-    dataset_file = "training_data/curated_datasets/test_sample.txt"
+    dataset_file = "training_datasets/curated_datasets/test_sample.txt"
     if hasattr(panel, 'dataset_var'):
         try:
             user_dataset = panel.dataset_var.get().strip()

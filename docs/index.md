@@ -94,7 +94,7 @@ aios
 ## Documentation
 
 - Start here: [Guide Index](guide/INDEX.MD)
-- User Guide Overview: [Guide README](guide/README.md)
+- Feature Reference: [Complete Feature Index](guide/features/COMPLETE_FEATURE_INDEX.md)
 - Attributions and upstream projects: [REFERENCES.md](REFERENCES.md)
 - One-page Quick Start: [Quick Start Guide](guide/QUICK_START.md)
 

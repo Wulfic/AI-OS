@@ -203,10 +203,10 @@ def _prepare_for_batch(stop_file: Path, config: "OptimizationConfig") -> None:
         pass
     
     global_stop_paths = [
-        Path("training_data/actv1/STOP"),
-        Path("training_data/actv1/stop"),
-        Path("training_data/actv1/Stop"),
-        Path("training_data/actv1/GRACEFUL_STOP"),  # Also clean graceful stop file
+        Path("training_datasets/actv1/STOP"),
+        Path("training_datasets/actv1/stop"),
+        Path("training_datasets/actv1/Stop"),
+        Path("training_datasets/actv1/GRACEFUL_STOP"),  # Also clean graceful stop file
     ]
     
     for path in global_stop_paths:

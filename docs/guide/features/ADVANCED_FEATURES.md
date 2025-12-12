@@ -1,5 +1,5 @@
 # Advanced Training Features — AI-OS
-Last Updated: October 20, 2025
+Last Updated: December 12, 2025
 Purpose: Practical guide to advanced HRM-HF training flags, best‑known‑good combinations, platform notes, and troubleshooting.
 Status: Implemented
 
@@ -41,7 +41,7 @@ aios hrm-hf train-actv1 --model gpt2 --dataset-file training_data/curated_datase
 ### Attention & positional
 - `--use-flash-attn/--no-flash-attn`: Enable FlashAttention 2. Requires Ampere+ and proper install. On Windows, usually unavailable; will fall back to SDPA.
 - `--window-size <int|None>`: Sliding‑window attention. Use 256–512 for extreme contexts (50–100k tokens) to reduce memory. Works with or without FlashAttention.
-- `--pos-encodings rope|alibi|none`: Choose positional encoding. Default: rope.
+- `--pos-encodings rope|learned`: Choose positional encoding. Default: rope.
 
 ### Memory & performance
 - `--gradient-checkpointing/--no-gradient-checkpointing`: ↓VRAM by ~30–50% at ~20% speed cost. Default: enabled.

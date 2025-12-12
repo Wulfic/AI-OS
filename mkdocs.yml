@@ -1,0 +1,135 @@
+site_name: AI-OS Documentation
+site_description: HRM-sMoE LLM training toolkit with a clean GUI, CLI, and installers
+site_url: https://wulfic.github.io/AI-OS/
+repo_url: https://github.com/Wulfic/AI-OS
+repo_name: Wulfic/AI-OS
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+
+# Exclude README.md files since MkDocs prefers index.md
+exclude_docs: |
+  README.md
+  guide/README.md
+  guide/api/README.md
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details
+  - toc:
+      permalink: true
+  - tables
+  - attr_list
+  - md_in_html
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Wulfic/AI-OS
+    - icon: fontawesome/solid/heart
+      link: https://ko-fi.com/S6S31MS4TK
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Quick Start: guide/QUICK_START.md
+      - Guide Index: guide/INDEX.MD
+  - User Guide:
+      - Features:
+          - Complete Feature Index: guide/features/COMPLETE_FEATURE_INDEX.md
+          - Feature Combination Matrix: guide/features/FEATURE_COMBINATION_MATRIX.md
+          - Core Training: guide/features/CORE_TRAINING.md
+          - Advanced Features: guide/features/ADVANCED_FEATURES.md
+          - Memory Optimization: guide/features/MEMORY_OPTIMIZATION.md
+          - Model Architecture: guide/features/MODEL_ARCHITECTURE.md
+          - Datasets: guide/features/DATASETS.md
+          - Dataset Preprocessing: guide/features/DATASET_PREPROCESSING.md
+          - Configurable Dataset Chunk Size: guide/features/CONFIGURABLE_DATASET_CHUNK_SIZE.md
+          - Tokenizers: guide/features/TOKENIZERS.md
+          - Dynamic Subbrains (MoE): guide/features/DYNAMIC_SUBBRAINS_MOE.md
+          - GUI Features: guide/features/GUI_FEATURES.md
+          - CLI Commands: guide/features/CLI_COMMANDS.md
+          - Multi-GPU & Distributed: guide/features/MULTI_GPU_DISTRIBUTED.md
+          - Multi-GPU GUI Guide: guide/features/MULTIGPU_GUI_GUIDE.md
+          - Parallel Training Block Chunk System: guide/features/PARALLEL_TRAINING_BLOCK_CHUNK_SYSTEM.md
+          - Flash Attention: guide/features/FLASH_ATTENTION.md
+          - Flash Attention vs Chunking: guide/features/FLASH_ATTENTION_VS_CHUNKING.md
+          - LoRA & PEFT: guide/features/LORA_PEFT.md
+          - Tools & Integrations: guide/features/TOOLS_INTEGRATIONS.md
+          - MCP Integration: guide/features/MCP_INTEGRATION_COMPLETE.md
+          - MCP Testing Without Model: guide/features/MCP_TESTING_WITHOUT_MODEL.md
+      - API Reference:
+          - Training API Quick Reference: guide/api/TRAINING_API_QUICK_REFERENCE.md
+          - GUI Tooltips Quick Reference: guide/api/TOOLTIPS_QUICK_REFERENCE.md
+  - Planned Features:
+      - Integration Timeline: planned_features/INTEGRATION_TIMELINE_SUMMARY.md
+      - AMD/Intel GPU Support: planned_features/AMD_INTEL_GPU_SUPPORT_FIX.md
+      - Auto Updater Settings: planned_features/AUTO_UPDATER_SETTINGS_INTEGRATION.md
+      - Data Backends & Vector Stores: planned_features/data-backends-vector-stores.md
+      - DeepSpeed ZeRO-Infinity: planned_features/DEEPSPEED_ZERO_INFINITY.md
+      - DRAGON Network: planned_features/DRAGON.md
+      - Evaluation Enhancements: planned_features/EVALUATION_SYSTEM_ENHANCEMENTS.md
+      - Experiment Tracking & HPO: planned_features/experiment-tracking-orchestration-hpo.md
+      - Gradient Accumulation: planned_features/GRADIENT_ACCUMULATION_IMPLEMENTATION.md
+      - HRM Serving API: planned_features/hrm-serving-inference-api.md
+      - Internationalization: planned_features/INTERNATIONALIZATION_LOCALIZATION.md
+      - Mixed GPU Support: planned_features/MIXED_GPU_VENDOR_SUPPORT.md
+      - MoE Lightning: planned_features/MOE_LIGHTNING_INTEGRATION.md
+      - Multimodal Tokenizers: planned_features/MULTIMODAL_SPECIALIZED_TOKENIZERS.md
+      - Persistent Traces:
+          - Index: planned_features/PERSISTENT_TRACES_INDEX.md
+          - Quick Reference: planned_features/PERSISTENT_TRACES_QUICK_REFERENCE.md
+          - Semantic Crystallization: planned_features/PERSISTENT_TRACES_SEMANTIC_CRYSTALLIZATION.md
+          - Cognitive Science: planned_features/PERSISTENT_TRACES_COGNITIVE_SCIENCE.md
+          - Architecture Diagrams: planned_features/PERSISTENT_TRACES_ARCHITECTURE_DIAGRAMS.md
+          - Mathematical Foundations: planned_features/PERSISTENT_TRACES_APPENDIX_MATHEMATICAL_FOUNDATIONS.md
+      - Presidio PII Redaction: planned_features/presidio-pii-redaction.md
+      - Preference Alignment: planned_features/argilla-trl-preference-alignment.md
+      - Retrofitted Recurrence: planned_features/RETROFITTED_RECURRENCE_INTEGRATION.md
+      - SEAL Integration: planned_features/SEAL_INTEGRATION_PLAN.md
+      - TOON Integration: planned_features/TOON_INTEGRATION.md
+      - TPU & Cloud Support: planned_features/TPU_CLOUD_SUPPORT.md
+      - Unlimiformer: planned_features/UNLIMIFORMER_INTEGRATION.md
+      - Web GUI Parity: planned_features/WEB_GUI_PARITY.md
+      - ZeRO-3 Tensor Pipeline: planned_features/ZERO3_TENSOR_PIPELINE_INTEGRATION.md
+  - References: REFERENCES.md
+  - License: LICENSE.md

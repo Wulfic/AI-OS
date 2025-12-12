@@ -18,7 +18,7 @@ def setup_hf_cache_env():
     Uses smart defaults that work on fresh install:
     1. Check config file for user preference
     2. Try non-C data drives (D, E, F, Z)
-    3. Fall back to workspace training_data/hf_cache
+    3. Fall back to workspace training_datasets/hf_cache
     
     Environment variables set:
     - HF_HOME: Base HuggingFace directory
@@ -51,12 +51,12 @@ def setup_hf_cache_env():
             except Exception:
                 continue
         else:
-            _hf_cache_base = Path.cwd() / "training_data" / "hf_cache"
+            _hf_cache_base = Path.cwd() / "training_datasets" / "hf_cache"
     
     try:
         _hf_cache_base.mkdir(parents=True, exist_ok=True)
     except Exception:
-        _hf_cache_base = Path.cwd() / "training_data" / "hf_cache"
+        _hf_cache_base = Path.cwd() / "training_datasets" / "hf_cache"
         _hf_cache_base.mkdir(parents=True, exist_ok=True)
     
     os.environ["HF_HOME"] = str(_hf_cache_base.resolve())

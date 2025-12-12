@@ -107,7 +107,7 @@ def _get_hf_cache_dir() -> Path:
         [
             Path.home() / ".cache" / "aios" / "hf_cache",
             Path.home() / "AI-OS" / "hf_cache",
-            Path.cwd() / "training_data" / "hf_cache",
+            Path.cwd() / "training_datasets" / "hf_cache",
         ]
     )
 
@@ -132,7 +132,7 @@ try:
     _hf_cache_dir.mkdir(parents=True, exist_ok=True)
 except Exception:
     # If we can't create it, fall back to project directory
-    _hf_cache_dir = Path.cwd() / "training_data" / "hf_cache"
+    _hf_cache_dir = Path.cwd() / "training_datasets" / "hf_cache"
     _hf_cache_dir.mkdir(parents=True, exist_ok=True)
 
 # Migrate TRANSFORMERS_CACHE to HF_HOME if set

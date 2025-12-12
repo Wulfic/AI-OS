@@ -161,13 +161,13 @@ def _check_drive_space(name: str, path: Path, drive: str) -> DiagnosticResult:
 def _check_training_data_size() -> Optional[DiagnosticResult]:
     """Check the size of training data directory."""
     try:
-        # Find training_data directory
+        # Find training_datasets directory
         training_data = None
         
         try:
             from aios.system import paths as system_paths
             install_root = system_paths.get_install_root()
-            training_data = install_root / "training_data"
+            training_data = install_root / "training_datasets"
         except ImportError:
             pass
         
@@ -175,7 +175,7 @@ def _check_training_data_size() -> Optional[DiagnosticResult]:
             # Try current working directory
             cwd = Path.cwd()
             for parent in [cwd] + list(cwd.parents)[:5]:
-                candidate = parent / "training_data"
+                candidate = parent / "training_datasets"
                 if candidate.exists():
                     training_data = candidate
                     break

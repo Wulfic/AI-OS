@@ -481,7 +481,7 @@ def populate_dataset_dropdown(panel: HRMTrainingPanel) -> list:
     # Check common dataset locations
     locations = [
         ("Z:/training_datasets", "Z: drive"),
-        ("training_data", "Local training_data"),
+        ("training_datasets", "Local training_datasets"),
         ("artifacts/datasets", "Local artifacts"),
     ]
     

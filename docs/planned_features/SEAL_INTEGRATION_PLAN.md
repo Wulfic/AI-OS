@@ -18,7 +18,7 @@
 2. [Phase 1: Self-Edit Data Generation](#phase-1-self-edit-data-generation-weeks-1-4)
 3. [Phase 2: RL Optimization](#phase-2-rl-optimization-weeks-5-14)
 4. [Phase 3: Advanced Meta-Learning](#phase-3-advanced-meta-learning-weeks-15)
-5. [Dependencies & Prerequisites](#dependencies--prerequisites)
+5. [Dependencies & Prerequisites](#dependencies-prerequisites)
 6. [Success Metrics](#success-metrics)
 7. [Risk Management](#risk-management)
 8. [Testing Strategy](#testing-strategy)

@@ -170,12 +170,12 @@ def gui(
                 except Exception:
                     continue
             else:
-                _hf_cache_dir = Path.cwd() / "training_data" / "hf_cache"
+                _hf_cache_dir = Path.cwd() / "training_datasets" / "hf_cache"
         
         try:
             _hf_cache_dir.mkdir(parents=True, exist_ok=True)
         except Exception:
-            _hf_cache_dir = Path.cwd() / "training_data" / "hf_cache"
+            _hf_cache_dir = Path.cwd() / "training_datasets" / "hf_cache"
             _hf_cache_dir.mkdir(parents=True, exist_ok=True)
         
         os.environ["HF_HOME"] = str(_hf_cache_dir.resolve())

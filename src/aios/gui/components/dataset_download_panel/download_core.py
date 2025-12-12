@@ -40,7 +40,7 @@ def download_dataset(panel, dataset: Dict[str, Any]):
     logger.info(f"Starting download: dataset={dataset_name}, path={dataset_path}")
     
     # Use the global HF cache directory
-    cache_dir = Path(os.environ.get("HF_HOME", str(Path.cwd() / "training_data" / "hf_cache")))
+    cache_dir = Path(os.environ.get("HF_HOME", str(Path.cwd() / "training_datasets" / "hf_cache")))
     cache_dir.mkdir(parents=True, exist_ok=True)
     
     # Output path

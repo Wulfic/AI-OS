@@ -48,7 +48,7 @@ class StreamingChunkCache:
             if hf_home:
                 cache_dir = Path(hf_home) / "streaming_chunks"
             else:
-                cache_dir = Path.cwd() / "training_data" / "hf_cache" / "streaming_chunks"
+                cache_dir = Path.cwd() / "training_datasets" / "hf_cache" / "streaming_chunks"
         
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)

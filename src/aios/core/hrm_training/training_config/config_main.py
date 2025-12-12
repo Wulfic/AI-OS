@@ -87,11 +87,11 @@ class TrainingConfig(
             )
         validation_count += 1
         
-        if self.pos_encodings not in {"rope", "alibi", "none"}:
+        if self.pos_encodings not in {"rope", "learned"}:
             logger.warning(f"Validation failed: pos_encodings={self.pos_encodings} (invalid)")
             raise ValueError(
                 f"Invalid pos_encodings: {self.pos_encodings}. "
-                f"Must be one of: rope, alibi, none"
+                f"Must be one of: rope, learned"
             )
         validation_count += 1
         

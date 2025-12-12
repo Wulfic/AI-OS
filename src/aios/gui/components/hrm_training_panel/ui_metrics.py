@@ -63,7 +63,7 @@ def initialize_epoch_tracking_display(panel: HRMTrainingPanel) -> None:
         if hasattr(panel, "epoch_dataset_lbl") and hasattr(panel, "dataset_var"):
             try:
                 dataset_str = panel.dataset_var.get().strip()
-                if dataset_str and dataset_str != "training_data":
+                if dataset_str and dataset_str != "training_datasets":
                     # Extract name from path or HF dataset
                     if 'hf://' in dataset_str:
                         dataset_name = dataset_str.split('hf://')[-1].split(':')[0]

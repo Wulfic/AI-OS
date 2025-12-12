@@ -486,9 +486,9 @@ def default_stop_file(panel: HRMTrainingPanel) -> str:
         str: Default stop file path
     """
     try:
-        return os.path.join(panel._project_root, "training_data", "actv1", "STOP")
+        return os.path.join(panel._project_root, "training_datasets", "actv1", "STOP")
     except Exception:
-        return "training_data/actv1/STOP"
+        return "training_datasets/actv1/STOP"
 
 
 def get_moe_num_experts(panel: HRMTrainingPanel) -> int:

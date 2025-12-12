@@ -47,7 +47,7 @@ def _default_starter_dir() -> str:
 
 
 def _default_training_save_dir() -> str:
-    return _resolve_artifact("training_data/actv1")
+    return _resolve_artifact("training_datasets/actv1")
 
 
 app = typer.Typer(help="Implant a pretrained HF LLM as the HRM 'brain' and adapt it.")
@@ -203,7 +203,7 @@ def train_actv1(
     num_heads: int = typer.Option(8, "--num-heads", help="Number of attention heads (must divide hidden_size evenly)"),
     h_cycles: int = typer.Option(2, "--h-cycles", help="High-level recurrent cycles per segment"),
     l_cycles: int = typer.Option(2, "--l-cycles", help="Low-level recurrent cycles per segment"),
-    pos_encodings: str = typer.Option("rope", "--pos-encodings", help="Position encodings: rope|alibi|none"),
+    pos_encodings: str = typer.Option("rope", "--pos-encodings", help="Position encodings: rope|learned"),
     use_flash_attn: bool = typer.Option(False, "--use-flash-attn/--no-flash-attn", help="Enable Flash Attention 2 for optimized attention computation. Faster and more memory-efficient. Requires Ampere GPU or newer. Falls back to PyTorch SDPA if unavailable."),
     window_size: Optional[int] = typer.Option(None, "--window-size", help="Sliding window attention size (None=full attention). Use 256-512 for extreme contexts (50K-100K tokens). Independent of --use-flash-attn."),
     cuda_ids: Optional[str] = typer.Option(None, "--cuda-ids", help="Comma-separated CUDA device indices to use (e.g., '0,1')"),

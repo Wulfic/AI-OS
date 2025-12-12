@@ -19,13 +19,57 @@ def _cap_config_path() -> Path:
     return p
 
 
+def _get_hf_cache_config_path() -> Path:
+    """Return path to the HF cache config file."""
+    home = os.environ.get("HOME") or os.environ.get("USERPROFILE")
+    base = Path(home) if home else Path.home()
+    return base / ".config" / "aios" / "hf_cache_path.txt"
+
+
+def _get_configured_datasets_root() -> Path | None:
+    """Get the user-configured datasets root from HF_HOME or saved config.
+    
+    The datasets root is the parent of HF_HOME (which typically points to .hf_cache).
+    For example, if HF_HOME is Z:/training_datasets/.hf_cache, returns Z:/training_datasets.
+    """
+    # Check HF_HOME environment variable first
+    hf_home = os.environ.get("HF_HOME")
+    if hf_home:
+        hf_path = Path(hf_home).expanduser().resolve()
+        # Parent of .hf_cache is the datasets root
+        if hf_path.name in (".hf_cache", "hf_cache"):
+            return hf_path.parent
+        # If HF_HOME doesn't end in hf_cache, use it directly
+        return hf_path.parent if hf_path.exists() else hf_path
+    
+    # Check saved config file
+    config_file = _get_hf_cache_config_path()
+    if config_file.exists():
+        try:
+            saved_path = config_file.read_text().strip()
+            if saved_path:
+                saved = Path(saved_path).expanduser().resolve()
+                # Return parent (datasets root)
+                if saved.name in (".hf_cache", "hf_cache"):
+                    return saved.parent
+                return saved.parent if saved.exists() else saved
+        except Exception:
+            pass
+    
+    return None
+
+
 def datasets_base_dir() -> Path:
-    """Return the base directory for storing datasets.
+    """Return the base directory for storing curated datasets.
 
     Resolution order (first match wins):
     1) Environment override via `AIOS_DATASETS_DIR`
-    2) Project root detected from CWD (pyproject.toml/.git) → `training_data/curated_datasets`
-    3) Fallback: `~/.local/share/aios/datasets`
+    2) User-configured datasets root (HF_HOME parent or saved config) → `{root}/curated_datasets`
+    3) Project root detected from CWD (pyproject.toml/.git) → `{project}/training_datasets/curated_datasets`
+    4) Fallback: `~/.local/share/aios/datasets`
+    
+    Curated datasets are placed in a 'curated_datasets' subfolder alongside
+    HuggingFace datasets to keep all training data together.
     """
     # 1) Explicit override
     override = os.environ.get("AIOS_DATASETS_DIR")
@@ -37,7 +81,17 @@ def datasets_base_dir() -> Path:
             pass
         return p
 
-    # 2) Try to detect project root from CWD and place under training_data/curated_datasets
+    # 2) Use user-configured datasets root (from HF_HOME or saved config)
+    configured_root = _get_configured_datasets_root()
+    if configured_root is not None:
+        base = configured_root / "curated_datasets"
+        try:
+            base.mkdir(parents=True, exist_ok=True)
+            return base
+        except Exception:
+            pass  # Fall through to next option
+
+    # 3) Try to detect project root from CWD and place under training_datasets/curated_datasets
     def _find_project_root(start: Path) -> Path | None:
         cur = start
         # search up to filesystem root
@@ -52,14 +106,15 @@ def datasets_base_dir() -> Path:
     cwd = Path.cwd()
     root = _find_project_root(cwd)
     if root is not None:
-        base = root / "training_data" / "curated_datasets"
+        # Use training_datasets (not training_data) for consistency
+        base = root / "training_datasets" / "curated_datasets"
         try:
             base.mkdir(parents=True, exist_ok=True)
         except Exception:
             pass
         return base
 
-    # 3) Fallback to user-local data dir
+    # 4) Fallback to user-local data dir
     home = os.environ.get("HOME") or os.environ.get("USERPROFILE")
     if home:
         base = Path(home) / ".local" / "share" / "aios" / "datasets"

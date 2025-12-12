@@ -29,7 +29,7 @@ class IOFields:
     # ============================================================================
     # I/O and Persistence
     # ============================================================================
-    save_dir: str = "training_data/actv1"
+    save_dir: str = "training_datasets/actv1"
     """Directory where checkpoints and training state are saved."""
     
     stop_file: Optional[str] = None
