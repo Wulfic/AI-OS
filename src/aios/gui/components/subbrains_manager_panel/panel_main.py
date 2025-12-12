@@ -141,10 +141,24 @@ class SubbrainsManagerPanel(ttk.LabelFrame):  # type: ignore[misc]
     def _detect_project_root() -> str:
         """Detect the project root directory.
         
+        First tries from source file location, then falls back to CWD.
+        
         Returns:
             Path to project root (directory containing pyproject.toml)
         """
         try:
+            # First, try to find from source file location (more reliable)
+            source_dir = os.path.dirname(os.path.abspath(__file__))
+            cur = source_dir
+            for _ in range(10):  # Traverse up to find project root
+                if os.path.exists(os.path.join(cur, "pyproject.toml")):
+                    return cur
+                parent = os.path.dirname(cur)
+                if parent == cur:
+                    break
+                cur = parent
+            
+            # Fallback: try from CWD
             cur = os.path.abspath(os.getcwd())
             for _ in range(8):
                 if os.path.exists(os.path.join(cur, "pyproject.toml")):

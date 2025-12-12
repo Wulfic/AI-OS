@@ -190,8 +190,23 @@ class MCPManagerPanel(ttk.LabelFrame):  # type: ignore[misc]
     
     @staticmethod
     def _detect_project_root() -> str:
-        """Detect the project root directory."""
+        """Detect the project root directory.
+        
+        First tries from source file location, then falls back to CWD.
+        """
         try:
+            # First, try to find from source file location (more reliable)
+            source_dir = os.path.dirname(os.path.abspath(__file__))
+            cur = source_dir
+            for _ in range(10):  # Traverse up to find project root
+                if os.path.exists(os.path.join(cur, "pyproject.toml")):
+                    return cur
+                parent_dir = os.path.dirname(cur)
+                if parent_dir == cur:
+                    break
+                cur = parent_dir
+            
+            # Fallback: try from CWD
             cur = os.path.abspath(os.getcwd())
             for _ in range(8):
                 if os.path.exists(os.path.join(cur, "pyproject.toml")):

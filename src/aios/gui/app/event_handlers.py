@@ -31,21 +31,23 @@ def setup_event_handlers(app: Any) -> None:
         """Handle window close event."""
         import threading
         import sys
+        import os
         
         logger.info("User action: Closing application window")
         
         # Set a forced exit timeout in case cleanup hangs
+        # Reduced from 10s to 5s for faster forced exit
         def _force_exit() -> None:
-            logger.warning("Cleanup taking too long, forcing application exit")
+            logger.warning("Cleanup taking too long (5s), forcing application exit")
             try:
                 app.root.destroy()
             except Exception:
                 pass
-            # Force exit after giving Tk a moment to clean up
-            import os
+            # Force exit immediately - don't give Tk more time
+            logger.warning("Force exiting process now")
             os._exit(0)
         
-        force_timer = threading.Timer(10.0, _force_exit)
+        force_timer = threading.Timer(5.0, _force_exit)
         force_timer.daemon = True
         force_timer.start()
         
@@ -64,6 +66,11 @@ def setup_event_handlers(app: Any) -> None:
             # Destroy window
             app.root.destroy()
             logger.info("Application window closed successfully")
+            
+            # Force exit to ensure no lingering threads keep the process alive
+            # This is necessary because some non-daemon threads (like multiprocessing Manager)
+            # may still be running even after cleanup
+            os._exit(0)
         except Exception as e:
             logger.error(f"Error during close: {e}")
             # Cancel force timer and force close anyway
@@ -72,6 +79,9 @@ def setup_event_handlers(app: Any) -> None:
                 app.root.destroy()
             except Exception:
                 pass
+            # If destroy fails, force exit
+            logger.warning("Clean shutdown failed, forcing exit")
+            os._exit(0)
     
     app.root.protocol("WM_DELETE_WINDOW", _on_close)
     

@@ -50,7 +50,7 @@ class AsyncEventLoop:
         
         self._thread = threading.Thread(
             target=self._run_loop,
-            daemon=False,
+            daemon=True,  # Daemon thread to prevent hanging on shutdown
             name="AsyncEventLoop"
         )
         logger.debug("AsyncEventLoop thread created: AsyncEventLoop")
@@ -106,7 +106,7 @@ class AsyncEventLoop:
             self._running = False
             logger.debug("AsyncEventLoop thread stopped")
     
-    def stop(self, timeout: float = 5.0):
+    def stop(self, timeout: float = 3.0):
         """Stop the event loop.
         
         Args:
@@ -118,6 +118,7 @@ class AsyncEventLoop:
         logger.info("Stopping AsyncEventLoop...")
         logger.debug("Signaling AsyncEventLoop thread to stop")
         self._stop_event.set()
+        self._running = False  # Mark as stopped early to prevent new submissions
 
         if self._loop and not self._closing.is_set():
             try:
@@ -129,11 +130,10 @@ class AsyncEventLoop:
         if self._thread:
             self._thread.join(timeout=timeout)
             if self._thread.is_alive():
-                logger.warning(f"AsyncEventLoop did not stop within {timeout}s")
+                logger.warning(f"AsyncEventLoop did not stop within {timeout}s - continuing anyway (daemon thread)")
             else:
                 logger.debug("AsyncEventLoop thread joined successfully")
 
-        self._running = False
         logger.info("AsyncEventLoop stopped")
     
     def run_coroutine(self, coro):

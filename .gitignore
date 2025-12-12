@@ -71,10 +71,6 @@ artifacts/checkpoints/*-step*-*.npz
 # Generated halting-head weights
 artifacts/**/q_head.pt
 
-# Still track registry metadata if present
-!artifacts/brains/masters.json
-!artifacts/brains/pinned.json
-
 # Ignore installer builds
 installers/releases/
 installers/_builds/ubuntu/.src-build/
@@ -98,9 +94,14 @@ artifacts/evaluation/
 
 # User-specific GUI state
 src/gui_state.json
+gui_state.json
 
-# Session state (user-specific)
+# Session/lock files (user-specific)
 cache/logging/.session_state.json
+cache/logging/locks/
+
+# User-specific config changes
+config/default.yaml
 
 # GPU metrics and monitoring
 **/gpu_metrics.jsonl

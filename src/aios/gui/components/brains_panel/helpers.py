@@ -77,12 +77,25 @@ def _read_training_steps_from_metrics(metrics_path: str) -> int:
 def find_project_root() -> str:
     """Find project root by searching for pyproject.toml.
     
-    Searches up to 8 parent directories from current working directory.
+    First tries from source file location, then searches up to 8 parent 
+    directories from current working directory.
     
     Returns:
         Absolute path to project root, or current directory if not found.
     """
     try:
+        # First, try to find from source file location (more reliable)
+        source_dir = os.path.dirname(os.path.abspath(__file__))
+        cur = source_dir
+        for _ in range(10):  # src/aios/gui/components/brains_panel -> 5 levels up + buffer
+            if os.path.exists(os.path.join(cur, "pyproject.toml")):
+                return cur
+            parent = os.path.dirname(cur)
+            if parent == cur:
+                break
+            cur = parent
+        
+        # Fallback: try from CWD
         cur = os.path.abspath(os.getcwd())
         for _ in range(8):
             if os.path.exists(os.path.join(cur, "pyproject.toml")):

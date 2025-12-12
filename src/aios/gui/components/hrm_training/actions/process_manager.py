@@ -137,6 +137,13 @@ def launch_training_process(
         if hasattr(config, 'cuda_ids') and config.cuda_ids:
             cuda_ids_str = str(config.cuda_ids) if isinstance(config.cuda_ids, str) else ','.join(map(str, config.cuda_ids))
             cuda_ids_env['AIOS_CUDA_IDS'] = cuda_ids_str
+            # CRITICAL: Also set CUDA_VISIBLE_DEVICES directly in parent environment
+            # This is necessary because on Windows spawn, the child process inherits the parent's
+            # environment, and train_actv1.py's _setup_cuda_visible_devices_early() runs at 
+            # module import time - BEFORE the wrapper function can set environment variables.
+            # By setting CUDA_VISIBLE_DEVICES in the parent before spawn, we ensure the child
+            # picks up the correct GPU selection immediately.
+            cuda_ids_env['CUDA_VISIBLE_DEVICES'] = cuda_ids_str
             panel._log(f"[hrm] Setting CUDA devices for training process: {cuda_ids_str}")
             logger.info(f"Setting CUDA devices for training process: {cuda_ids_str} (world_size={ddp_world_size or 'n/a'})")
         
@@ -237,13 +244,15 @@ def _training_process_wrapper(
         stop_ack_event: Event set when worker acknowledges immediate stop
         graceful_stop_ack_event: Event set when worker acknowledges graceful stop
         output_queue: Queue for output communication
-        cuda_env: Dict with CUDA environment variables to set (e.g., {'AIOS_CUDA_IDS': '0,1'})
+        cuda_env: Dict with CUDA environment variables to set (e.g., {'AIOS_CUDA_IDS': '0,1', 'CUDA_VISIBLE_DEVICES': '0,1'})
     """
     import sys
     import io
     
     # Set CUDA environment variables BEFORE any imports
     # This ensures they're set before torch.cuda is initialized
+    # Note: On Windows spawn, these should already be set via parent process inheritance,
+    # but we set them again here as a safety measure for other platforms/contexts.
     if cuda_env:
         for key, value in cuda_env.items():
             os.environ[key] = value
