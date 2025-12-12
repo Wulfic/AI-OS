@@ -66,6 +66,11 @@ def setup_event_handlers(app: Any) -> None:
             # Destroy window
             app.root.destroy()
             logger.info("Application window closed successfully")
+            
+            # Force exit to ensure no lingering threads keep the process alive
+            # This is necessary because some non-daemon threads (like multiprocessing Manager)
+            # may still be running even after cleanup
+            os._exit(0)
         except Exception as e:
             logger.error(f"Error during close: {e}")
             # Cancel force timer and force close anyway
