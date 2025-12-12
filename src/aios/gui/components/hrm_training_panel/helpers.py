@@ -528,12 +528,27 @@ def get_moe_active_experts(panel: HRMTrainingPanel) -> int:
 
 
 def project_root() -> str:
-    """Try to detect the project root (directory containing pyproject.toml), fallback to CWD.
+    """Try to detect the project root (directory containing pyproject.toml).
+    
+    First tries to find from source file location (__file__), then falls back to CWD.
+    This ensures the GUI works correctly even when launched from a different directory.
     
     Returns:
         str: Project root directory path
     """
     try:
+        # First, try to find from source file location (more reliable for installed/launched GUI)
+        source_dir = os.path.dirname(os.path.abspath(__file__))
+        cur = source_dir
+        for _ in range(10):  # src/aios/gui/components/hrm_training_panel -> 5 levels up + buffer
+            if os.path.exists(os.path.join(cur, "pyproject.toml")):
+                return cur
+            parent = os.path.dirname(cur)
+            if parent == cur:
+                break
+            cur = parent
+        
+        # Fallback: try from CWD
         cur = os.path.abspath(os.getcwd())
         for _ in range(8):
             if os.path.exists(os.path.join(cur, "pyproject.toml")):
@@ -542,6 +557,7 @@ def project_root() -> str:
             if parent == cur:
                 break
             cur = parent
+        
         return os.path.abspath(os.getcwd())
     except Exception:
         return os.path.abspath(os.getcwd())

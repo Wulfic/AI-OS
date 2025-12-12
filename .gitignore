@@ -71,10 +71,6 @@ artifacts/checkpoints/*-step*-*.npz
 # Generated halting-head weights
 artifacts/**/q_head.pt
 
-# Still track registry metadata if present
-!artifacts/brains/masters.json
-!artifacts/brains/pinned.json
-
 # Ignore installer builds
 installers/releases/
 installers/_builds/ubuntu/.src-build/
