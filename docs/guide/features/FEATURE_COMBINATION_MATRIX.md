@@ -1,4 +1,4 @@
-# Feature Combination Matrix - AI-OS
+# Feature Combination Matrix
 Last Updated: December 12, 2025
 Purpose: Feature compatibility reference - which combinations are verified and which are experimental
 

@@ -1,4 +1,4 @@
-# Core Training - AI-OS
+# Core Training
 Generated: December 12, 2025
 Purpose: Architecture and training engine for HRM
 Status: Implemented

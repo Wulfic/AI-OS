@@ -1,4 +1,4 @@
-# Memory Optimization - AI-OS
+# Memory Optimization
 Generated: December 12, 2025
 Purpose: Techniques to reduce VRAM and enable larger models/contexts
 Status: Implemented (some items require verification)

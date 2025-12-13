@@ -1,4 +1,4 @@
-# CLI Commands - AI-OS
+# CLI Commands
 Generated: December 12, 2025
 Purpose: Reference for the `aios` CLI and subcommands
 Status: Implemented

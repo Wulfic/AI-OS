@@ -1,4 +1,4 @@
-# Complete Feature Index - AI-OS
+# Complete Feature Index
 Generated: December 12, 2025
 Purpose: Ultra-lean index linking to feature docs and deep dives
 Status: Implemented

@@ -1,4 +1,4 @@
-# Advanced Training Features — AI-OS
+# Advanced Training Features
 Last Updated: December 12, 2025
 Purpose: Practical guide to advanced HRM-HF training flags, best‑known‑good combinations, platform notes, and troubleshooting.
 Status: Implemented

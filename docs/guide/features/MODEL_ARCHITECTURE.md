@@ -1,4 +1,4 @@
-# Model Architecture - AI-OS
+# Model Architecture
 Generated: December 12, 2025
 Purpose: HRM model components and configurable parameters
 Status: Implemented

@@ -1,4 +1,4 @@
-# Tokenizers - AI-OS
+# Tokenizers
 Generated: December 12, 2025
 Purpose: Tokenizer support and configuration
 Status: Implemented (verification varies per model)
