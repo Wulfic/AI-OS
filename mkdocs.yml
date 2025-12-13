@@ -102,7 +102,6 @@ nav:
           - GUI Tooltips Quick Reference: guide/api/TOOLTIPS_QUICK_REFERENCE.md
   - Planned Features:
       - Integration Timeline: planned_features/INTEGRATION_TIMELINE_SUMMARY.md
-      - AMD/Intel GPU Support: planned_features/AMD_INTEL_GPU_SUPPORT_FIX.md
       - Auto Updater Settings: planned_features/AUTO_UPDATER_SETTINGS_INTEGRATION.md
       - Data Backends & Vector Stores: planned_features/data-backends-vector-stores.md
       - DeepSpeed ZeRO-Infinity: planned_features/DEEPSPEED_ZERO_INFINITY.md
