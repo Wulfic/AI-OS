@@ -2,8 +2,8 @@ param(
   [ValidateSet('install','uninstall','preflight')]
   [string]$Action = 'install',
   [switch]$Yes,
-  # GPU preference: auto (detect), cuda, dml, cpu
-  [ValidateSet('auto','cuda','dml','cpu')]
+  # GPU preference: auto (detect), cuda, rocm (AMD), xpu (Intel), dml (DirectML), cpu
+  [ValidateSet('auto','cuda','rocm','xpu','dml','cpu')]
   [string]$Gpu = 'auto',
   # Force installation of CUDA tools even if no NVIDIA GPU is detected
   [switch]$InstallCudaTools,
@@ -249,15 +249,35 @@ function Confirm-Choice($Message, [switch]$DefaultYes) {
 
 # GPU / PyTorch helpers
 function Get-GpuInfo() {
-  $info = @{ Vendor = 'Unknown'; Model = ''; HasNvidia = $false; NvidiaSmi = $false }
+  $info = @{ 
+    Vendor = 'Unknown'
+    Model = ''
+    HasNvidia = $false
+    HasAmd = $false
+    HasIntel = $false
+    NvidiaSmi = $false 
+  }
+  
   try {
     $gpus = Get-CimInstance Win32_VideoController | Select-Object -Property Name, AdapterCompatibility
     foreach ($g in $gpus) {
       $vendor = [string]$g.AdapterCompatibility
-      if ($vendor -match 'NVIDIA') {
-        $info.Vendor = 'NVIDIA'; $info.Model = [string]$g.Name; $info.HasNvidia = $true
-      } elseif ($info.Vendor -eq 'Unknown') {
-        $info.Vendor = $vendor; $info.Model = [string]$g.Name
+      $model = [string]$g.Name
+      
+      if ($vendor -match 'NVIDIA' -or $model -match 'NVIDIA|GeForce|RTX|GTX') {
+        $info.HasNvidia = $true
+        if ($info.Vendor -eq 'Unknown') { $info.Vendor = 'NVIDIA'; $info.Model = $model }
+      }
+      elseif ($vendor -match 'AMD' -or $model -match 'AMD|Radeon|RX') {
+        $info.HasAmd = $true
+        if ($info.Vendor -eq 'Unknown') { $info.Vendor = 'AMD'; $info.Model = $model }
+      }
+      elseif ($vendor -match 'Intel' -or $model -match 'Intel.*Arc|Intel.*Xe|Arc A') {
+        $info.HasIntel = $true
+        if ($info.Vendor -eq 'Unknown') { $info.Vendor = 'Intel'; $info.Model = $model }
+      }
+      elseif ($info.Vendor -eq 'Unknown') {
+        $info.Vendor = $vendor; $info.Model = $model
       }
     }
   } catch {}
@@ -269,11 +289,24 @@ function Install-PyTorch([string]$pipPath, [string]$pythonPath, [string]$GpuPref
   $script:PyTorchBuild = 'cpu'
   $gpu = $GpuPref
   $gpuInfo = Get-GpuInfo
-  Write-Host ("[i] GPU detection: Vendor={0} Model={1} NvidiaSmi={2}" -f $gpuInfo.Vendor, $gpuInfo.Model, $gpuInfo.NvidiaSmi)
+  Write-Host ("[i] GPU detection: Vendor={0} Model={1}" -f $gpuInfo.Vendor, $gpuInfo.Model)
+  Write-Host ("[i] GPUs detected: NVIDIA={0} AMD={1} Intel={2}" -f $gpuInfo.HasNvidia, $gpuInfo.HasAmd, $gpuInfo.HasIntel)
 
   if ($gpu -eq 'auto') {
-    if ($gpuInfo.HasNvidia) { $gpu = 'cuda' }
-    else { $gpu = 'cpu' }
+    if ($gpuInfo.HasNvidia) { 
+      $gpu = 'cuda' 
+    }
+    elseif ($gpuInfo.HasAmd) {
+      # ROCm on Windows is experimental, use DirectML as safer option
+      Write-Host "[i] AMD GPU detected. Using DirectML (stable) instead of ROCm (experimental on Windows)."
+      $gpu = 'dml'
+    }
+    elseif ($gpuInfo.HasIntel) {
+      $gpu = 'xpu'
+    }
+    else { 
+      $gpu = 'cpu' 
+    }
   }
 
   if ($gpu -eq 'cuda') {
@@ -303,6 +336,24 @@ function Install-PyTorch([string]$pipPath, [string]$pythonPath, [string]$GpuPref
     }
   }
 
+  if ($gpu -eq 'rocm') {
+    Write-Host "[i] Installing PyTorch with ROCm support (AMD GPUs)…"
+    Write-Host "[!] Note: ROCm on Windows is experimental" -ForegroundColor Yellow
+    try {
+      & $pipPath install --upgrade pip wheel setuptools | Out-Null
+      # ROCm 6.0 for Windows (if available)
+      & $pipPath install torch --index-url https://download.pytorch.org/whl/rocm6.0
+      $code = "import torch; rocm_ok = hasattr(torch.version, 'hip') and torch.version.hip is not None; print({'torch': torch.__version__, 'rocm': rocm_ok, 'cuda_available': torch.cuda.is_available()})"
+      $res = & $pythonPath -c $code
+      Write-Host "[+] PyTorch installed with ROCm support. Probe: $res" -ForegroundColor Green
+      $script:PyTorchBuild = 'rocm'
+      return
+    } catch {
+      Write-Host "[!] ROCm install failed. Falling back to DirectML…" -ForegroundColor Yellow
+      $gpu = 'dml'
+    }
+  }
+
   if ($gpu -eq 'dml') {
     Write-Host "[i] Installing PyTorch (CPU) + torch-directml…"
     try {
@@ -316,6 +367,36 @@ function Install-PyTorch([string]$pipPath, [string]$pythonPath, [string]$GpuPref
       return
     } catch {
       Write-Host "[!] DirectML install failed. Falling back to CPU build…" -ForegroundColor Yellow
+    }
+  }
+
+  if ($gpu -eq 'xpu') {
+    Write-Host "[i] Installing PyTorch + Intel Extension for PyTorch (XPU)…"
+    try {
+      & $pipPath install --upgrade pip wheel setuptools | Out-Null
+      # CPU PyTorch first
+      & $pipPath install torch --index-url https://download.pytorch.org/whl/cpu
+      # Then Intel Extension
+      & $pipPath install intel-extension-for-pytorch
+      
+      $code = "import torch; xpu_ok = hasattr(torch, 'xpu') and torch.xpu.is_available(); print({'torch': torch.__version__, 'xpu_available': xpu_ok, 'xpu_device_count': torch.xpu.device_count() if xpu_ok else 0})"
+      $res = & $pythonPath -c $code
+      Write-Host "[+] PyTorch installed with Intel XPU support. Probe: $res" -ForegroundColor Green
+      $script:PyTorchBuild = 'xpu'
+      return
+    } catch {
+      Write-Host "[!] Intel XPU install failed. Falling back to DirectML…" -ForegroundColor Yellow
+      # Try DirectML as fallback for Intel GPUs on Windows
+      try {
+        & $pipPath install torch-directml
+        $code = "import importlib, torch; ok = importlib.util.find_spec('torch_directml') is not None; print({'torch': torch.__version__, 'dml_available': ok})"
+        $res = & $pythonPath -c $code
+        Write-Host "[+] Fallback: PyTorch installed with DirectML. Probe: $res" -ForegroundColor Green
+        $script:PyTorchBuild = 'dml'
+        return
+      } catch {
+        Write-Host "[!] DirectML fallback also failed. Using CPU build…" -ForegroundColor Yellow
+      }
     }
   }
 

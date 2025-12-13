@@ -60,52 +60,118 @@ class TrainingOptimizer:
         
     def detect_available_vram(self) -> Tuple[float, List[Dict[str, Any]]]:
         """
-        Detect available VRAM across all GPUs.
+        Detect available VRAM across all GPUs (CUDA, XPU).
         
         Returns:
-            (total_vram_gb, list of GPU info dicts)
+            (total_vram_gb, list of GPU info dicts with keys:
+             id, backend, name, total_gb, allocated_gb, reserved_gb, available_gb, vendor)
         """
-        if not torch.cuda.is_available():
-            logger.info("CUDA not available, no GPUs detected")
-            return 0.0, []
+        from aios.core.gpu_vendor import identify_gpu_vendor
         
-        num_gpus = torch.cuda.device_count()
-        logger.info(f"Detecting VRAM across {num_gpus} GPU(s)...")
-        
-        gpus = []
+        gpus: List[Dict[str, Any]] = []
         total_vram = 0.0
         
-        for gpu_id in range(num_gpus):
-            props = torch.cuda.get_device_properties(gpu_id)
-            total_gb = props.total_memory / (1024 ** 3)
+        # Check for ROCm build
+        rocm = False
+        try:
+            rocm = bool(getattr(torch.version, "hip", None))
+        except Exception:
+            pass
+        
+        # Detect CUDA devices (NVIDIA + AMD ROCm)
+        if torch.cuda.is_available():
+            num_gpus = torch.cuda.device_count()
+            logger.info(f"Detecting VRAM across {num_gpus} CUDA GPU(s)...")
             
-            # Get current allocation
-            torch.cuda.set_device(gpu_id)
-            torch.cuda.empty_cache()
-            gc.collect()
-            
-            allocated_gb = torch.cuda.memory_allocated(gpu_id) / (1024 ** 3)
-            reserved_gb = torch.cuda.memory_reserved(gpu_id) / (1024 ** 3)
-            available_gb = total_gb - reserved_gb
-            
-            gpu_info = {
-                "id": gpu_id,
-                "name": props.name,
-                "total_gb": total_gb,
-                "allocated_gb": allocated_gb,
-                "reserved_gb": reserved_gb,
-                "available_gb": available_gb,
-            }
-            
-            logger.info(
-                f"GPU {gpu_id}: {props.name}, "
-                f"Total: {total_gb:.1f} GB, "
-                f"Available: {available_gb:.1f} GB, "
-                f"Allocated: {allocated_gb:.1f} GB"
-            )
-            
-            gpus.append(gpu_info)
-            total_vram += total_gb
+            for gpu_id in range(num_gpus):
+                try:
+                    props = torch.cuda.get_device_properties(gpu_id)
+                    total_gb = props.total_memory / (1024 ** 3)
+                    
+                    # Get current allocation
+                    torch.cuda.set_device(gpu_id)
+                    torch.cuda.empty_cache()
+                    gc.collect()
+                    
+                    allocated_gb = torch.cuda.memory_allocated(gpu_id) / (1024 ** 3)
+                    reserved_gb = torch.cuda.memory_reserved(gpu_id) / (1024 ** 3)
+                    available_gb = total_gb - reserved_gb
+                    
+                    vendor = identify_gpu_vendor(props.name, check_rocm=rocm)
+                    
+                    gpu_info = {
+                        "id": gpu_id,
+                        "backend": "cuda",
+                        "name": props.name,
+                        "vendor": vendor,
+                        "total_gb": total_gb,
+                        "allocated_gb": allocated_gb,
+                        "reserved_gb": reserved_gb,
+                        "available_gb": available_gb,
+                    }
+                    
+                    logger.info(
+                        f"[{vendor}] GPU {gpu_id}: {props.name}, "
+                        f"Total: {total_gb:.1f} GB, "
+                        f"Available: {available_gb:.1f} GB, "
+                        f"Allocated: {allocated_gb:.1f} GB"
+                    )
+                    
+                    gpus.append(gpu_info)
+                    total_vram += total_gb
+                except Exception as e:
+                    logger.warning(f"Failed to get CUDA device {gpu_id} properties: {e}")
+        
+        # Detect Intel XPU devices
+        try:
+            if hasattr(torch, "xpu") and torch.xpu.is_available():
+                xpu_count = torch.xpu.device_count()
+                logger.info(f"Detecting VRAM across {xpu_count} Intel XPU device(s)...")
+                
+                for xpu_id in range(xpu_count):
+                    try:
+                        props = torch.xpu.get_device_properties(xpu_id)
+                        total_gb = getattr(props, "total_memory", 0) / (1024 ** 3)
+                        
+                        # XPU memory info
+                        try:
+                            free_mem, total_mem = torch.xpu.mem_get_info(xpu_id)
+                            available_gb = free_mem / (1024 ** 3)
+                            reserved_gb = (total_mem - free_mem) / (1024 ** 3)
+                        except Exception:
+                            available_gb = total_gb * 0.9  # Estimate 90% available
+                            reserved_gb = total_gb * 0.1
+                        
+                        gpu_info = {
+                            "id": len(gpus),  # Global ID across all backends
+                            "backend": "xpu",
+                            "name": getattr(props, "name", f"Intel XPU {xpu_id}"),
+                            "vendor": "Intel",
+                            "total_gb": total_gb,
+                            "allocated_gb": 0.0,  # Not available via public API
+                            "reserved_gb": reserved_gb,
+                            "available_gb": available_gb,
+                        }
+                        
+                        logger.info(
+                            f"[Intel] XPU {xpu_id}: {gpu_info['name']}, "
+                            f"Total: {total_gb:.1f} GB, "
+                            f"Available: {available_gb:.1f} GB"
+                        )
+                        
+                        gpus.append(gpu_info)
+                        total_vram += total_gb
+                    except Exception as e:
+                        logger.warning(f"Failed to get XPU device {xpu_id} properties: {e}")
+        except ImportError:
+            # intel-extension-for-pytorch not installed
+            pass
+        except Exception as e:
+            logger.debug(f"XPU detection warning: {e}")
+        
+        if not gpus:
+            logger.info("No GPUs detected (CUDA or XPU)")
+            return 0.0, []
         
         logger.info(f"Total VRAM across all GPUs: {total_vram:.1f} GB")
         return total_vram, gpus

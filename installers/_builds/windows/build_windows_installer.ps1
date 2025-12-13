@@ -1,6 +1,7 @@
 #!/usr/bin/env pwsh
 param(
 	[string]$Version,
+	[string]$Suffix,
 	[switch]$KeepBuild
 )
 
@@ -170,7 +171,9 @@ $prunePaths = @(
 	"$stagingDir\.git",
 	"$stagingDir\.github",
 	"$stagingDir\.venv",
-	"$stagingDir\artifacts\evaluation"
+	"$stagingDir\artifacts\evaluation",
+	"$stagingDir\artifacts\diagnostics",
+	"$stagingDir\artifacts\training_datasets"
 )
 
 foreach ($path in $prunePaths) {
@@ -246,6 +249,9 @@ Write-Info "Using Inno Setup compiler at $isccPath"
 
 $appId = '{{C0A4D2C3-4E4C-4E6F-9E52-BAA0C9A0F3F3}}'
 
+# Build output filename with optional suffix
+$outputFilename = if ($Suffix) { "AI-OS-$Version-$Suffix-Setup" } else { "AI-OS-$Version-Setup" }
+
 $issContent = @"
 #define MyAppName "AI-OS"
 #define MyAppVersion "$Version"
@@ -256,6 +262,7 @@ $issContent = @"
 #define RepoRoot "$repoRoot"
 #define CorePayloadBytes $payloadBytes
 #define HostPythonVersion "$hostPythonVersion"
+#define OutputFilename "$outputFilename"
 
 [Setup]
 AppId=$appId
@@ -267,7 +274,7 @@ DefaultGroupName=AI-OS
 DisableProgramGroupPage=yes
 UninstallDisplayIcon={app}\installers\AI-OS.ico
 OutputDir={#OutputRoot}
-OutputBaseFilename=AI-OS-{#MyAppVersion}-Setup
+OutputBaseFilename={#OutputFilename}
 SetupIconFile={#RepoRoot}\installers\AI-OS.ico
 Compression=lzma2/ultra64
 SolidCompression=yes

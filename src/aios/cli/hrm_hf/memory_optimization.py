@@ -11,6 +11,8 @@ if TYPE_CHECKING:
 def detect_available_vram(log_fn) -> float:
     """Detect available VRAM for optimal chunk sizing.
     
+    Supports both CUDA (NVIDIA/AMD ROCm) and Intel XPU devices.
+    
     Args:
         log_fn: Logging function
         
@@ -18,19 +20,60 @@ def detect_available_vram(log_fn) -> float:
         Available VRAM in GB
     """
     available_vram_gb = 20.0  # Conservative default
+    backend_used = "default"
     
     try:
+        # Check CUDA devices first (NVIDIA + AMD ROCm)
         if torch.cuda.is_available():
-            # Get total VRAM and subtract for overhead and optimizer
             total_vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
-            # Reserve 20% for overhead, optimizer states, and fragmentation
-            available_vram_gb = total_vram_gb * 0.70  # Use 70% of total
+            # Reserve 30% for overhead, optimizer states, and fragmentation
+            available_vram_gb = total_vram_gb * 0.70
+            backend_used = "cuda"
+            
+            # Check for ROCm build (AMD)
+            rocm = bool(getattr(torch.version, "hip", None))
+            
             log_fn({
                 "vram_detection": {
+                    "backend": "cuda" if not rocm else "rocm",
                     "total_gb": round(total_vram_gb, 2),
                     "available_for_model_gb": round(available_vram_gb, 2),
                     "note": "70% of total VRAM allocated for model, 30% for overhead"
                 }
+            })
+        # Check Intel XPU devices
+        elif hasattr(torch, "xpu") and torch.xpu.is_available():
+            try:
+                props = torch.xpu.get_device_properties(0)
+                total_vram_gb = getattr(props, "total_memory", 0) / (1024 ** 3)
+                
+                # Try to get actual available memory
+                try:
+                    free_mem, _ = torch.xpu.mem_get_info(0)
+                    available_vram_gb = (free_mem / (1024 ** 3)) * 0.85  # 85% of free
+                except Exception:
+                    available_vram_gb = total_vram_gb * 0.70
+                
+                backend_used = "xpu"
+                log_fn({
+                    "vram_detection": {
+                        "backend": "xpu",
+                        "total_gb": round(total_vram_gb, 2),
+                        "available_for_model_gb": round(available_vram_gb, 2),
+                        "note": "Intel XPU device detected"
+                    }
+                })
+            except Exception as e:
+                log_fn({
+                    "vram_detection": "xpu_failed",
+                    "using_default": 20.0,
+                    "error": str(e)
+                })
+        else:
+            log_fn({
+                "vram_detection": "no_gpu",
+                "using_default": available_vram_gb,
+                "note": "No CUDA or XPU devices available"
             })
     except Exception as e:
         log_fn({
