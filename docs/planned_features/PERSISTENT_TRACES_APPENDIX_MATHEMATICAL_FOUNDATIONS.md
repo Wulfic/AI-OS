@@ -1,4 +1,4 @@
-# Persistent Traces & Semantic Crystallization: Mathematical Foundations
+# Mathematical Foundations
 
 **Companion Document to**: `PERSISTENT_TRACES_SEMANTIC_CRYSTALLIZATION.md`  
 **Status**: Theoretical Analysis  

@@ -1,4 +1,4 @@
-# Parallel Training Block/Chunk Distribution System
+# Parallel Training Data Distribution
 
 Canonical source for how we stream and distribute data across GPUs without duplication. For the per-run chunk knob, see CONFIGURABLE_DATASET_CHUNK_SIZE.md.
 

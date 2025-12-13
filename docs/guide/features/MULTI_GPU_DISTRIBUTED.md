@@ -1,4 +1,4 @@
-# Multi-GPU & Distributed
+# Multi-GPU and Distributed Training
 Generated: December 12, 2025
 Purpose: How to use multiple GPUs with AI-OS training (DDP and Windows-compatible parallel mode)
 Status: DDP supported via launcher or internal spawn; Windows defaults to parallel-independent mode. DeepSpeed flags exist but engine wiring is limited.

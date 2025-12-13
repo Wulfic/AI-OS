@@ -1,4 +1,4 @@
-# Integration Timeline Summary
+# Feature Integration Timeline
 ## Vector Stores (PF-005) + Persistent Traces/Crystallization
 
 **Created**: December 8, 2025  

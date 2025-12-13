@@ -1,4 +1,4 @@
-# SEAL Integration Implementation Plan
+# Self-Adapting Language Models (SEAL)
 **AI-OS Enhancement: Self-Adapting Language Models**
 
 **Document Version**: 1.0  

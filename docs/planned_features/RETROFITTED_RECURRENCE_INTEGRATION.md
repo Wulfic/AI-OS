@@ -1,4 +1,4 @@
-# Retrofitted Recurrence Integration Plan
+# Retrofitted Recurrence
 
 Status: Planning
 Date: November 15, 2025

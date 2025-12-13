@@ -1,4 +1,4 @@
-# Flash Attention 2: Window Size Guide
+# Flash Attention 2 Window Size Guide
 
 This feature can be toggled via the training CLI or GUI:
 - CLI: enable optimized kernels (if available) and optionally set a sliding window:

@@ -1,4 +1,4 @@
-# MoE-Lightning Integration Plan
+# MoE-Lightning Integration
 
 ## Overview
 

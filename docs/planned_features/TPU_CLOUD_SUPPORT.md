@@ -1,4 +1,4 @@
-# TPU and Cloud Accelerator Support
+# TPU and Cloud Support
 
 **Status:** 📋 Planned  
 **Priority:** High (Option A: Google Cloud TPU first)  

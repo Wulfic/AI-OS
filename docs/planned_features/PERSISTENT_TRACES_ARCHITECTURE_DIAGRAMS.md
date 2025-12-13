@@ -1,4 +1,4 @@
-# Persistent Traces & Crystallization: Architecture Diagrams
+# Architecture Diagrams
 
 **Visual Reference for Implementation**  
 **Created**: December 8, 2025

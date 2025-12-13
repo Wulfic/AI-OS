@@ -1,4 +1,4 @@
-# ZeRO-3 Hybrid Parallel Inference Integration Plan
+# ZeRO-3 Hybrid Parallel Inference
 
 ## Executive Summary
 - Deliver a unified inference stack that combines DeepSpeed ZeRO stage 3 inference, tensor parallelism, and pipeline parallelism so the Chat and Evaluation panels can serve and benchmark 70B–1T parameter models on heterogeneous clusters.

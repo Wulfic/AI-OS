@@ -1,4 +1,4 @@
-## PF-005: Data backends and vector stores
+# Data Backends and Vector Stores
 
 This document is a comprehensive design and delivery guide for adding pluggable dataset backends (Hugging Face Datasets streaming, WebDataset shards) and a minimal vector store layer (Qdrant or LanceDB) to enable scalable data ingestion and future retrieval/memory features across CLI and GUI.
 

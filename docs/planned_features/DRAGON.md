@@ -1,4 +1,4 @@
-# DRAGON: Distributed Routing and GPU Open Network
+# DRAGON Network (Distributed Routing and GPU Open Network)
 > Note: Any references to `docs/features/*` are placeholders. Use `docs/INDEX.md` and `docs/guide/` for current documentation.
 
 **Complete Implementation Guide**

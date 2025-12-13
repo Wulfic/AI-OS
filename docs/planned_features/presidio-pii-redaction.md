@@ -1,4 +1,4 @@
-## PF-006: Presidio PII redaction for datasets and logs
+# PII Redaction with Presidio
 
 ### Summary
 

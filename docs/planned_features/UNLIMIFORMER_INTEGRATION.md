@@ -1,4 +1,4 @@
-## Unlimiformer integration for unlimited-length inputs
+# Unlimiformer for Unlimited-Length Inputs
 
 This planned feature proposes integrating Unlimiformer (NeurIPS 2023) into AI‑OS to enable effectively unlimited-length inputs for supported Hugging Face models during evaluation/inference and optionally during training.
 

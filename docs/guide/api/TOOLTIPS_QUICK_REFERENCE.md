@@ -1,4 +1,4 @@
-# Quick Reference: All Tooltip Texts
+# GUI Tooltips Reference
 
 ## Preset Section
 

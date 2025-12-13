@@ -1,4 +1,4 @@
-## PF-003: Serving and inference integration (HRM + baselines)
+# Model Serving and Inference API
 
 ### Summary
 

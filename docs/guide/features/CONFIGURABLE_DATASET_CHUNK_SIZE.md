@@ -1,4 +1,4 @@
-# Configurable Dataset Chunk Size (Sub-topic)
+# Dataset Chunk Size Configuration
 Last Updated: December 12, 2025
 
 Status: Implemented and used by CLI/GUI

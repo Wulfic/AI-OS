@@ -1,4 +1,4 @@
-# PF-020: Settings Auto Updater Integration
+# Auto Updater Settings Integration
 
 **Status**: Planning Phase  
 **Date**: November 16, 2025  

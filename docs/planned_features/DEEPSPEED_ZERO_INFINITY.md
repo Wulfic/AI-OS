@@ -1,4 +1,4 @@
-# DeepSpeed ZeRO-Infinity Integration Plan
+# DeepSpeed ZeRO-Infinity
 
 ## Executive Summary
 

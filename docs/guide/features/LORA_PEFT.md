@@ -1,4 +1,4 @@
-# LoRA/PEFT Comprehensive Analysis for AI-OS
+# LoRA and Parameter-Efficient Fine-Tuning
 
 Note: Canonical source of truth for LoRA/PEFT in AI-OS. Other LoRA/PEFT docs in this folder have been consolidated into this page.
 

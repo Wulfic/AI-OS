@@ -1,4 +1,4 @@
-# Emergent Internal Language: Cognitive Architecture Perspective
+# Cognitive Science Perspective
 
 **Companion Document to**: `PERSISTENT_TRACES_SEMANTIC_CRYSTALLIZATION.md`  
 **Focus**: Cognitive science, emergent symbolic systems, and AI consciousness implications  

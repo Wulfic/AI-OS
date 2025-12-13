@@ -1,4 +1,4 @@
-## PF-001: Preference data via Argilla + TRL (RM/DPO baselines)
+# Preference Alignment with Argilla and TRL
 
 This document is an end-to-end integration guide and checklist for adding an open-source human-feedback workflow powered by Argilla and Hugging Face TRL into AI-OS. It covers the architecture, data flow, CLI and GUI elements, runbooks for Windows/Linux, acceptance criteria, and rollout.
 

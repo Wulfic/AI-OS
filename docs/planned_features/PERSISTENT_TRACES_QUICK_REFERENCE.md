@@ -1,4 +1,4 @@
-# Persistent Traces & Semantic Crystallization: Quick Reference
+# Persistent Traces Quick Reference
 
 **Document Suite**:
 1. **Main Plan**: `PERSISTENT_TRACES_SEMANTIC_CRYSTALLIZATION.md` - Implementation roadmap

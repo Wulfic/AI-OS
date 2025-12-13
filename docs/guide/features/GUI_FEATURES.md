@@ -1,4 +1,4 @@
-# GUI Features (Desktop)
+# Desktop GUI Features
 
 **Last Updated**: December 12, 2025  
 **Purpose**: Visual management for training, brains, chat, datasets, resources, and early Subbrains (experts) administration.

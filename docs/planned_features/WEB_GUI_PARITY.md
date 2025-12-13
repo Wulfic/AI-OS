@@ -1,4 +1,4 @@
-# PF-019: Web GUI Parity Control
+# Web GUI Parity
 
 **Status**: 🟡 Planning Phase  
 **Date**: November 16, 2025  

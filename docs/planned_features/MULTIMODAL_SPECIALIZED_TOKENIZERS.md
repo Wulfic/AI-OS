@@ -1,4 +1,4 @@
-# 🎨 Multimodal & Specialized Tokenizers - Complete Collection
+# Multimodal and Specialized Tokenizers
 
 > ## ⚠️ **CRITICAL NOTICE - NOT YET IMPLEMENTED** ⚠️
 > 

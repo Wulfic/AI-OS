@@ -1,4 +1,4 @@
-# Training Resume UX Enhancement: Always-Show Checkpoint Screen + Start Position Selector
+# Training Resume and Checkpoint Selection
 
 ## Overview
 

@@ -1,4 +1,4 @@
-# Persistent Attention Traces & Semantic Crystallization
+# Semantic Crystallization
 
 **Status**: Research & Planning  
 **Priority**: Experimental / High Scientific Value  

@@ -1,4 +1,4 @@
-# Tools & Integrations
+# Tools and Integrations
 Generated: December 12, 2025
 Purpose: Built-in tools and OS/HF integrations with runnable commands, inputs/outputs, and platform notes
 Status: Implemented (some features are gated/experimental and noted below)

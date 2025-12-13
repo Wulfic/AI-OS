@@ -1,4 +1,4 @@
-# Gradient Accumulation Implementation Plan
+# Gradient Accumulation
 
 **Status**: Planned  
 **Priority**: High  

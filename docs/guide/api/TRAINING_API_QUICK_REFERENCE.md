@@ -1,4 +1,4 @@
-# Quick Reference: New Training API
+# Training API Quick Reference
 
 ## For CLI Users
 
