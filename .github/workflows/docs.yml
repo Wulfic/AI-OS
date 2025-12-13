@@ -109,11 +109,9 @@ jobs:
       
       - name: Prepare docs structure
         run: |
-          # Create index.md from README if it doesn't exist
+          # Always sync index.md from README to keep documentation up to date
           mkdir -p docs
-          if [ ! -f "docs/index.md" ]; then
-            cp README.md docs/index.md
-          fi
+          cp README.md docs/index.md
       
       - name: Build MkDocs site
         run: mkdocs build --strict || mkdocs build
