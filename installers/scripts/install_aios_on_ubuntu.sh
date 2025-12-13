@@ -172,6 +172,19 @@ detect_gpu() {
   log_info "GPU detection: Vendor=$GPU_INFO_VENDOR Model=${GPU_INFO_MODEL:-unknown} NvidiaSmi=$GPU_INFO_HAS_NVIDIA Rocm=$GPU_INFO_HAS_ROCM"
 }
 
+warn_multi_gpu() {
+  # Count how many vendor flags are set
+  local vendor_count=0
+  [[ "$GPU_INFO_HAS_NVIDIA" == "true" ]] && ((vendor_count++))
+  [[ "$GPU_INFO_VENDOR" == "amd" || "$GPU_INFO_HAS_ROCM" == "true" ]] && ((vendor_count++))
+  [[ "$GPU_INFO_VENDOR" == "intel" ]] && ((vendor_count++))
+  
+  if [[ $vendor_count -gt 1 ]]; then
+    log_warn "Multiple GPU vendors detected. Auto-selecting based on priority (NVIDIA > AMD > Intel)."
+    log_warn "To override, rerun with --gpu cuda|rocm|xpu|cpu."
+  fi
+}
+
 ensure_system_packages() {
   log_info "Ensuring base system packages are available..."
   apt_install \
@@ -622,6 +635,7 @@ EOF
 install_aios() {
   log_info "--- Starting AI-OS Ubuntu Installation ---"
   detect_gpu
+  warn_multi_gpu
   ensure_system_packages
   ensure_python
   ensure_git
