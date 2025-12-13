@@ -1,16 +1,16 @@
-# AI-OS v1.0.14
+# AI-OS v1.2.17
 
 [![CI](https://github.com/Wulfic/AI-OS/actions/workflows/ci.yml/badge.svg)](https://github.com/Wulfic/AI-OS/actions/workflows/ci.yml)
 [![Link Check](https://github.com/Wulfic/AI-OS/actions/workflows/link-check.yml/badge.svg)](https://github.com/Wulfic/AI-OS/actions/workflows/link-check.yml)
-[![Version](https://img.shields.io/badge/version-1.0.14-blue.svg)](https://github.com/Wulfic/AI-OS/releases/tag/Official)
-[![License](https://img.shields.io/badge/license-ANSL--v1.0-blue.svg)](LICENSE.md)
+[![Version](https://img.shields.io/badge/version-1.2.17-blue.svg)](https://github.com/Wulfic/AI-OS/releases/tag/Official)
+[![License](https://img.shields.io/badge/license-ANSL--v1.0-blue.svg)](LICENSE)
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/S6S31MS4TK)
 
-# Fancy Documentation: https://wulfic.github.io/AI-OS/
+**📚 [Fancy Documentation](https://wulfic.github.io/AI-OS/) | 💻 [GitHub Repository](https://github.com/Wulfic/AI-OS)**
 
 HRM-sMoE LLM training toolkit with a clean GUI, CLI, and installers. Future-facing architecture for OS-integrated autonomous assistance.
 
-License: AI-OS Non‑Selling Attribution License (ANSL) v1.0. You may use, copy, modify, and redistribute this code, but you may not sell the Software or derivative works. All redistributions must retain attribution and link back to the original repository. See [LICENSE](LICENSE.md) and [NOTICE](https://github.com/Wulfic/AI-OS/blob/main/NOTICE).
+License: AI-OS Non‑Selling Attribution License (ANSL) v1.0. You may use, copy, modify, and redistribute this code, but you may not sell the Software or derivative works. All redistributions must retain attribution and link back to the original repository. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 ## What is AI-OS?
 
@@ -19,7 +19,7 @@ License: AI-OS Non‑Selling Attribution License (ANSL) v1.0. You may use, copy,
 - Bleeding edge technologies, pushing the boundaries of consumer hardware.
 - Tons more features! Check out the Planned_Features section
 
-Key features in v1.0.14:
+Key features in v1.2.17:
 - Windows and Ubuntu Support!
 - Long-context training strategies and memory optimizations 
 - Multi‑GPU training (DDP/Parallel/Sharding)
@@ -35,7 +35,7 @@ The Optional model that ships alongside this program was trained on 2x RTX 2080t
 TLDR; Have a fast ass GPU with lots of VRAM if you're impatient.
 
 ## Minimum Recommended Specs!
-- GPU: 6GB VRAM **NOTE** (Nvidia:Full Support|AMD:UNTESTED|INTEL(ARC):UNTESTED|CPU:Partial Support)
+- GPU: 6GB VRAM **NOTE** (Nvidia:Full Support|AMD:PARTIALLY TESTED|INTEL(ARC):UNTESTED|CPU:Partial Support)
 - System Memory: 16GB
 - CPU: 4 Core
 
@@ -48,7 +48,7 @@ TLDR; Have a fast ass GPU with lots of VRAM if you're impatient.
 ## Quick Install Info
 ### Installers
 Find the official installers also in the [Releases section](https://github.com/Wulfic/AI-OS/releases).
-See the [Installers Documentation](https://github.com/Wulfic/AI-OS/blob/main/installers/README.md) for Windows (.exe) and Ubuntu (.deb) info.
+See the installers README in the repository for Windows (.exe) and Ubuntu (.deb) info.
 If you broke your install or are missing dependencies in terminal use: 
 ```bash
 aios doctor --repair
@@ -94,8 +94,8 @@ aios
 ## Documentation
 
 - Start here: [Guide Index](guide/INDEX.MD)
-- User Guide Overview: [Guide README](guide/README.md)
-- Attributions and upstream projects: [REFERENCES.md](REFERENCES.md)
+- Maintenance and guides: [README](README.md)
+- Attributions and upstream projects: [REFERENCES](REFERENCES.md)
 - One-page Quick Start: [Quick Start Guide](guide/QUICK_START.md)
 
 ## References and third‑party integrations
@@ -108,4 +108,4 @@ Thanks to the open‑source ML community and upstream projects that made this po
 
 ## License
 
-AI‑OS Non‑Selling Attribution License (ANSL) v1.0 — see [LICENSE](LICENSE.md) and [NOTICE](https://github.com/Wulfic/AI-OS/blob/main/NOTICE).
+AI‑OS Non‑Selling Attribution License (ANSL) v1.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
