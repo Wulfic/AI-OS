@@ -48,7 +48,7 @@ TLDR; Have a fast ass GPU with lots of VRAM if you're impatient.
 ## Quick Install Info
 ### Installers
 Find the official installers also in the [Releases section](https://github.com/Wulfic/AI-OS/releases).
-See [installers/README.md](installers/README.md) for Windows (.exe) and Ubuntu (.deb) info.
+See the installers README in the repository for Windows (.exe) and Ubuntu (.deb) info.
 If you broke your install or are missing dependencies in terminal use: 
 ```bash
 aios doctor --repair
@@ -93,10 +93,10 @@ aios
 ```
 ## Documentation
 
-- Start here: [Guide Index](docs/guide/INDEX.MD)
-- Maintenance and guides: [docs/README.md](docs/README.md)
-- Attributions and upstream projects: [REFERENCES.md](REFERENCES.md)
-- One-page Quick Start: [Quick Start Guide](docs/guide/QUICK_START.md)
+- Start here: [Guide Index](guide/INDEX.MD)
+- Maintenance and guides: [README](README.md)
+- Attributions and upstream projects: [REFERENCES](REFERENCES.md)
+- One-page Quick Start: [Quick Start Guide](guide/QUICK_START.md)
 
 ## References and third‑party integrations
 
