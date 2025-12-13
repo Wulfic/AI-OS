@@ -2,11 +2,15 @@ param(
   [ValidateSet('install','uninstall','preflight')]
   [string]$Action = 'install',
   [switch]$Yes,
-  # GPU preference: auto (detect), cuda, dml, cpu
-  [ValidateSet('auto','cuda','dml','cpu')]
+  # GPU preference: auto (detect), cuda, rocm (AMD), xpu (Intel), dml (DirectML), cpu
+  [ValidateSet('auto','cuda','rocm','xpu','dml','cpu')]
   [string]$Gpu = 'auto',
   # Force installation of CUDA tools even if no NVIDIA GPU is detected
   [switch]$InstallCudaTools,
+  # Force installation of Intel Extension for PyTorch (XPU) for Intel GPUs
+  [switch]$InstallIntelXpu,
+  # Force installation of AMD DirectML for AMD GPUs
+  [switch]$InstallAmdDml,
   # Skip automatic installation of Python
   [switch]$SkipPythonInstall,
   # Skip automatic installation of Git
@@ -88,6 +92,18 @@ if ($InstallCudaTools) {
     if ($script:DesktopLogInitialized) { Add-Content -Path $script:DesktopLogPath -Value "[i] Forcing CUDA installation as requested." -Encoding UTF8 }
     Write-Host "[i] Forcing CUDA installation as requested." -ForegroundColor Cyan
     $Gpu = 'cuda'
+}
+
+if ($InstallIntelXpu) {
+    if ($script:DesktopLogInitialized) { Add-Content -Path $script:DesktopLogPath -Value "[i] Forcing Intel XPU installation as requested." -Encoding UTF8 }
+    Write-Host "[i] Forcing Intel XPU (Extension for PyTorch) installation as requested." -ForegroundColor Cyan
+    $Gpu = 'xpu'
+}
+
+if ($InstallAmdDml) {
+    if ($script:DesktopLogInitialized) { Add-Content -Path $script:DesktopLogPath -Value "[i] Forcing AMD DirectML installation as requested." -Encoding UTF8 }
+    Write-Host "[i] Forcing AMD DirectML installation as requested." -ForegroundColor Cyan
+    $Gpu = 'dml'
 }
 
 function Resolve-RepoRoot {
@@ -249,15 +265,35 @@ function Confirm-Choice($Message, [switch]$DefaultYes) {
 
 # GPU / PyTorch helpers
 function Get-GpuInfo() {
-  $info = @{ Vendor = 'Unknown'; Model = ''; HasNvidia = $false; NvidiaSmi = $false }
+  $info = @{ 
+    Vendor = 'Unknown'
+    Model = ''
+    HasNvidia = $false
+    HasAmd = $false
+    HasIntel = $false
+    NvidiaSmi = $false 
+  }
+  
   try {
     $gpus = Get-CimInstance Win32_VideoController | Select-Object -Property Name, AdapterCompatibility
     foreach ($g in $gpus) {
       $vendor = [string]$g.AdapterCompatibility
-      if ($vendor -match 'NVIDIA') {
-        $info.Vendor = 'NVIDIA'; $info.Model = [string]$g.Name; $info.HasNvidia = $true
-      } elseif ($info.Vendor -eq 'Unknown') {
-        $info.Vendor = $vendor; $info.Model = [string]$g.Name
+      $model = [string]$g.Name
+      
+      if ($vendor -match 'NVIDIA' -or $model -match 'NVIDIA|GeForce|RTX|GTX') {
+        $info.HasNvidia = $true
+        if ($info.Vendor -eq 'Unknown') { $info.Vendor = 'NVIDIA'; $info.Model = $model }
+      }
+      elseif ($vendor -match 'AMD' -or $model -match 'AMD|Radeon|RX') {
+        $info.HasAmd = $true
+        if ($info.Vendor -eq 'Unknown') { $info.Vendor = 'AMD'; $info.Model = $model }
+      }
+      elseif ($vendor -match 'Intel' -or $model -match 'Intel.*Arc|Intel.*Xe|Arc A') {
+        $info.HasIntel = $true
+        if ($info.Vendor -eq 'Unknown') { $info.Vendor = 'Intel'; $info.Model = $model }
+      }
+      elseif ($info.Vendor -eq 'Unknown') {
+        $info.Vendor = $vendor; $info.Model = $model
       }
     }
   } catch {}
@@ -269,11 +305,31 @@ function Install-PyTorch([string]$pipPath, [string]$pythonPath, [string]$GpuPref
   $script:PyTorchBuild = 'cpu'
   $gpu = $GpuPref
   $gpuInfo = Get-GpuInfo
-  Write-Host ("[i] GPU detection: Vendor={0} Model={1} NvidiaSmi={2}" -f $gpuInfo.Vendor, $gpuInfo.Model, $gpuInfo.NvidiaSmi)
+  Write-Host ("[i] GPU detection: Vendor={0} Model={1}" -f $gpuInfo.Vendor, $gpuInfo.Model)
+  Write-Host ("[i] GPUs detected: NVIDIA={0} AMD={1} Intel={2}" -f $gpuInfo.HasNvidia, $gpuInfo.HasAmd, $gpuInfo.HasIntel)
+
+  # Warn if multiple GPU vendors detected
+  $vendorCount = @($gpuInfo.HasNvidia, $gpuInfo.HasAmd, $gpuInfo.HasIntel) | Where-Object { $_ -eq $true } | Measure-Object | Select-Object -ExpandProperty Count
+  if ($vendorCount -gt 1) {
+    Write-Host "[!] Multiple GPU vendors detected. Auto-selecting based on priority (NVIDIA > AMD > Intel)." -ForegroundColor Yellow
+    Write-Host "    To override, rerun installer with Advanced options or use -InstallCudaTools/-InstallIntelXpu/-InstallAmdDml." -ForegroundColor Yellow
+  }
 
   if ($gpu -eq 'auto') {
-    if ($gpuInfo.HasNvidia) { $gpu = 'cuda' }
-    else { $gpu = 'cpu' }
+    if ($gpuInfo.HasNvidia) { 
+      $gpu = 'cuda' 
+    }
+    elseif ($gpuInfo.HasAmd) {
+      # ROCm on Windows is experimental, use DirectML as safer option
+      Write-Host "[i] AMD GPU detected. Using DirectML (stable) instead of ROCm (experimental on Windows)."
+      $gpu = 'dml'
+    }
+    elseif ($gpuInfo.HasIntel) {
+      $gpu = 'xpu'
+    }
+    else { 
+      $gpu = 'cpu' 
+    }
   }
 
   if ($gpu -eq 'cuda') {
@@ -303,6 +359,24 @@ function Install-PyTorch([string]$pipPath, [string]$pythonPath, [string]$GpuPref
     }
   }
 
+  if ($gpu -eq 'rocm') {
+    Write-Host "[i] Installing PyTorch with ROCm support (AMD GPUs)…"
+    Write-Host "[!] Note: ROCm on Windows is experimental" -ForegroundColor Yellow
+    try {
+      & $pipPath install --upgrade pip wheel setuptools | Out-Null
+      # ROCm 6.0 for Windows (if available)
+      & $pipPath install torch --index-url https://download.pytorch.org/whl/rocm6.0
+      $code = "import torch; rocm_ok = hasattr(torch.version, 'hip') and torch.version.hip is not None; print({'torch': torch.__version__, 'rocm': rocm_ok, 'cuda_available': torch.cuda.is_available()})"
+      $res = & $pythonPath -c $code
+      Write-Host "[+] PyTorch installed with ROCm support. Probe: $res" -ForegroundColor Green
+      $script:PyTorchBuild = 'rocm'
+      return
+    } catch {
+      Write-Host "[!] ROCm install failed. Falling back to DirectML…" -ForegroundColor Yellow
+      $gpu = 'dml'
+    }
+  }
+
   if ($gpu -eq 'dml') {
     Write-Host "[i] Installing PyTorch (CPU) + torch-directml…"
     try {
@@ -316,6 +390,36 @@ function Install-PyTorch([string]$pipPath, [string]$pythonPath, [string]$GpuPref
       return
     } catch {
       Write-Host "[!] DirectML install failed. Falling back to CPU build…" -ForegroundColor Yellow
+    }
+  }
+
+  if ($gpu -eq 'xpu') {
+    Write-Host "[i] Installing PyTorch + Intel Extension for PyTorch (XPU)…"
+    try {
+      & $pipPath install --upgrade pip wheel setuptools | Out-Null
+      # CPU PyTorch first
+      & $pipPath install torch --index-url https://download.pytorch.org/whl/cpu
+      # Then Intel Extension
+      & $pipPath install intel-extension-for-pytorch
+      
+      $code = "import torch; xpu_ok = hasattr(torch, 'xpu') and torch.xpu.is_available(); print({'torch': torch.__version__, 'xpu_available': xpu_ok, 'xpu_device_count': torch.xpu.device_count() if xpu_ok else 0})"
+      $res = & $pythonPath -c $code
+      Write-Host "[+] PyTorch installed with Intel XPU support. Probe: $res" -ForegroundColor Green
+      $script:PyTorchBuild = 'xpu'
+      return
+    } catch {
+      Write-Host "[!] Intel XPU install failed. Falling back to DirectML…" -ForegroundColor Yellow
+      # Try DirectML as fallback for Intel GPUs on Windows
+      try {
+        & $pipPath install torch-directml
+        $code = "import importlib, torch; ok = importlib.util.find_spec('torch_directml') is not None; print({'torch': torch.__version__, 'dml_available': ok})"
+        $res = & $pythonPath -c $code
+        Write-Host "[+] Fallback: PyTorch installed with DirectML. Probe: $res" -ForegroundColor Green
+        $script:PyTorchBuild = 'dml'
+        return
+      } catch {
+        Write-Host "[!] DirectML fallback also failed. Using CPU build…" -ForegroundColor Yellow
+      }
     }
   }
 
@@ -394,13 +498,40 @@ function Install-FlashAttentionWheel([string]$pipPath, [string]$pythonPath, [swi
     $parts = $torchInfo.Split('|')
     $torchVer = $parts[0]
     $cudaVer = $parts[1] -replace '\.', ''
-    $wheelName = "flash_attn-2.7.4+cu${cudaVer}torch${torchVer}cxx11abiFALSE-cp${pyVer}-cp${pyVer}-win_amd64.whl"
-    $wheelUrl = "https://huggingface.co/lldacing/flash-attention-windows-wheel/resolve/main/$wheelName"
-    $wheelPath = Join-Path $env:TEMP $wheelName
-    if (-not $Quiet) {
-      Write-Host "[i] Downloading FlashAttention wheel: $wheelName"
+    
+    # Try exact CUDA version first, then fall back to cu124 (most common available wheel)
+    $cudaVersionsToTry = @($cudaVer, '124')
+    $wheelPath = $null
+    $wheelName = $null
+    $downloadSuccess = $false
+    
+    foreach ($cudaVersion in $cudaVersionsToTry) {
+      if ($downloadSuccess) { break }
+      $wheelName = "flash_attn-2.7.4+cu${cudaVersion}torch${torchVer}cxx11abiFALSE-cp${pyVer}-cp${pyVer}-win_amd64.whl"
+      $wheelUrl = "https://huggingface.co/lldacing/flash-attention-windows-wheel/resolve/main/$wheelName"
+      $wheelPath = Join-Path $env:TEMP $wheelName
+      if (-not $Quiet) {
+        Write-Host "[i] Trying FlashAttention wheel: $wheelName"
+      }
+      try {
+        $response = Invoke-WebRequest -Uri $wheelUrl -OutFile $wheelPath -UseBasicParsing -PassThru -ErrorAction Stop
+        if (Test-Path -LiteralPath $wheelPath) {
+          $downloadSuccess = $true
+          if (-not $Quiet -and $cudaVersion -ne $cudaVer) {
+            Write-Host "[i] Using cu${cudaVersion} wheel (cu${cudaVer} not available)" -ForegroundColor Yellow
+          }
+        }
+      } catch {
+        if (-not $Quiet) {
+          Write-Host "[i] Wheel cu${cudaVersion} not available, trying next..." -ForegroundColor Gray
+        }
+        Remove-Item -Path $wheelPath -Force -ErrorAction SilentlyContinue
+      }
     }
-    Invoke-WebRequest -Uri $wheelUrl -OutFile $wheelPath -UseBasicParsing
+    
+    if (-not $downloadSuccess) {
+      throw "No compatible FlashAttention wheel found for torch${torchVer} (tried cu${cudaVer}, cu124)"
+    }
     & $pipPath install $wheelPath | Out-Null
     $verify = & $pythonPath -c "from flash_attn import flash_attn_func; import flash_attn; print(f'FlashAttention {flash_attn.__version__} installed!')" 2>&1
     if (-not $Quiet) {
@@ -1543,21 +1674,138 @@ function Install-Aios() {
   }
 
   Write-Host "[i] Installing AI-OS with UI/HF extras (includes tkinterweb for Help rendering)..."
+  Write-Host "[i] Repository root: $repoRoot"
+  
+  # Verify pyproject.toml exists before attempting install
+  $pyprojectPath = Join-Path $repoRoot 'pyproject.toml'
+  if (-not (Test-Path $pyprojectPath)) {
+    Write-Host "[!] pyproject.toml not found at: $pyprojectPath" -ForegroundColor Red
+    throw "Cannot find pyproject.toml - installation files may be incomplete"
+  }
+  Write-Host "[i] Found pyproject.toml at: $pyprojectPath"
+  
   Push-Location $repoRoot
   try {
-    & $pipPath install -e ".[ui,hf]"
+    Write-Host "[i] Running: pip install -e `".[ui,hf]`""
+    
+    # Use Start-Process to capture output more reliably on Windows
+    $tempStdout = [System.IO.Path]::GetTempFileName()
+    $tempStderr = [System.IO.Path]::GetTempFileName()
+    
+    $pipProcess = Start-Process -FilePath $pipPath -ArgumentList 'install', '-e', '.[ui,hf]' -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempStdout -RedirectStandardError $tempStderr
+    $pipExitCode = $pipProcess.ExitCode
+    
+    $stdoutContent = if (Test-Path $tempStdout) { Get-Content $tempStdout -Raw -ErrorAction SilentlyContinue } else { "" }
+    $stderrContent = if (Test-Path $tempStderr) { Get-Content $tempStderr -Raw -ErrorAction SilentlyContinue } else { "" }
+    
+    # Clean up temp files
+    Remove-Item $tempStdout -Force -ErrorAction SilentlyContinue
+    Remove-Item $tempStderr -Force -ErrorAction SilentlyContinue
+    
+    if ($pipExitCode -ne 0) {
+      Write-Host "[!] pip install failed with exit code $pipExitCode" -ForegroundColor Red
+      if ($stdoutContent) {
+        Write-Host "[!] pip stdout:" -ForegroundColor Red
+        $stdoutContent -split "`n" | Select-Object -Last 30 | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+      }
+      if ($stderrContent) {
+        Write-Host "[!] pip stderr:" -ForegroundColor Red
+        $stderrContent -split "`n" | Select-Object -Last 30 | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+      }
+      # Extract the actual error for the exception message
+      $errorLines = @()
+      if ($stderrContent) { $errorLines += ($stderrContent -split "`n" | Where-Object { $_ -match 'ERROR|error:|Could not|No matching' } | Select-Object -Last 3) }
+      if ($stdoutContent) { $errorLines += ($stdoutContent -split "`n" | Where-Object { $_ -match 'ERROR|error:|Could not|No matching' } | Select-Object -Last 3) }
+      $errorSummary = if ($errorLines.Count -gt 0) { $errorLines -join " | " } else { "pip exit code: $pipExitCode" }
+      throw "Failed to install AI-OS dependencies: $errorSummary"
+    }
+    Write-Host "[+] AI-OS package installed successfully" -ForegroundColor Green
   } catch {
-    Write-Host "[!] install -e '.[ui,hf]' failed: $_" -ForegroundColor Red
+    Write-Host "[!] install -e '.[ui,hf]' failed: $($_.Exception.Message)" -ForegroundColor Red
     throw "Failed to install AI-OS dependencies."
   } finally {
     Pop-Location
   }
+  
+  # Verify the aios module is importable
+  Write-Host "[i] Verifying aios module installation..."
+  try {
+    # Use a temp file for the verification script to avoid quote escaping issues
+    $verifyScript = [System.IO.Path]::GetTempFileName() -replace '\.tmp$', '.py'
+    $verifyStdout = [System.IO.Path]::GetTempFileName()
+    $verifyStderr = [System.IO.Path]::GetTempFileName()
+    
+    # Write a simple verification script
+    @"
+import sys
+try:
+    import aios
+    version = getattr(aios, '__version__', 'installed')
+    print(f'aios version: {version}')
+    sys.exit(0)
+except Exception as e:
+    import traceback
+    print(f'Import failed: {e}', file=sys.stderr)
+    traceback.print_exc(file=sys.stderr)
+    sys.exit(1)
+"@ | Out-File -FilePath $verifyScript -Encoding utf8
+    
+    $verifyProcess = Start-Process -FilePath $pythonPath -ArgumentList $verifyScript -NoNewWindow -Wait -PassThru -RedirectStandardOutput $verifyStdout -RedirectStandardError $verifyStderr
+    
+    $verifyOutContent = if (Test-Path $verifyStdout) { Get-Content $verifyStdout -Raw } else { "" }
+    $verifyErrContent = if (Test-Path $verifyStderr) { Get-Content $verifyStderr -Raw } else { "" }
+    
+    # Clean up temp files
+    Remove-Item -Path $verifyScript -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $verifyStdout -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $verifyStderr -Force -ErrorAction SilentlyContinue
+    
+    if ($verifyProcess.ExitCode -ne 0) {
+      Write-Host "[!] aios module verification failed (exit code $($verifyProcess.ExitCode)):" -ForegroundColor Red
+      if ($verifyOutContent) {
+        Write-Host "    Stdout: $verifyOutContent" -ForegroundColor Red
+      }
+      if ($verifyErrContent) {
+        Write-Host "    Error details:" -ForegroundColor Red
+        $verifyErrContent -split "`n" | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+      }
+      throw "aios module not properly installed"
+    }
+    Write-Host "[+] $($verifyOutContent.Trim())" -ForegroundColor Green
+  } catch {
+    Write-Host "[!] Failed to verify aios installation: $_" -ForegroundColor Red
+    throw "aios module installation verification failed"
+  }
 
   Write-Host "[i] Ensuring httpx is available (dataset panel dependency)..."
-  & $pipPath install --upgrade "httpx>=0.27"
+  try {
+    $httpxStdout = [System.IO.Path]::GetTempFileName()
+    $httpxStderr = [System.IO.Path]::GetTempFileName()
+    $httpxProc = Start-Process -FilePath $pipPath -ArgumentList 'install', '--upgrade', 'httpx>=0.27' -NoNewWindow -Wait -PassThru -RedirectStandardOutput $httpxStdout -RedirectStandardError $httpxStderr
+    Remove-Item -Path $httpxStdout, $httpxStderr -Force -ErrorAction SilentlyContinue
+    if ($httpxProc.ExitCode -eq 0) {
+      Write-Host "[+] httpx installed successfully" -ForegroundColor Green
+    } else {
+      Write-Host "[!] httpx installation returned exit code $($httpxProc.ExitCode) (non-critical)" -ForegroundColor Yellow
+    }
+  } catch {
+    Write-Host "[!] httpx installation failed (non-critical): $_" -ForegroundColor Yellow
+  }
   
   Write-Host "[i] Ensuring Ruff linter is available for developer tooling..."
-  & $pipPath install --upgrade "ruff>=0.4.0"
+  try {
+    $ruffStdout = [System.IO.Path]::GetTempFileName()
+    $ruffStderr = [System.IO.Path]::GetTempFileName()
+    $ruffProc = Start-Process -FilePath $pipPath -ArgumentList 'install', '--upgrade', 'ruff>=0.4.0' -NoNewWindow -Wait -PassThru -RedirectStandardOutput $ruffStdout -RedirectStandardError $ruffStderr
+    Remove-Item -Path $ruffStdout, $ruffStderr -Force -ErrorAction SilentlyContinue
+    if ($ruffProc.ExitCode -eq 0) {
+      Write-Host "[+] Ruff installed successfully" -ForegroundColor Green
+    } else {
+      Write-Host "[!] Ruff installation returned exit code $($ruffProc.ExitCode) (non-critical)" -ForegroundColor Yellow
+    }
+  } catch {
+    Write-Host "[!] Ruff installation failed (non-critical): $_" -ForegroundColor Yellow
+  }
 
   if ($script:PyTorchBuild -eq 'cuda') {
     Install-FlashAttentionWheel -pipPath $pipPath -pythonPath $pythonPath | Out-Null
@@ -1565,10 +1813,29 @@ function Install-Aios() {
     Write-Host "[i] Skipping FlashAttention (CUDA GPU required for extreme context support)" -ForegroundColor Gray
   }
 
-  Write-Host "[i] Installing Playwright browser (chromium)..."
-  $playwrightPath = Join-Path (Join-Path $venvPath "Scripts") "playwright.exe"
-  # install-deps is for Linux; skip on Windows to avoid errors
-  & $playwrightPath install chromium
+  # Playwright browser installation (optional - for web scraping features)
+  # Wrapped in outer try/catch to handle any edge cases with command resolution
+  try {
+    Write-Host "[i] Installing Playwright browser (chromium)..."
+    $playwrightPath = Join-Path (Join-Path $venvPath "Scripts") "playwright.exe"
+    if (Test-Path -LiteralPath $playwrightPath) {
+      try {
+        # Use Start-Process to avoid PowerShell command resolution issues
+        $playwrightResult = Start-Process -FilePath $playwrightPath -ArgumentList "install", "chromium" -Wait -NoNewWindow -PassThru -ErrorAction Stop
+        if ($playwrightResult.ExitCode -eq 0) {
+          Write-Host "[+] Playwright chromium installed successfully" -ForegroundColor Green
+        } else {
+          Write-Host "[!] Playwright browser installation returned exit code $($playwrightResult.ExitCode) (non-critical)" -ForegroundColor Yellow
+        }
+      } catch {
+        Write-Host "[!] Playwright browser installation failed (non-critical): $_" -ForegroundColor Yellow
+      }
+    } else {
+      Write-Host "[i] Playwright CLI not found in venv, skipping browser setup (non-critical)" -ForegroundColor Gray
+    }
+  } catch {
+    Write-Host "[i] Playwright browser setup skipped due to error (non-critical): $_" -ForegroundColor Gray
+  }
 
   # Install Microsoft MPI for DeepSpeed distributed training
   Write-Host "[i] Checking Microsoft MPI for DeepSpeed support..."

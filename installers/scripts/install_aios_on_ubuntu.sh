@@ -26,9 +26,14 @@ Usage: ./scripts/install_aios_on_ubuntu.sh <action> [options]
     uninstall            Remove the local AI-OS virtual environment and shims
 
   Options:
-    --gpu <auto|cuda|rocm|cpu>   Preferred PyTorch build (default: auto)
-    --yes, -y                    Assume "yes" for all prompts
-    --help, -h                   Show this help message
+    --gpu <auto|cuda|rocm|xpu|cpu>   Preferred PyTorch build (default: auto)
+                                      - auto: Detect GPU and choose best option
+                                      - cuda: NVIDIA CUDA (requires NVIDIA GPU)
+                                      - rocm: AMD ROCm (requires AMD GPU with ROCm)
+                                      - xpu: Intel XPU (requires Intel Arc/Xe GPU)
+                                      - cpu: CPU-only (no GPU acceleration)
+    --yes, -y                        Assume "yes" for all prompts
+    --help, -h                       Show this help message
 EOF
 }
 
@@ -71,8 +76,8 @@ parse_args() {
   fi
 
   case "$GPU_PREF" in
-    auto|cuda|rocm|cpu) ;;
-    *) die "Invalid --gpu option: $GPU_PREF" ;;
+    auto|cuda|rocm|xpu|cpu) ;;
+    *) die "Invalid --gpu option: $GPU_PREF (valid: auto, cuda, rocm, xpu, cpu)" ;;
   esac
 }
 
@@ -165,6 +170,19 @@ detect_gpu() {
   fi
 
   log_info "GPU detection: Vendor=$GPU_INFO_VENDOR Model=${GPU_INFO_MODEL:-unknown} NvidiaSmi=$GPU_INFO_HAS_NVIDIA Rocm=$GPU_INFO_HAS_ROCM"
+}
+
+warn_multi_gpu() {
+  # Count how many vendor flags are set
+  local vendor_count=0
+  [[ "$GPU_INFO_HAS_NVIDIA" == "true" ]] && ((vendor_count++))
+  [[ "$GPU_INFO_VENDOR" == "amd" || "$GPU_INFO_HAS_ROCM" == "true" ]] && ((vendor_count++))
+  [[ "$GPU_INFO_VENDOR" == "intel" ]] && ((vendor_count++))
+  
+  if [[ $vendor_count -gt 1 ]]; then
+    log_warn "Multiple GPU vendors detected. Auto-selecting based on priority (NVIDIA > AMD > Intel)."
+    log_warn "To override, rerun with --gpu cuda|rocm|xpu|cpu."
+  fi
 }
 
 ensure_system_packages() {
@@ -370,8 +388,10 @@ install_pytorch() {
   if [[ "$gpu_choice" == "auto" ]]; then
     if [[ "$GPU_INFO_HAS_NVIDIA" == "true" ]]; then
       gpu_choice="cuda"
-    elif [[ "$GPU_INFO_HAS_ROCM" == "true" ]]; then
+    elif [[ "$GPU_INFO_HAS_ROCM" == "true" ]] || [[ "$GPU_INFO_VENDOR" == "amd" ]]; then
       gpu_choice="rocm"
+    elif [[ "$GPU_INFO_VENDOR" == "intel" ]]; then
+      gpu_choice="xpu"
     else
       gpu_choice="cpu"
     fi
@@ -384,6 +404,9 @@ install_pytorch() {
       ;;
     rocm)
       index_url="https://download.pytorch.org/whl/rocm6.0"
+      ;;
+    xpu)
+      index_url="https://download.pytorch.org/whl/cpu"  # XPU uses CPU base PyTorch + IPEX
       ;;
     cpu)
       index_url="https://download.pytorch.org/whl/cpu"
@@ -407,14 +430,32 @@ install_pytorch() {
     gpu_choice="cpu"
   fi
 
+  # Install Intel Extension for PyTorch if XPU was requested
+  if [[ "$gpu_choice" == "xpu" ]]; then
+    log_info "Installing Intel Extension for PyTorch (IPEX)..."
+    if ! "$PIP_BIN" install intel-extension-for-pytorch; then
+      log_warn "Failed to install Intel Extension for PyTorch. XPU support may not work."
+    else
+      log_success "Intel Extension for PyTorch installed."
+    fi
+  fi
+
   local probe
   probe=$("$PYTHON_VENV_BIN" - <<'PY'
 import json, torch
-print(json.dumps({
+result = {
     "torch": torch.__version__,
     "cuda_available": torch.cuda.is_available(),
-    "cuda_version": getattr(torch.version, "cuda", None)
-}))
+    "cuda_version": getattr(torch.version, "cuda", None),
+    "rocm": bool(getattr(torch.version, "hip", None)),
+}
+try:
+    if hasattr(torch, "xpu") and torch.xpu.is_available():
+        result["xpu_available"] = True
+        result["xpu_device_count"] = torch.xpu.device_count()
+except Exception:
+    pass
+print(json.dumps(result))
 PY
   )
   log_info "PyTorch probe: $probe"
@@ -594,6 +635,7 @@ EOF
 install_aios() {
   log_info "--- Starting AI-OS Ubuntu Installation ---"
   detect_gpu
+  warn_multi_gpu
   ensure_system_packages
   ensure_python
   ensure_git

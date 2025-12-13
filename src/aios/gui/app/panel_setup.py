@@ -815,20 +815,31 @@ def _initialize_resources_panel(app: Any, save_state_cb: Callable[[], None] | No
         import time as _time
         import subprocess
         import shutil
+        
+        from aios.core.gpu_vendor import identify_gpu_vendor, detect_xpu_devices, calculate_vendor_summary
 
         detection_result: dict[str, Any] = {
             "cuda_available": False,
             "cuda_devices": [],
             "nvidia_smi_devices": [],
+            "xpu_available": False,
+            "xpu_devices": [],
+            "vendor_summary": {},
+            "rocm": False,
             "detected_at": _time.time(),
             "source": "torch",
         }
 
         cuda_devices: list[dict[str, Any]] = []
         torch_reported_devices = False
+        rocm = False
 
         try:
             import torch
+            
+            # Check for ROCm build
+            rocm = bool(getattr(torch.version, "hip", None))
+            detection_result["rocm"] = rocm
 
             cuda_available = torch.cuda.is_available() if hasattr(torch, "cuda") else False
             detection_result["cuda_available"] = bool(cuda_available)
@@ -843,15 +854,17 @@ def _initialize_resources_panel(app: Any, save_state_cb: Callable[[], None] | No
                             name = torch.cuda.get_device_name(i)
                             props = torch.cuda.get_device_properties(i)
                             total_mem_mb = int(props.total_memory // (1024 * 1024))
+                            vendor = identify_gpu_vendor(name, check_rocm=rocm)
                             cuda_devices.append({
                                 "id": i,
                                 "name": name,
                                 "total_mem_mb": total_mem_mb,
+                                "vendor": vendor,
                             })
-                            logger.debug(f"CUDA device {i}: {name} ({total_mem_mb} MB)")
+                            logger.debug(f"CUDA device {i}: [{vendor}] {name} ({total_mem_mb} MB)")
                         except Exception as exc:
                             logger.warning(f"Failed to get info for CUDA device {i}: {exc}")
-                            cuda_devices.append({"id": i, "name": f"CUDA Device {i}", "total_mem_mb": 0})
+                            cuda_devices.append({"id": i, "name": f"CUDA Device {i}", "total_mem_mb": 0, "vendor": "Unknown"})
                 except Exception as exc:
                     logger.error(f"Failed to enumerate CUDA devices: {exc}")
             else:
@@ -860,6 +873,14 @@ def _initialize_resources_panel(app: Any, save_state_cb: Callable[[], None] | No
             detection_result["cuda_devices"] = cuda_devices
             detection_result["nvidia_smi_devices"] = list(cuda_devices)
             torch_reported_devices = bool(cuda_devices)
+            
+            # Detect Intel XPU devices
+            xpu_available, xpu_devices = detect_xpu_devices()
+            detection_result["xpu_available"] = xpu_available
+            detection_result["xpu_devices"] = xpu_devices
+            if xpu_available:
+                logger.info(f"Found {len(xpu_devices)} Intel XPU device(s)")
+                
         except Exception as exc:
             logger.error(f"Device detection failed: {exc}", exc_info=True)
 
@@ -897,10 +918,12 @@ def _initialize_resources_panel(app: Any, save_state_cb: Callable[[], None] | No
                                 total_mem_mb = int(float(parts[2]))
                             except Exception:
                                 total_mem_mb = 0
+                            vendor = identify_gpu_vendor(name)
                             nvidia_devices.append({
                                 "id": idx,
                                 "name": name,
                                 "total_mem_mb": total_mem_mb,
+                                "vendor": vendor,
                             })
         except subprocess.TimeoutExpired:
             logger.warning("nvidia-smi query timed out during device detection")
@@ -915,6 +938,10 @@ def _initialize_resources_panel(app: Any, save_state_cb: Callable[[], None] | No
             detection_result["source"] = "torch+nvidia-smi" if torch_reported_devices else "nvidia-smi"
         else:
             detection_result.setdefault("nvidia_smi_devices", [])
+
+        # Calculate vendor summary for all detected devices
+        all_devices = detection_result.get("cuda_devices", []) + detection_result.get("xpu_devices", [])
+        detection_result["vendor_summary"] = calculate_vendor_summary(all_devices)
 
         return detection_result
 

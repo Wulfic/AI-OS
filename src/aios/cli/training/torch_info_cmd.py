@@ -7,6 +7,8 @@ import subprocess as _sp
 
 from rich import print
 
+from aios.core.gpu_vendor import identify_gpu_vendor, detect_xpu_devices, calculate_vendor_summary
+
 
 def torch_info() -> None:
     try:
@@ -68,9 +70,17 @@ def torch_info() -> None:
                     dev: dict = {"id": i, "name": name}
                     if total_mb:
                         dev["total_mem_mb"] = int(total_mb)
+                    # Add vendor identification
+                    dev["vendor"] = identify_gpu_vendor(name, check_rocm=rocm)
                     cuda_devices.append(dev)
             except Exception:
                 cuda_devices = []
+
+        # Detect Intel XPU devices
+        xpu_avail_detected, xpu_devices = detect_xpu_devices()
+        if xpu_avail_detected:
+            xpu_avail = True
+            xpu_count = len(xpu_devices)
 
         # Fallback: detect NVIDIA adapters via nvidia-smi even if torch was built without CUDA
         nvsmi_found = False
@@ -105,7 +115,7 @@ def torch_info() -> None:
                                     mem_mb = int(float(parts[2]))
                                 except Exception:
                                     mem_mb = None
-                                d = {"id": idx, "name": name}
+                                d = {"id": idx, "name": name, "vendor": identify_gpu_vendor(name)}
                                 if mem_mb is not None:
                                     d["total_mem_mb"] = mem_mb
                                 nvsmi_devices.append(d)
@@ -113,6 +123,11 @@ def torch_info() -> None:
                     pass
         except Exception:
             pass
+        
+        # Calculate vendor summary for all devices
+        all_gpu_devices = cuda_devices + xpu_devices
+        vendor_summary = calculate_vendor_summary(all_gpu_devices)
+        
         info = {
             "installed": True,
             "version": torch.__version__,
@@ -123,10 +138,12 @@ def torch_info() -> None:
             "nvidia_smi_devices": nvsmi_devices,
             "xpu_available": xpu_avail,
             "xpu_device_count": xpu_count,
+            "xpu_devices": xpu_devices,
             "mps_available": mps_avail,
             "directml_available": dml_avail,
             "directml_python": dml_python_path,
             "rocm": rocm,
+            "gpu_vendor_summary": vendor_summary,
         }
         print(info)
     except Exception as e:

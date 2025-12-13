@@ -6,13 +6,16 @@ from typing import Any, Tuple
 def resolve_device(device: str, strict: bool, torch) -> Tuple[str, Any, Any]:
     """Resolve device string and return (dev_str, device_obj, dml_device).
 
-    Handles auto, cuda, dml with strict mode constraints.
+    Handles auto, cuda, xpu, dml with strict mode constraints.
+    Device priority for auto: cuda > xpu > dml > cpu
     """
     dev = device
     dml_device = None
     if dev == "auto":
         if torch.cuda.is_available():
             dev = "cuda"
+        elif hasattr(torch, "xpu") and torch.xpu.is_available():
+            dev = "xpu"
         else:
             try:
                 import torch_directml as _dml  # type: ignore
@@ -21,11 +24,12 @@ def resolve_device(device: str, strict: bool, torch) -> Tuple[str, Any, Any]:
             except Exception:
                 dev = "cpu"
     else:
+        # Validate requested device
         if str(dev).lower() == "cuda" and not torch.cuda.is_available():
             if strict:
                 from rich import print
                 import typer
-                print({"error": "CUDA requested but not available", "hint": "Install CUDA PyTorch or choose --device cpu/dml", "device_request": "cuda"})
+                print({"error": "CUDA requested but not available", "hint": "Install CUDA PyTorch or choose --device cpu/xpu/dml", "device_request": "cuda"})
                 raise typer.Exit(code=2)
             else:
                 try:
@@ -34,6 +38,24 @@ def resolve_device(device: str, strict: bool, torch) -> Tuple[str, Any, Any]:
                 except Exception:
                     pass
                 dev = "cpu"
+        elif str(dev).lower() == "xpu":
+            if not (hasattr(torch, "xpu") and torch.xpu.is_available()):
+                if strict:
+                    from rich import print
+                    import typer
+                    print({
+                        "error": "XPU requested but not available",
+                        "hint": "Install intel-extension-for-pytorch or choose --device cpu/cuda/dml",
+                        "device_request": "xpu"
+                    })
+                    raise typer.Exit(code=2)
+                else:
+                    try:
+                        from rich import print
+                        print({"device_request": "xpu", "using": "cpu", "reason": "xpu_unavailable_or_ipex_not_installed"})
+                    except Exception:
+                        pass
+                    dev = "cpu"
 
     device_obj = None
     if dev == "dml":

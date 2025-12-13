@@ -188,7 +188,7 @@ def get_current_branch() -> Optional[str]:
 
 def git_commit_and_push(version: str) -> List[Tuple[str, bool, str]]:
     """
-    Commit changes, push to origin, and update the Official tag.
+    Commit changes and push to origin.
     
     Returns:
         List of (operation, success, message) tuples
@@ -228,6 +228,18 @@ def git_commit_and_push(version: str) -> List[Tuple[str, bool, str]]:
         results.append(("Push", False, msg))
         return results
     results.append(("Push", True, f"Pushed to origin/{branch}"))
+    
+    return results
+
+
+def git_update_official_tag(version: str) -> List[Tuple[str, bool, str]]:
+    """
+    Update the Official tag to point to the current commit.
+    
+    Returns:
+        List of (operation, success, message) tuples
+    """
+    results = []
     
     # Delete local Official tag (ignore errors - tag may not exist)
     run_git_command(["tag", "-d", "Official"], check=False)
@@ -338,43 +350,76 @@ def main():
         print("Git Operations")
         print("-" * 60)
         
+        # Step 1: Commit and push
         if auto_git:
-            do_git = 'y'
-            print("\nAuto mode: Running git operations...")
+            do_commit = 'y'
+            print("\nAuto mode: Running commit and push...")
         else:
             try:
-                do_git = input("\nCommit, push, and update Official tag? [Y/n]: ").strip().lower()
+                do_commit = input("\nCommit and push changes? [Y/n]: ").strip().lower()
             except (KeyboardInterrupt, EOFError):
                 print("\n\nSkipping git operations.")
-                do_git = 'n'
+                do_commit = 'n'
         
-        if do_git != 'n':
-            print("\nRunning git operations...")
+        commit_success = False
+        if do_commit != 'n':
+            print("\nCommitting and pushing...")
             git_results = git_commit_and_push(new_version)
             
             print()
-            git_success = True
+            commit_success = True
             for operation, success, message in git_results:
                 if success:
                     print(f"  ✓ {operation}: {message}")
                 else:
                     print(f"  ✗ {operation}: {message}")
-                    git_success = False
+                    commit_success = False
             
-            if git_success:
-                print(f"\n✓ Version {new_version} released successfully!")
-            else:
-                print("\n⚠ Some git operations failed. Please check and complete manually.")
+            if not commit_success:
+                print("\n⚠ Commit/push failed. Fix issues before updating tags.")
         else:
-            print("\nGit operations skipped. Manual steps:")
+            print("\nCommit/push skipped. Manual steps:")
             print(f"  1. Review changes: git diff")
             print(f"  2. Commit: git add -A && git commit -m \"chore: bump version to {new_version}\"")
-            print(f"  3. Push: git push origin main")
-            print(f"  4. Update Official tag:")
-            print(f"     git tag -d Official")
-            print(f"     git push origin --delete Official")
-            print(f"     git tag -a Official -m \"Official Release v{new_version}\"")
-            print(f"     git push origin Official")
+            print(f"  3. Push: git push origin <branch>")
+        
+        # Step 2: Update Official tag (only if commit succeeded or was skipped)
+        if commit_success or do_commit == 'n':
+            print("\n" + "-" * 60)
+            
+            if auto_git:
+                do_tag = 'y'
+                print("\nAuto mode: Updating Official tag...")
+            else:
+                try:
+                    do_tag = input("\nUpdate Official tag? [Y/n]: ").strip().lower()
+                except (KeyboardInterrupt, EOFError):
+                    print("\n\nSkipping tag update.")
+                    do_tag = 'n'
+            
+            if do_tag != 'n':
+                print("\nUpdating Official tag...")
+                tag_results = git_update_official_tag(new_version)
+                
+                print()
+                tag_success = True
+                for operation, success, message in tag_results:
+                    if success:
+                        print(f"  ✓ {operation}: {message}")
+                    else:
+                        print(f"  ✗ {operation}: {message}")
+                        tag_success = False
+                
+                if tag_success:
+                    print(f"\n✓ Version {new_version} released successfully!")
+                else:
+                    print("\n⚠ Tag update failed. Please check and complete manually.")
+            else:
+                print("\nTag update skipped. Manual steps:")
+                print(f"  git tag -d Official")
+                print(f"  git push origin --delete Official")
+                print(f"  git tag -a Official -m \"Official Release v{new_version}\"")
+                print(f"  git push origin Official")
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
-# AI-OS v1.1.15
+# AI-OS v1.2.17
 
 [![CI](https://github.com/Wulfic/AI-OS/actions/workflows/ci.yml/badge.svg)](https://github.com/Wulfic/AI-OS/actions/workflows/ci.yml)
 [![Link Check](https://github.com/Wulfic/AI-OS/actions/workflows/link-check.yml/badge.svg)](https://github.com/Wulfic/AI-OS/actions/workflows/link-check.yml)
-[![Version](https://img.shields.io/badge/version-1.1.15-blue.svg)](https://github.com/Wulfic/AI-OS/releases/tag/Official)
+[![Version](https://img.shields.io/badge/version-1.2.17-blue.svg)](https://github.com/Wulfic/AI-OS/releases/tag/Official)
 [![License](https://img.shields.io/badge/license-ANSL--v1.0-blue.svg)](LICENSE)
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/S6S31MS4TK)
 
@@ -19,7 +19,7 @@ License: AI-OS Non‑Selling Attribution License (ANSL) v1.0. You may use, copy,
 - Bleeding edge technologies, pushing the boundaries of consumer hardware.
 - Tons more features! Check out the Planned_Features section
 
-Key features in v1.1.15:
+Key features in v1.2.17:
 - Windows and Ubuntu Support!
 - Long-context training strategies and memory optimizations 
 - Multi‑GPU training (DDP/Parallel/Sharding)

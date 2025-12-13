@@ -114,6 +114,7 @@ def build_cuda_rows(panel: "ResourcesPanel", devices: list[dict], which: str) ->
     def _create_row(device_id: int, dev_data: dict) -> None:
         name = str(dev_data.get("name") or f"CUDA {device_id}")
         mem_mb = dev_data.get("total_mem_mb")
+        vendor = dev_data.get("vendor", "")
 
         container = panel.cuda_train_group if which == "train" else panel.cuda_run_group
 
@@ -145,7 +146,11 @@ def build_cuda_rows(panel: "ResourcesPanel", devices: list[dict], which: str) ->
         cb = ttk.Checkbutton(row1, text=f"GPU{device_id}", variable=en_var)
         cb.pack(side="left")
 
-        name_label = ttk.Label(row1, text=name, font=("TkDefaultFont", 8))
+        # Show vendor prefix if known and not already in device name
+        display_name = name
+        if vendor and vendor != "Unknown" and vendor not in name:
+            display_name = f"[{vendor}] {name}"
+        name_label = ttk.Label(row1, text=display_name, font=("TkDefaultFont", 8))
         name_label.pack(side="left", padx=(4, 0))
 
         row2 = ttk.Frame(card)
@@ -537,11 +542,29 @@ def set_detected(panel: "ResourcesPanel", info: dict) -> None:
         build_cuda_rows(panel, [], "train")
         build_cuda_rows(panel, [], "run")
     
-    # Update status
+    # Update status with vendor breakdown
     try:
-        if device_count > 0:
+        vendor_summary = info.get("vendor_summary", {})
+        xpu_count = len(info.get("xpu_devices", []))
+        
+        if device_count > 0 or xpu_count > 0:
+            # Build vendor-aware status message
+            if vendor_summary:
+                vendor_parts = []
+                for vendor, count in sorted(vendor_summary.items()):
+                    if vendor != "Unknown":
+                        vendor_parts.append(f"{count} {vendor}")
+                    else:
+                        vendor_parts.append(f"{count} GPU")
+                if vendor_parts:
+                    gpu_desc = ", ".join(vendor_parts)
+                else:
+                    gpu_desc = f"{device_count + xpu_count} GPU(s)"
+            else:
+                gpu_desc = f"{device_count + xpu_count} GPU(s)"
+            
             panel._status_label.config(
-                text=f"✓ {device_count} GPU(s) detected",
+                text=f"✓ {gpu_desc} detected",
                 foreground="green"
             )
         else:

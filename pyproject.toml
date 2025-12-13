@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-os"
-version = "1.1.15"
+version = "1.2.17"
 description = "Autonomous HRM agent with Ubuntu OS integration"
 authors = [{name = "Wulfic"}]
 requires-python = ">=3.10"
@@ -64,10 +64,12 @@ hf = [
   "safetensors>=0.3.1",
   "deepspeed>=0.14.0; platform_system != 'Windows'",  # Windows: install manually from prebuilt wheel
   "mpi4py>=4.0.0; platform_system != 'Windows'",  # Required for DeepSpeed distributed training (Linux only)
-  "bitsandbytes>=0.43.0",
+  "bitsandbytes>=0.43.0; platform_system != 'Windows'",  # Windows: limited support, install manually if needed
   "flash-attn>=2.3.0; platform_system != 'Windows'",  # Windows requires manual install due to path limits
   "lm-eval>=0.4.0",  # For model evaluation benchmarks
 ]
+# Intel XPU support - install separately if using Intel discrete GPU:
+# pip install intel-extension-for-pytorch>=2.0.0
 
 [project.scripts]
 aios = "aios.cli.aios:app"

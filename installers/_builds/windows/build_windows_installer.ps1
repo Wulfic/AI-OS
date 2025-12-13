@@ -1,6 +1,7 @@
 #!/usr/bin/env pwsh
 param(
 	[string]$Version,
+	[string]$Suffix,
 	[switch]$KeepBuild
 )
 
@@ -170,7 +171,9 @@ $prunePaths = @(
 	"$stagingDir\.git",
 	"$stagingDir\.github",
 	"$stagingDir\.venv",
-	"$stagingDir\artifacts\evaluation"
+	"$stagingDir\artifacts\evaluation",
+	"$stagingDir\artifacts\diagnostics",
+	"$stagingDir\artifacts\training_datasets"
 )
 
 foreach ($path in $prunePaths) {
@@ -246,6 +249,9 @@ Write-Info "Using Inno Setup compiler at $isccPath"
 
 $appId = '{{C0A4D2C3-4E4C-4E6F-9E52-BAA0C9A0F3F3}}'
 
+# Build output filename with optional suffix
+$outputFilename = if ($Suffix) { "AI-OS-$Version-$Suffix-Setup" } else { "AI-OS-$Version-Setup" }
+
 $issContent = @"
 #define MyAppName "AI-OS"
 #define MyAppVersion "$Version"
@@ -256,6 +262,7 @@ $issContent = @"
 #define RepoRoot "$repoRoot"
 #define CorePayloadBytes $payloadBytes
 #define HostPythonVersion "$hostPythonVersion"
+#define OutputFilename "$outputFilename"
 
 [Setup]
 AppId=$appId
@@ -267,7 +274,7 @@ DefaultGroupName=AI-OS
 DisableProgramGroupPage=yes
 UninstallDisplayIcon={app}\installers\AI-OS.ico
 OutputDir={#OutputRoot}
-OutputBaseFilename=AI-OS-{#MyAppVersion}-Setup
+OutputBaseFilename={#OutputFilename}
 SetupIconFile={#RepoRoot}\installers\AI-OS.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
@@ -356,6 +363,8 @@ var
 	CompGitCheck: TNewCheckBox;
 	CompNodeCheck: TNewCheckBox;
 	CompCudaCheck: TNewCheckBox;
+	CompIntelCheck: TNewCheckBox;
+	CompAmdCheck: TNewCheckBox;
 	
 	DiskSummaryLabel: TNewStaticText;
 	DiskDetailLabel: TNewStaticText;
@@ -629,6 +638,8 @@ begin
 	if CompGitCheck <> nil then CompGitCheck.Enabled := False;
 	if CompNodeCheck <> nil then CompNodeCheck.Enabled := False;
 	if CompCudaCheck <> nil then CompCudaCheck.Enabled := False;
+	if CompIntelCheck <> nil then CompIntelCheck.Enabled := False;
+	if CompAmdCheck <> nil then CompAmdCheck.Enabled := False;
 
 	SetDiskStatus('Measuring disk usage...',
 		'Gathering GPU + dependency footprint. This may take up to a minute.',
@@ -655,6 +666,8 @@ begin
 		if not CompGitCheck.Checked then Params := Params + ' -SkipGitInstall';
 		if not CompNodeCheck.Checked then Params := Params + ' -SkipNodeInstall';
 		if CompCudaCheck.Checked then Params := Params + ' -InstallCudaTools';
+		if CompIntelCheck.Checked then Params := Params + ' -InstallIntelXpu';
+		if CompAmdCheck.Checked then Params := Params + ' -InstallAmdDml';
 	end;
 	ProcessHandle := 0;
 	if not LaunchHiddenProcess(PSExe, Params, ProcessHandle) then
@@ -723,6 +736,8 @@ begin
 	if CompGitCheck <> nil then CompGitCheck.Enabled := True;
 	if CompNodeCheck <> nil then CompNodeCheck.Enabled := True;
 	if CompCudaCheck <> nil then CompCudaCheck.Enabled := True;
+	if CompIntelCheck <> nil then CompIntelCheck.Enabled := True;
+	if CompAmdCheck <> nil then CompAmdCheck.Enabled := True;
 	
 	UpdateNextButtonState;
 end;
@@ -806,6 +821,8 @@ begin
 		if not CompGitCheck.Checked then Params := Params + ' -SkipGitInstall';
 		if not CompNodeCheck.Checked then Params := Params + ' -SkipNodeInstall';
 		if CompCudaCheck.Checked then Params := Params + ' -InstallCudaTools';
+		if CompIntelCheck.Checked then Params := Params + ' -InstallIntelXpu';
+		if CompAmdCheck.Checked then Params := Params + ' -InstallAmdDml';
 	end;
 		
 	ProcessHandle := 0;
@@ -967,6 +984,37 @@ begin
 	StartPreflight(False);
 end;
 
+procedure GpuOptionChanged(Sender: TObject);
+begin
+	{ Mutual exclusivity: Only one GPU option can be selected }
+	if Sender = CompCudaCheck then
+	begin
+		if CompCudaCheck.Checked then
+		begin
+			CompIntelCheck.Checked := False;
+			CompAmdCheck.Checked := False;
+		end;
+	end
+	else if Sender = CompIntelCheck then
+	begin
+		if CompIntelCheck.Checked then
+		begin
+			CompCudaCheck.Checked := False;
+			CompAmdCheck.Checked := False;
+		end;
+	end
+	else if Sender = CompAmdCheck then
+	begin
+		if CompAmdCheck.Checked then
+		begin
+			CompCudaCheck.Checked := False;
+			CompIntelCheck.Checked := False;
+		end;
+	end;
+	{ Trigger preflight to update disk estimate }
+	StartPreflight(False);
+end;
+
 procedure UpdateConfigPageLayout;
 var
 	TopOffset: Integer;
@@ -980,7 +1028,7 @@ begin
 	begin
 		ComponentsPanel.Top := TopOffset;
 		{ Recalculate panel height based on children to prevent cutoff }
-		ComponentsPanel.Height := CompCudaCheck.Top + CompCudaCheck.Height + ScaleY(5);
+		ComponentsPanel.Height := CompAmdCheck.Top + CompAmdCheck.Height + ScaleY(5);
 		TopOffset := TopOffset + ComponentsPanel.Height + ScaleY(5);
 	end;
 	
@@ -1109,13 +1157,33 @@ begin
 
 	CompCudaCheck := TNewCheckBox.Create(ComponentsPanel);
 	CompCudaCheck.Parent := ComponentsPanel;
-	CompCudaCheck.Caption := 'Install NVIDIA CUDA Tools (Force)';
+	CompCudaCheck.Caption := 'Install NVIDIA CUDA/cuDNN (Force)';
 	CompCudaCheck.Left := 0;
 	CompCudaCheck.Top := CompNodeCheck.Top + CompNodeCheck.Height + ScaleY(4);
 	CompCudaCheck.Width := ComponentsPanel.Width;
 	CompCudaCheck.Height := ScaleY(20);
 	CompCudaCheck.Checked := False;
-	CompCudaCheck.OnClick := @ComponentChanged;
+	CompCudaCheck.OnClick := @GpuOptionChanged;
+
+	CompIntelCheck := TNewCheckBox.Create(ComponentsPanel);
+	CompIntelCheck.Parent := ComponentsPanel;
+	CompIntelCheck.Caption := 'Install Intel Extension for PyTorch (XPU)';
+	CompIntelCheck.Left := 0;
+	CompIntelCheck.Top := CompCudaCheck.Top + CompCudaCheck.Height + ScaleY(4);
+	CompIntelCheck.Width := ComponentsPanel.Width;
+	CompIntelCheck.Height := ScaleY(20);
+	CompIntelCheck.Checked := False;
+	CompIntelCheck.OnClick := @GpuOptionChanged;
+
+	CompAmdCheck := TNewCheckBox.Create(ComponentsPanel);
+	CompAmdCheck.Parent := ComponentsPanel;
+	CompAmdCheck.Caption := 'Install AMD DirectML (Force)';
+	CompAmdCheck.Left := 0;
+	CompAmdCheck.Top := CompIntelCheck.Top + CompIntelCheck.Height + ScaleY(4);
+	CompAmdCheck.Width := ComponentsPanel.Width;
+	CompAmdCheck.Height := ScaleY(20);
+	CompAmdCheck.Checked := False;
+	CompAmdCheck.OnClick := @GpuOptionChanged;
 
 	DiskSummaryLabel := TNewStaticText.Create(ConfigPage.Surface);
 	DiskSummaryLabel.Parent := ConfigPage.Surface;
@@ -1188,7 +1256,7 @@ if ($process.ExitCode -ne 0) {
 	Write-ErrorAndExit "Inno Setup compiler failed with exit code $($process.ExitCode)"
 }
 
-$outputInstaller = Join-Path $releaseDir "AI-OS-$Version-Setup.exe"
+$outputInstaller = Join-Path $releaseDir "$outputFilename.exe"
 if (-not (Test-Path $outputInstaller)) {
 	Write-ErrorAndExit "Expected installer not found at $outputInstaller"
 }
