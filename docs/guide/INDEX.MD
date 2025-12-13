@@ -1,4 +1,4 @@
-# AI-OS User Guide - Index
+# User Guide
 **Last Updated**: December 12, 2025  
 **Purpose**: Primary navigation hub for all AI-OS documentation  
 **Audience**: Users, developers, and contributors

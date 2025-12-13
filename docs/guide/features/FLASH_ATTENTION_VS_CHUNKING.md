@@ -1,4 +1,4 @@
-# Flash Attention 2 vs Context Chunking: Technical Deep Dive
+# Flash Attention vs Context Chunking
 
 Note: Canonical source of truth for attention optimization in AI-OS. Window sizing guidance is a sub-topic; see `FLASH_ATTENTION.md`.
 

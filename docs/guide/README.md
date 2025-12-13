@@ -1,4 +1,4 @@
-# AI-OS User Guide
+# Getting Started
 
 **Last Updated**: December 12, 2025  
 **Purpose**: Overview page for the AI-OS User Guide section
