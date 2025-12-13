@@ -8,6 +8,7 @@
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/S6S31MS4TK)
 
 # Fancy Documentation: https://wulfic.github.io/AI-OS/
+# Repo: https://github.com/Wulfic/AI-OS
 
 HRM-sMoE LLM training toolkit with a clean GUI, CLI, and installers. Future-facing architecture for OS-integrated autonomous assistance.
 
