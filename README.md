@@ -1,3 +1,4 @@
+<meta name="google-site-verification" content="Vt8XymuQQ3LG2Fc2K1TxwIbyDACcoXL6ExFTP1BYRkI" />
 # AI-OS v1.2.17
 
 [![CI](https://github.com/Wulfic/AI-OS/actions/workflows/ci.yml/badge.svg)](https://github.com/Wulfic/AI-OS/actions/workflows/ci.yml)
