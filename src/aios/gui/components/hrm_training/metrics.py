@@ -85,6 +85,9 @@ def _update_from_json(panel: Any, line: str) -> None:
             panel._last_heartbeat = _time.time()
     except Exception:
         pass
+
+    # Adaptive LR status (effective LR + active mode)
+    _update_adaptive_lr_status(panel, obj)
         
     try:
         # Track total steps across all GPUs
@@ -152,6 +155,122 @@ def _update_from_json(panel: Any, line: str) -> None:
     _update_epoch_tracking(panel, obj)
     # Progress/state messages
     _update_progress(panel, obj)
+
+
+def _format_lr(value: Any) -> str:
+    try:
+        v = float(value)
+    except Exception:
+        return str(value)
+    if v == 0.0:
+        return "0"
+    # Prefer fixed-point for typical LR ranges while avoiding long tails.
+    s = f"{v:.10f}".rstrip("0").rstrip(".")
+    # Fall back to a compact representation if fixed-point is awkward.
+    if len(s) > 14:
+        s = f"{v:.6g}"
+    return s
+
+
+def _update_adaptive_lr_status(panel: Any, obj: dict) -> None:
+    """Update an existing UI label with effective Adaptive LR status.
+
+    We intentionally reuse the existing `moe_lr_info_lbl` (currently showing
+    Manual/Adaptive) instead of adding new UI components.
+    """
+    try:
+        event = (obj.get("event") or "").strip()
+    except Exception:
+        event = ""
+
+    # Only drive the LR display while Adaptive LR is enabled in the UI.
+    try:
+        selected = str(getattr(panel, "adaptive_lr_mode_var", None).get() if getattr(panel, "adaptive_lr_mode_var", None) is not None else "").strip().lower()
+    except Exception:
+        selected = ""
+    is_off = selected in {"off", "disabled", "none", "manual"} or not selected
+    try:
+        if hasattr(panel, "auto_adjust_lr_var"):
+            is_off = is_off or (not bool(panel.auto_adjust_lr_var.get()))
+    except Exception:
+        pass
+
+    if is_off:
+        return
+
+    # Extract latest known LR/mode from events we already emit.
+    try:
+        if event == "adaptive_lr_init":
+            panel._adaptive_lr_current_lr = obj.get("initial_lr")
+            panel._adaptive_lr_mode_requested = obj.get("mode")
+            panel._adaptive_lr_mode_active = obj.get("mode_active")
+        elif event == "adaptive_lr_enabled":
+            # Use base_lr as best-effort until we see warmup/adjustment events.
+            if getattr(panel, "_adaptive_lr_current_lr", None) is None:
+                panel._adaptive_lr_current_lr = obj.get("base_lr")
+        elif event == "adaptive_lr_state_restored":
+            panel._adaptive_lr_current_lr = obj.get("lr")
+            panel._adaptive_lr_mode_requested = obj.get("mode_requested")
+            panel._adaptive_lr_mode_active = obj.get("mode_active")
+        elif event == "adaptive_lr_mode_changed":
+            panel._adaptive_lr_mode_active = obj.get("to")
+            if "lr" in obj:
+                panel._adaptive_lr_current_lr = obj.get("lr")
+        elif event == "adaptive_lr_mode_overridden":
+            panel._adaptive_lr_mode_requested = obj.get("to")
+            panel._adaptive_lr_mode_active = obj.get("mode_active")
+            if "lr" in obj:
+                panel._adaptive_lr_current_lr = obj.get("lr")
+        elif event == "adaptive_lr_adjustment":
+            panel._adaptive_lr_current_lr = obj.get("new_lr")
+        elif event == "warmup_complete":
+            panel._adaptive_lr_current_lr = obj.get("lr")
+        elif event == "chunk_complete":
+            # Snapshot emitted once per chunk by the training loop.
+            if "lr" in obj:
+                panel._adaptive_lr_current_lr = obj.get("lr")
+            if "adaptive_lr_mode_requested" in obj:
+                panel._adaptive_lr_mode_requested = obj.get("adaptive_lr_mode_requested")
+            if "adaptive_lr_mode_active" in obj:
+                panel._adaptive_lr_mode_active = obj.get("adaptive_lr_mode_active")
+
+        # Generic fallbacks for any event that includes these fields.
+        if "lr" in obj and obj.get("lr") is not None:
+            panel._adaptive_lr_current_lr = obj.get("lr")
+        if "adaptive_lr_mode_requested" in obj and obj.get("adaptive_lr_mode_requested") is not None:
+            panel._adaptive_lr_mode_requested = obj.get("adaptive_lr_mode_requested")
+        if "adaptive_lr_mode_active" in obj and obj.get("adaptive_lr_mode_active") is not None:
+            panel._adaptive_lr_mode_active = obj.get("adaptive_lr_mode_active")
+    except Exception:
+        # Never allow status updates to break metrics polling.
+        return
+
+    # Render label if present.
+    try:
+        if not hasattr(panel, "moe_lr_info_lbl"):
+            return
+        lr_txt = _format_lr(getattr(panel, "_adaptive_lr_current_lr", None))
+        req = str(getattr(panel, "_adaptive_lr_mode_requested", "") or "").strip()
+        active = str(getattr(panel, "_adaptive_lr_mode_active", "") or "").strip()
+
+        if req and active and req.lower() != active.lower():
+            mode_txt = f"{req}->{active}"
+        else:
+            mode_txt = active or req
+
+        # Keep the label simple (no LR text); use the Manual LR entry as the display.
+        panel.moe_lr_info_lbl.config(text="Adaptive")
+
+        # Mirror effective LR into the (disabled) LR entry for easy continuation.
+        try:
+            if hasattr(panel, "lr_var") and lr_txt and lr_txt != "None":
+                current_txt = str(panel.lr_var.get())
+                if current_txt != lr_txt:
+                    panel.lr_var.set(lr_txt)
+        except Exception:
+            pass
+    except Exception:
+        return
 
 
 def _update_epoch_tracking(panel: Any, obj: dict) -> None:

@@ -712,6 +712,27 @@ def train_actv1_impl(
                                     from collections import deque as _deque
                                     adaptive_lr_scheduler.loss_window = _deque(old_vals[-int(cfg_lr.window_size):], maxlen=int(cfg_lr.window_size))  # type: ignore[attr-defined]
                                 adaptive_lr_scheduler.config = cfg_lr  # type: ignore[assignment]
+                                # IMPORTANT: apply mode changes from the new config on resume.
+                                desired_mode = str(getattr(cfg_lr, "mode", "balanced") or "balanced").strip().lower()
+                                current_requested = str(getattr(adaptive_lr_scheduler, "_mode_requested", "") or "").strip().lower()
+                                if desired_mode and desired_mode != current_requested:
+                                    adaptive_lr_scheduler._mode_requested = desired_mode  # type: ignore[attr-defined]
+                                    if desired_mode == "auto":
+                                        initial = str(getattr(cfg_lr, "auto_mode_initial", "balanced") or "balanced").strip().lower()
+                                        adaptive_lr_scheduler._mode = initial if initial in {"balanced", "conservative", "aggressive"} else "balanced"  # type: ignore[attr-defined]
+                                    else:
+                                        adaptive_lr_scheduler._mode = desired_mode  # type: ignore[attr-defined]
+                                    adaptive_lr_scheduler._mode_cooldown_remaining = 0  # type: ignore[attr-defined]
+                                    adaptive_lr_scheduler._low_improvement_windows_in_row = 0  # type: ignore[attr-defined]
+                                    write_jsonl(
+                                        {
+                                            "event": "adaptive_lr_mode_overridden",
+                                            "from": current_requested,
+                                            "to": desired_mode,
+                                            "mode_active": str(getattr(adaptive_lr_scheduler, "_mode", "") or ""),
+                                            "lr": float(getattr(adaptive_lr_scheduler, "current_lr", float(lr)) or float(lr)),
+                                        }
+                                    )
                         except Exception:
                             pass
                         restored = True
@@ -1052,6 +1073,17 @@ def train_actv1_impl(
                             "chunk_id": int(chunk_id_in_block),
                             "step": int(steps_done),
                             "loss": None,
+                            "lr": (
+                                float(getattr(opt, "param_groups", [{}])[0].get("lr"))
+                                if (
+                                    opt is not None
+                                    and getattr(opt, "param_groups", None)
+                                    and getattr(opt, "param_groups", [{}])[0].get("lr") is not None
+                                )
+                                else None
+                            ),
+                            "adaptive_lr_mode_requested": (getattr(adaptive_lr_scheduler, "_mode_requested", None) if adaptive_lr_scheduler is not None else None),
+                            "adaptive_lr_mode_active": (getattr(adaptive_lr_scheduler, "_mode", None) if adaptive_lr_scheduler is not None else None),
                             "total_gpu_steps": stats.get("total_gpu_steps", int(steps_done)),
                             "total_chunks_trained": stats.get("total_chunks_trained", 0),
                             "blocks_completed": stats.get("blocks_completed", 0),
