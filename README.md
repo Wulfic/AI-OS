@@ -35,7 +35,7 @@ The Optional model that ships alongside this program was trained on 2x RTX 2080t
 TLDR; Have a fast ass GPU with lots of VRAM if you're impatient.
 
 ## Minimum Recommended Specs!
-- GPU: 6GB VRAM **NOTE** (Nvidia:Full Support|AMD:PARTIALLY TESTED|INTEL(ARC):UNTESTED|CPU:Partial Support)
+- GPU: 6GB VRAM **NOTE** (Nvidia:Full Support|AMD:PARTIAL Support|INTEL:UNTESTED|CPU:Full Support)
 - System Memory: 16GB
 - CPU: 4 Core
 
