@@ -1,3 +1,6 @@
+# External Projects
+EXTERNAL_PROJECTS/
+
 # Local artifacts/logs (kept if explicitly added)
 aios.log
 artifacts/*.out.log
