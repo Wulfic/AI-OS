@@ -122,10 +122,17 @@ def _save_hf_cache_dir(cache_dir: Path) -> bool:
 _hf_cache_dir = _get_hf_cache_dir()
 try:
     _hf_cache_dir.mkdir(parents=True, exist_ok=True)
-except Exception:
+except Exception as e:
     # If we can't create it, fall back to project directory
+    import sys
+    print(f"Warning: Failed to create HF cache at {_hf_cache_dir}: {e}", file=sys.stderr)
     _hf_cache_dir = Path.cwd() / "training_datasets" / "hf_cache"
-    _hf_cache_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        _hf_cache_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Using fallback HF cache directory: {_hf_cache_dir}", file=sys.stderr)
+    except Exception as e2:
+        print(f"ERROR: Cannot create HF cache directory: {e2}", file=sys.stderr)
+        raise
 
 # Migrate TRANSFORMERS_CACHE to HF_HOME if set
 if "TRANSFORMERS_CACHE" in os.environ and "HF_HOME" not in os.environ:

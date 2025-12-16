@@ -8,7 +8,11 @@ Sets up smart default cache directories on non-C drives when possible.
 """
 
 import os
+import logging
 from pathlib import Path
+
+# Get logger for warnings (may not be configured yet during early import)
+logger = logging.getLogger(__name__)
 
 
 def setup_hf_cache_env():
@@ -31,10 +35,13 @@ def setup_hf_cache_env():
     
     # Read from config file if exists
     _config_file = Path.home() / ".config" / "aios" / "hf_cache_path.txt"
+    _configured_path = None
     if _config_file.exists():
         try:
-            _hf_cache_base = Path(_config_file.read_text().strip())
-        except Exception:
+            _configured_path = Path(_config_file.read_text().strip())
+            _hf_cache_base = _configured_path
+        except Exception as e:
+            logger.warning(f"Failed to read HF cache config from {_config_file}: {e}")
             _hf_cache_base = None
     else:
         _hf_cache_base = None
@@ -43,12 +50,36 @@ def setup_hf_cache_env():
     if not _hf_cache_base or not (_hf_cache_base.exists() or _hf_cache_base.parent.exists()):
         # Default to install root location
         _hf_cache_base = Path.cwd() / "training_datasets" / "hf_cache"
+        _configured_path = None  # Clear since we're using default
     
+    # Try to create the directory
     try:
         _hf_cache_base.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        _hf_cache_base = Path.cwd() / "training_datasets" / "hf_cache"
-        _hf_cache_base.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Using HF cache directory: {_hf_cache_base}")
+    except Exception as e:
+        # Only fall back if we weren't using a user-configured path
+        if _configured_path:
+            # User explicitly configured a path that failed - warn them loudly
+            logger.error(f"⚠️  CRITICAL: Cannot access configured HF cache location: {_configured_path}")
+            logger.error(f"   Error: {e}")
+            logger.error(f"   The configured path may be on an unmounted drive or have permission issues.")
+            logger.error(f"   Please check your configuration at: {_config_file}")
+            logger.error(f"   Datasets will NOT be downloaded until this is resolved.")
+            # Don't fall back silently - let it fail visibly
+            raise RuntimeError(
+                f"Cannot access configured HF cache at {_configured_path}. "
+                f"Check if drive is mounted and path is writable. Config: {_config_file}"
+            ) from e
+        else:
+            # Default path failed, try one more fallback
+            logger.warning(f"Failed to create HF cache at {_hf_cache_base}: {e}")
+            _hf_cache_base = Path.cwd() / "training_datasets" / "hf_cache"
+            try:
+                _hf_cache_base.mkdir(parents=True, exist_ok=True)
+                logger.warning(f"Using fallback HF cache directory: {_hf_cache_base}")
+            except Exception as e2:
+                logger.error(f"Cannot create HF cache directory at {_hf_cache_base}: {e2}")
+                raise
     
     os.environ["HF_HOME"] = str(_hf_cache_base.resolve())
     os.environ["HF_DATASETS_CACHE"] = str((_hf_cache_base / "datasets").resolve())

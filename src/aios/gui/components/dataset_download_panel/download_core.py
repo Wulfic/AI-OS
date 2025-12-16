@@ -53,9 +53,18 @@ def download_dataset(panel, dataset: Dict[str, Any], download_location: str):
     logger.info(f"Starting download: dataset={dataset_name}, path={dataset_path}")
     
     try:
-        # Use the global HF cache directory
-        cache_dir = Path(os.environ.get("HF_HOME", str(Path.cwd() / "training_datasets" / "hf_cache")))
-        cache_dir.mkdir(parents=True, exist_ok=True)
+        # Use the global HF cache directory (should already be set by hf_cache_setup)
+        hf_home = os.environ.get("HF_HOME")
+        if not hf_home:
+            # Fallback if HF_HOME not set (shouldn't happen)
+            logger.warning("HF_HOME not set, using fallback location")
+            hf_home = str(Path.cwd() / "training_datasets" / "hf_cache")
+        cache_dir = Path(hf_home)
+        
+        # Only create if it doesn't exist (avoid unnecessary mkdir on network drives)
+        if not cache_dir.exists():
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Created HF cache directory: {cache_dir}")
         
         # Output path - use the pre-captured download_location (not panel.download_location.get() which would crash)
         output_name = dataset_name.replace("/", "_").replace(" ", "_").lower()
