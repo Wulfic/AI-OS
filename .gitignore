@@ -98,6 +98,7 @@ installers/_builds/ubuntu/snap/
 
 # Local training outputs (ignored)
 training_data/
+training_datasets/
 **/metrics.jsonl
 
 # Live training tensor artifacts (do not commit)

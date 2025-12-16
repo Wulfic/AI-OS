@@ -203,8 +203,53 @@ def download_dataset(panel, dataset: Dict[str, Any], download_location: str):
         if config_name:
             load_kwargs["name"] = config_name
         
-        # Capture progress
-        progress_capture = RealTimeProgressCapture(panel.log, panel.frame)
+        # Initialize progress tracker early (for both download and conversion phases)
+        total_bytes_estimate = dataset.get("num_bytes", 0) or int(dataset.get("size_gb", 0) * 1024 * 1024 * 1024)
+        total_samples_count = dataset.get("num_rows", 0) or max_samples
+        
+        # Estimate bytes per sample based on dataset type
+        bytes_per_sample = 500  # Default for text
+        if dataset.get("has_images"):
+            bytes_per_sample = 100_000  # 100KB for images
+        elif dataset.get("has_audio"):
+            bytes_per_sample = 500_000  # 500KB for audio
+        elif dataset.get("has_video"):
+            bytes_per_sample = 10_000_000  # 10MB for video
+        
+        def on_progress_update(stats: DownloadStats):
+            """Callback to update UI with progress."""
+            try:
+                if panel.frame.winfo_exists():
+                    from .ui_builder import _update_progress_display
+                    panel.frame.after(0, lambda s=stats: _update_progress_display(panel, s))
+            except Exception as e:
+                logger.debug(f"Progress UI update error: {e}")
+        
+        # Calculate total blocks based on dataset size
+        total_blocks = dataset.get("total_blocks", 0)
+        if not total_blocks and total_samples_count > 0:
+            # Calculate from samples (100k per block)
+            total_blocks = (total_samples_count + DEFAULT_BLOCK_SIZE - 1) // DEFAULT_BLOCK_SIZE
+        
+        progress_tracker = DownloadProgressTracker(
+            total_bytes=total_bytes_estimate,
+            total_samples=total_samples_count,
+            total_blocks=total_blocks,
+            speed_window_seconds=3.0,
+            update_callback=on_progress_update,
+        )
+        progress_tracker.start()
+        
+        # Log initial tracking info
+        if total_bytes_estimate > 0:
+            panel.log(f"   📊 Tracking: {total_bytes_estimate / (1024*1024*1024):.2f} GB estimated")
+        elif total_samples_count > 0:
+            panel.log(f"   📊 Tracking: {total_samples_count:,} samples expected")
+        else:
+            panel.log(f"   📊 Tracking: unknown size")
+        
+        # Capture progress (with tracker for parsing HF download progress)
+        progress_capture = RealTimeProgressCapture(panel.log, panel.frame, progress_tracker)
         old_stderr = sys.stderr
         
         # Try fast download first, fall back to streaming if it fails
@@ -265,13 +310,12 @@ def download_dataset(panel, dataset: Dict[str, Any], download_location: str):
                 actual_samples = min(max_samples, dataset_length) if max_samples > 0 else dataset_length
                 panel.log(f"   📊 Dataset size: {dataset_length:,} samples")
                 
-                # Initialize progress for conversion
-                progress_tracker = DownloadProgressTracker(
+                # Update progress tracker totals for conversion phase
+                conversion_blocks = (actual_samples + DEFAULT_BLOCK_SIZE - 1) // DEFAULT_BLOCK_SIZE if use_block_format else 1
+                progress_tracker.set_totals(
                     total_samples=actual_samples,
-                    total_blocks=0,
-                    speed_window_seconds=3.0,
+                    total_blocks=conversion_blocks
                 )
-                progress_tracker.start()
                 
                 # Save to training format (arrow/parquet blocks)
                 if use_block_format:
@@ -283,6 +327,7 @@ def download_dataset(panel, dataset: Dict[str, Any], download_location: str):
                     )
                     
                     # Process in blocks
+                    samples_processed = 0
                     for i in range(0, actual_samples, DEFAULT_BLOCK_SIZE):
                         if panel.cancel_download:
                             panel.log("   ❌ Conversion cancelled by user")
@@ -295,6 +340,17 @@ def download_dataset(panel, dataset: Dict[str, Any], download_location: str):
                             
                             for sample in chunk:
                                 block_writer.add_sample(dict(sample))
+                                samples_processed += 1
+                            
+                            # Update progress tracker with block completion
+                            completed_blocks = len(block_writer.blocks)
+                            current_block_progress = (samples_processed % DEFAULT_BLOCK_SIZE) / DEFAULT_BLOCK_SIZE
+                            fractional_blocks = completed_blocks + current_block_progress
+                            
+                            progress_tracker.set_progress(
+                                samples_downloaded=samples_processed,
+                                blocks_completed=fractional_blocks
+                            )
                             
                             panel.log(f"   Progress: {end_idx:,}/{actual_samples:,} samples converted...")
                             logger.debug(f"Converted block {i//DEFAULT_BLOCK_SIZE + 1}: {i}-{end_idx}")
@@ -309,9 +365,17 @@ def download_dataset(panel, dataset: Dict[str, Any], download_location: str):
                         logger.info(f"Fast download complete: {block_info.total_blocks} blocks saved")
                 else:
                     # Save as single file
+                    panel.log(f"   💾 Saving dataset to disk...")
                     dataset_subset = dataset_stream.select(range(actual_samples)) if max_samples > 0 else dataset_stream
                     output_path.mkdir(parents=True, exist_ok=True)
                     dataset_subset.save_to_disk(str(output_path))
+                    
+                    # Update progress to 100%
+                    progress_tracker.set_progress(
+                        samples_downloaded=actual_samples,
+                        blocks_completed=1.0
+                    )
+                    
                     panel.log(f"   ✅ Saved {actual_samples:,} samples to {output_path}")
                     logger.info(f"Fast download complete: saved to {output_path}")
                 
@@ -348,60 +412,13 @@ def download_dataset(panel, dataset: Dict[str, Any], download_location: str):
         # Stream and save samples
         samples = []
         last_update = 0
-        last_progress_ui_update = -1.0  # Start negative to ensure immediate first update
         # For unlimited downloads, update every 10k samples; otherwise every 1% of max
         update_interval = 10000 if max_samples == 0 else max(1000, max_samples // 100)
         check_pause_interval = 100  # Check for pause every 100 samples
-        ui_update_interval = 0.1  # Update UI every 100ms for smooth display
         
-        # Initialize progress tracker
-        total_bytes_estimate = dataset.get("num_bytes", 0) or int(dataset.get("size_gb", 0) * 1024 * 1024 * 1024)
-        total_samples_count = dataset.get("num_rows", 0) or max_samples
-        
-        # Estimate bytes per sample based on dataset type
-        bytes_per_sample = 500  # Default for text
-        if dataset.get("has_images"):
-            bytes_per_sample = 100_000  # 100KB for images
-        elif dataset.get("has_audio"):
-            bytes_per_sample = 500_000  # 500KB for audio
-        elif dataset.get("has_video"):
-            bytes_per_sample = 10_000_000  # 10MB for video
-        
-        def on_progress_update(stats: DownloadStats):
-            """Callback to update UI with progress."""
-            nonlocal last_progress_ui_update
-            now = time.monotonic()
-            if now - last_progress_ui_update >= ui_update_interval:
-                last_progress_ui_update = now
-                try:
-                    if panel.frame.winfo_exists():
-                        from .ui_builder import _update_progress_display
-                        panel.frame.after(0, lambda s=stats: _update_progress_display(panel, s))
-                except Exception as e:
-                    logger.debug(f"Progress UI update error: {e}")
-        
-        # Calculate total blocks based on dataset size
-        total_blocks = dataset.get("total_blocks", 0)
-        if not total_blocks and total_samples_count > 0:
-            # Calculate from samples (100k per block)
-            total_blocks = (total_samples_count + DEFAULT_BLOCK_SIZE - 1) // DEFAULT_BLOCK_SIZE
-        
-        progress_tracker = DownloadProgressTracker(
-            total_bytes=total_bytes_estimate,
-            total_samples=total_samples_count,
-            total_blocks=total_blocks,
-            speed_window_seconds=3.0,
-            update_callback=on_progress_update,
-        )
-        progress_tracker.start()
-        
-        # Log initial tracking info
-        if total_bytes_estimate > 0:
-            panel.log(f"   📊 Tracking: {total_bytes_estimate / (1024*1024*1024):.2f} GB estimated")
-        elif total_samples_count > 0:
-            panel.log(f"   📊 Tracking: {total_samples_count:,} samples expected")
-        else:
-            panel.log(f"   📊 Tracking: unknown size (streaming mode)")
+        # Progress tracker already initialized earlier (reused for streaming fallback)
+        # Just log that we're in streaming mode
+        panel.log(f"   📊 Streaming mode: downloading samples...")
         
         for j, sample in enumerate(dataset_stream, 1):
             if panel.cancel_download:
