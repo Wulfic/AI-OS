@@ -20,9 +20,10 @@ from ...utils.resource_management import submit_background
 
 logger = logging.getLogger(__name__)
 
-MAX_ENRICH_DATASETS = 12
-ENRICH_CONCURRENCY = 4
-ENRICH_TIME_BUDGET = 20.0  # seconds
+# Enrichment settings - these control how many datasets get size/row info
+MAX_ENRICH_DATASETS = 50  # Increased from 12 to cover more search results
+ENRICH_CONCURRENCY = 8    # Increased from 4 for faster enrichment
+ENRICH_TIME_BUDGET = 30.0  # seconds - increased from 20s for more datasets
 
 
 @dataclass(frozen=True)
@@ -279,6 +280,12 @@ def do_search(
         max_size_text = ""
         size_unit = "GB"
     
+    # Capture modality filter
+    try:
+        modality = panel.modality_var.get() if hasattr(panel, 'modality_var') else "Text"
+    except Exception:
+        modality = "Text"  # Default to Text
+    
     def _submit_background_task(fn, name: str):
         if not getattr(panel, "_panel_active", True):
             return
@@ -295,9 +302,9 @@ def do_search(
     def search_thread():
         if not getattr(panel, "_panel_active", True):
             return
-        logger.debug(f"Starting dataset search thread for query: {query}")
+        logger.debug(f"Starting dataset search thread for query: {query}, modality: {modality}")
         try:
-            results = search_huggingface_datasets(query, limit=50)
+            results = search_huggingface_datasets(query, limit=50, modality=modality)
             logger.debug(f"Dataset search found {len(results)} results")
             
             # Apply size filter immediately (before enrichment)
@@ -365,13 +372,23 @@ def do_search(
 
                 def _worker(payload: tuple[int, Dict[str, Any]]) -> tuple[int, bool]:
                     idx, dataset = payload
+                    dataset_id = dataset.get("id", "unknown")
                     if not getattr(panel, "_panel_active", True):
                         return idx, False
                     try:
+                        logger.debug(f"📊 [WORKER {idx}] Starting enrichment for {dataset_id}")
                         enrich_dataset_with_size(dataset, timeout=2.0)
-                        return idx, True
+                        # Check if enrichment actually worked
+                        has_size = "size_gb" in dataset and dataset.get("size_gb", 0) > 0
+                        has_rows = "num_rows" in dataset and dataset.get("num_rows", 0) > 0
+                        if has_size or has_rows:
+                            logger.debug(f"✅ [WORKER {idx}] Enriched {dataset_id} successfully")
+                            return idx, True
+                        else:
+                            logger.warning(f"⚠️ [WORKER {idx}] Enrichment returned but no size/rows for {dataset_id}")
+                            return idx, False
                     except Exception as exc:  # pragma: no cover - defensive logging
-                        logger.debug("Could not enrich %s: %s", dataset.get("id", "unknown"), exc)
+                        logger.warning(f"❌ [WORKER {idx}] Could not enrich {dataset_id}: {type(exc).__name__}: {exc}")
                         return idx, False
 
                 executor = ThreadPoolExecutor(
@@ -412,8 +429,29 @@ def do_search(
                                 ok = False
                             if ok:
                                 enriched_count += 1
-                                if idx % 5 == 0 and getattr(panel, "_panel_active", True):
-                                    panel.log(f"ℹ️ Enriched {idx}/{total} datasets so far")
+                                # Log progress more frequently and update display periodically
+                                if enriched_count % 10 == 0 and getattr(panel, "_panel_active", True):
+                                    panel.log(f"ℹ️ Enriched {enriched_count}/{total} datasets so far")
+                                    # Update display mid-enrichment for better UX
+                                    if panel.frame.winfo_exists():
+                                        try:
+                                            mid_payload = build_display_payload(filtered_results)
+                                            panel.frame.after(
+                                                0,
+                                                lambda p=mid_payload: display_search_results(
+                                                    p,
+                                                    query,
+                                                    len(results),
+                                                    panel.results_tree,
+                                                    panel.search_status_label,
+                                                    panel.status_label,
+                                                    panel.log,
+                                                    log_previews=False,
+                                                    completion_message=None,
+                                                ),
+                                            )
+                                        except Exception:
+                                            pass  # Non-critical
                             else:
                                 failed_count += 1
 
@@ -427,14 +465,23 @@ def do_search(
                     executor.shutdown(wait=abort_reason is None, cancel_futures=abort_reason is not None)
 
                 elapsed = time.perf_counter() - start_time
-                logger.debug(
-                    "Background enrichment complete: %d/%d in %.1fs (failures=%d, abort=%s)",
+                logger.info(
+                    "📈 [ENRICHMENT] Complete: %d/%d succeeded in %.1fs (failed=%d, abort=%s)",
                     enriched_count,
                     total,
                     elapsed,
                     failed_count,
                     abort_reason,
                 )
+                
+                # Log which datasets failed to enrich
+                if failed_count > 0:
+                    failed_names = []
+                    for dataset in datasets_to_enrich:
+                        if "size_gb" not in dataset or dataset.get("size_gb", 0) == 0:
+                            failed_names.append(dataset.get("id", "unknown"))
+                    if failed_names[:5]:  # Show first 5
+                        logger.warning(f"⚠️ [ENRICHMENT] Failed datasets (showing {min(5, len(failed_names))}/{len(failed_names)}): {', '.join(failed_names[:5])}")
 
                 if abort_reason == "timeout" and getattr(panel, "_panel_active", True):
                     panel.log("⚠️ Size enrichment timed out; leaving remaining datasets unprocessed")

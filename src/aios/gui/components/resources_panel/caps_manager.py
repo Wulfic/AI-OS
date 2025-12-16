@@ -70,8 +70,13 @@ def on_apply_caps(
         return
 
     try:
-        ds = panel.dataset_cap_var.get().strip()
-        dsf = float(ds) if ds else None
+        # Dataset cap moved to Settings panel (Phase 3.1)
+        # Get from settings panel if available, otherwise None
+        if hasattr(panel, "_app") and hasattr(panel._app, "settings_panel") and panel._app.settings_panel:
+            ds = panel._app.settings_panel.dataset_cap_var.get().strip()
+            dsf = float(ds) if ds else None
+        else:
+            dsf = None
     except Exception:
         dsf = None
     try:

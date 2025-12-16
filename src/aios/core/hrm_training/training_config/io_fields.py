@@ -29,8 +29,12 @@ class IOFields:
     # ============================================================================
     # I/O and Persistence
     # ============================================================================
-    save_dir: str = "training_datasets/actv1"
-    """Directory where checkpoints and training state are saved."""
+    save_dir: str = field(default_factory=_default_bundle_dir)
+    """Directory where checkpoints and training state are saved.
+    
+    Defaults to artifacts/brains/actv1 (or the configured brains directory).
+    When brain_name is provided, this is automatically set to bundle_dir/brain_name.
+    """
     
     stop_file: Optional[str] = None
     """If file exists, training stops gracefully.
@@ -91,4 +95,24 @@ class IOFields:
     - Security: No arbitrary code execution (unlike Pickle-based .pt)
     - Performance: Faster load/save with memory-mapped I/O
     - Interoperability: Standard across HuggingFace ecosystem
+    """
+    
+    start_block_id: int = 0
+    """Starting block ID for training (lower bound).
+    
+    When resuming or starting training, the system will not claim chunks
+    earlier than this block. This allows controlled partial re-training
+    or targeted continuation from a specific point in the dataset.
+    
+    Default: 0 (start from beginning)
+    """
+    
+    start_chunk_id: int = 0
+    """Starting chunk ID within the starting block (lower bound).
+    
+    Combined with start_block_id, this provides fine-grained control
+    over where training begins. The system will skip all chunks before
+    (start_block_id, start_chunk_id) when claiming work.
+    
+    Default: 0 (start from first chunk in block)
     """

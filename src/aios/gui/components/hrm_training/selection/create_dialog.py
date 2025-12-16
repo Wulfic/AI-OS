@@ -32,6 +32,11 @@ def show_create_dialog(parent_dialog: tk.Toplevel, panel: Any) -> None:
         w = tk.Toplevel(parent_dialog)
         w.title("Create New HRM Student")
         w.grab_set()
+        
+        # Apply theme styling
+        from aios.gui.utils.theme_utils import apply_theme_to_toplevel
+        apply_theme_to_toplevel(w)
+        
         inner = ttk.Frame(w)
         inner.pack(fill="both", expand=True, padx=10, pady=10)
         

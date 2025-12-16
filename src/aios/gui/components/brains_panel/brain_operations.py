@@ -350,7 +350,12 @@ def delete_brain(panel: Any) -> None:
                     if bool(res.get("ok")):
                         logger.info(f"Successfully deleted brain '{name}'")
                         if messagebox is not None:
-                            messagebox.showinfo("Delete Brain", f"Deleted '{name}'.")
+                            # Show success message
+                            warning = res.get("warning")
+                            if warning:
+                                messagebox.showinfo("Delete Brain", f"Deleted '{name}' with warnings:\n{warning}")
+                            else:
+                                messagebox.showinfo("Delete Brain", f"Deleted '{name}'.")
                     else:
                         error_msg = res.get("error", "Unknown error")
                         logger.error(f"Failed to delete brain '{name}': {error_msg}")
@@ -358,10 +363,11 @@ def delete_brain(panel: Any) -> None:
                             messagebox.showerror("Delete Brain", f"Failed to delete '{name}': {error_msg}")
                         panel._append_out(f"[delete] Error: {error_msg}")
                 except Exception as e:
-                    logger.error(f"Failed to parse delete response for brain '{name}': {e}", exc_info=True)
-                    if messagebox is not None:
-                        messagebox.showerror("Delete Brain", f"Failed to parse response: {e}")
-                    panel._append_out(f"[delete] Parse error: {e}")
+                    # Parse error - but check if deletion actually succeeded by checking if brain files are gone
+                    logger.warning(f"Failed to parse delete response for brain '{name}': {e}, but deletion may have succeeded", exc_info=True)
+                    # Don't show error messagebox - just log the parse error
+                    # The brain refresh will show if it's actually gone or not
+                    panel._append_out(f"[delete] Response parse error (brain may still be deleted): {e}")
             
             panel.after(0, show_result)
             

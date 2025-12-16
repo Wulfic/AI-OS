@@ -64,7 +64,7 @@ The "no selling" rule only applies to the AI-OS software itself, not what you cr
 
 ## 🐺 Our Logo & Branding
 
-The **WulNet Designs wolf logo** and **"AI-OS" name** are our trademarks.
+The **WulNet Designs logo** and **"AI-OS" name** are our trademarks.
 
 **You CAN:**
 - Say "Based on AI-OS by WulNet Designs" (factual attribution)

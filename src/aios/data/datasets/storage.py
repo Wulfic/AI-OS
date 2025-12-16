@@ -191,11 +191,12 @@ def set_datasets_storage_cap_gb(cap_gb: float) -> bool:
     """Persistently set the dataset storage cap in GB.
 
     Stores value under ~/.config/aios/datasets.json.
+    A value of 0 means unlimited storage.
     """
     try:
         cap = float(cap_gb)
-        if not (cap > 0):
-            return False
+        if cap < 0:
+            return False  # Negative values are invalid
         import json as _json
         p = _cap_config_path()
         with p.open("w", encoding="utf-8") as f:

@@ -158,12 +158,21 @@ def build_dialog_ui(
     json_vsb = ttk.Scrollbar(json_text_frame, orient="vertical")
     json_hsb = ttk.Scrollbar(json_text_frame, orient="horizontal")
     
+    # Get theme colors for text widget styling
+    from aios.gui.utils.theme_utils import get_theme_colors
+    colors = get_theme_colors()
+    
     json_text = tk.Text(
         json_text_frame,
         wrap="none",
         yscrollcommand=json_vsb.set,
         xscrollcommand=json_hsb.set,
         font=("Consolas", 9),
+        bg=colors["entry_bg"],
+        fg=colors["fg"],
+        insertbackground=colors["insert_bg"],
+        selectbackground=colors["select_bg"],
+        selectforeground=colors["select_fg"],
     )
     
     json_vsb.config(command=json_text.yview)

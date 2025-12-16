@@ -1189,6 +1189,20 @@ def run_parallel_training_v3(
     if not config.dataset_file:
         raise ValueError("dataset_file is required for parallel training")
     
+    # Validate and preprocess dataset if needed (before initializing BlockManager)
+    if is_primary:
+        from aios.cli.datasets.dataset_validation import validate_dataset_for_training
+        try:
+            validate_dataset_for_training(
+                dataset_file=config.dataset_file,
+                samples_per_block=config.samples_per_block,
+                ascii_only=config.ascii_only,
+            )
+        except ValueError as e:
+            print(f"\n❌ Dataset validation failed: {e}\n")
+            write_jsonl({"started": False, "error": f"dataset_validation_failed: {e}"})
+            raise typer.Exit(code=1)
+    
     if is_primary:
         print(f"[INIT] Initializing BlockManager (async)...")
         print(f"   Dataset: {config.dataset_file}")
@@ -1214,6 +1228,12 @@ def run_parallel_training_v3(
         print(f"[OK] BlockManager initialized (ready for lazy loading)")
         print(f"[INFO] Blocks will be loaded on-demand during training\n")
     
+    # Start pre-downloading first 5 blocks in background for HF streaming datasets
+    if config.dataset_file and isinstance(config.dataset_file, str) and config.dataset_file.startswith("hf://"):
+        block_manager.start_predownload(num_blocks=5)
+        if is_primary:
+            print(f"[INFO] Started background pre-download of first 5 blocks\n")
+    
     # Get total blocks if already detected (for local datasets)
     total_blocks_detected = block_manager.get_total_blocks()
     if total_blocks_detected and is_primary:
@@ -1230,7 +1250,25 @@ def run_parallel_training_v3(
         print(f"   State file: {state_file}")
         print(f"   Note: Checkpoint will be saved to: {save_dir / 'actv1_student.safetensors'}")
     
-    chunk_tracker = ChunkTracker(state_file=state_file)
+    # Extract brain_id from metadata for per-brain tracking
+    brain_id = brain_metadata.get("brain_id") if brain_metadata else None
+    # Extract dataset name from config
+    dataset_name = None
+    if config.dataset_file:
+        dataset_name = Path(config.dataset_file).stem if not config.dataset_file.startswith("hf://") else config.dataset_file.replace("hf://", "").replace("/", "_")
+    
+    if is_primary and brain_id:
+        print(f"[INFO] Brain ID: {brain_id}")
+    if is_primary and dataset_name:
+        print(f"[INFO] Dataset: {dataset_name}")
+    
+    chunk_tracker = ChunkTracker(
+        state_file=state_file,
+        brain_id=brain_id,
+        dataset_name=dataset_name,
+        start_block_id=config.start_block_id,
+        start_chunk_id=config.start_chunk_id
+    )
     
     # Set total blocks in ChunkTracker if detected
     if total_blocks_detected:

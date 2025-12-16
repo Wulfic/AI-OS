@@ -107,19 +107,41 @@ class ChunkTracker:
     
     Features:
     - Tracks (block_id, chunk_id, step) for each trained chunk
+    - Per-brain and per-dataset progress tracking
     - Saves/loads state from disk for resume capability
     - Thread-safe for parallel GPU access
     - Detects epoch completion when all blocks visited
     """
     
-    def __init__(self, state_file: Optional[Path] = None):
+    def __init__(
+        self, 
+        state_file: Optional[Path] = None, 
+        brain_id: Optional[str] = None, 
+        dataset_name: Optional[str] = None,
+        start_block_id: int = 0,
+        start_chunk_id: int = 0
+    ):
         """Initialize ChunkTracker.
         
         Args:
             state_file: Path to save/load training state
+            brain_id: Unique brain identifier (YYYYMMDDHHMMSS format)
+            dataset_name: Dataset identifier for this training session
+            start_block_id: Starting block ID lower bound (Phase 6.4)
+            start_chunk_id: Starting chunk ID lower bound (Phase 6.4)
         """
         self.state_file = state_file or Path("training_state/chunk_tracker_state.json")
+        self.brain_id = brain_id
+        self.dataset_name = dataset_name
+        self.start_block_id = start_block_id
+        self.start_chunk_id = start_chunk_id
         logger.info(f"Initializing ChunkTracker with state file: {self.state_file}")
+        if brain_id:
+            logger.info(f"  Brain ID: {brain_id}")
+        if dataset_name:
+            logger.info(f"  Dataset: {dataset_name}")
+        if start_block_id > 0 or start_chunk_id > 0:
+            logger.info(f"  Start Position: Block {start_block_id}, Chunk {start_chunk_id} (lower bound)")
         self.lock = threading.RLock()
         self._ipc_lock = _InterProcessLock(self.state_file.with_suffix(".lock"))
         self._state_mtime: Optional[float] = None
@@ -204,6 +226,12 @@ class ChunkTracker:
         self.total_true_steps = 0
 
     def _load_state_from_dict_locked(self, state: Dict) -> None:
+        # Load brain_id and dataset_name from state (may be None for old states)
+        if self.brain_id is None:
+            self.brain_id = state.get("brain_id")
+        if self.dataset_name is None:
+            self.dataset_name = state.get("dataset_name")
+        
         self.completed_chunks = {}
         for chunk_data in state.get("completed_chunks", []):
             chunk_key = (chunk_data["block_id"], chunk_data["chunk_id"])
@@ -234,6 +262,8 @@ class ChunkTracker:
     def _save_state_locked(self) -> None:
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
         state = {
+            "brain_id": self.brain_id,
+            "dataset_name": self.dataset_name,
             "completed_chunks": [
                 {
                     "block_id": progress.block_id,
@@ -290,6 +320,9 @@ class ChunkTracker:
     ) -> bool:
         """Claim a chunk for training on a specific GPU.
         
+        Phase 6.4: Enforces start position lower bound - chunks before
+        (start_block_id, start_chunk_id) cannot be claimed.
+        
         Args:
             block_id: Block ID
             chunk_id: Chunk ID within block
@@ -297,10 +330,19 @@ class ChunkTracker:
             
         Returns:
             True if chunk was successfully claimed, False if already trained
+            or before start position lower bound
         """
         logger.debug(f"GPU {gpu_id} attempting to claim chunk (block={block_id}, chunk={chunk_id})")
         with self._locked(refresh=True):
             chunk_key = (block_id, chunk_id)
+            
+            # Phase 6.4: Check start position lower bound
+            if block_id < self.start_block_id:
+                logger.debug(f"Chunk {chunk_key} rejected: block {block_id} < start_block_id {self.start_block_id}")
+                return False
+            elif block_id == self.start_block_id and chunk_id < self.start_chunk_id:
+                logger.debug(f"Chunk {chunk_key} rejected: same block but chunk {chunk_id} < start_chunk_id {self.start_chunk_id}")
+                return False
             
             # Check if already completed
             if chunk_key in self.completed_chunks:

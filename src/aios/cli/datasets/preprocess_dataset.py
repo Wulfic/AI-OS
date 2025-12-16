@@ -189,7 +189,7 @@ def _read_all_samples(directory: Path, ascii_only: bool) -> List[str]:
     
     # Fallback: Read text files
     print("   Reading text files...")
-    from .constants import TEXT_EXTS
+    from aios.data.datasets.constants import TEXT_EXTS
     
     file_count = 0
     for filepath in directory.rglob("*"):

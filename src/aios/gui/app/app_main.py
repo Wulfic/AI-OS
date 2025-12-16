@@ -272,24 +272,28 @@ def run_app(app_instance: Any) -> None:
         def update_status(text):
             """Update startup status messaging without blocking the Tk loop."""
             try:
-                logger.debug(f"Loading status: {text}")
-
-                loading_active = getattr(app, '_loading_active', False)
-
-                if loading_active and hasattr(app, '_loading_canvas') and app._loading_canvas:
-                    if hasattr(app._loading_canvas, '_status_text_id'):
-                        try:
-                            app._loading_canvas.itemconfig(app._loading_canvas._status_text_id, text=text)
-                            # Queue a no-op idle callback to ensure Tk processes canvas updates asynchronously
-                            app.root.after_idle(lambda: None)
-                        except Exception:
-                            pass
-
-                if hasattr(app, 'status_bar') and getattr(app, 'status_bar', None):
+                # Schedule update asynchronously to prevent blocking
+                def _do_update():
                     try:
-                        app.status_bar.set(text)
+                        loading_active = getattr(app, '_loading_active', False)
+
+                        if loading_active and hasattr(app, '_loading_canvas') and app._loading_canvas:
+                            if hasattr(app._loading_canvas, '_status_text_id'):
+                                try:
+                                    app._loading_canvas.itemconfig(app._loading_canvas._status_text_id, text=text)
+                                except Exception:
+                                    pass
+
+                        if hasattr(app, 'status_bar') and getattr(app, 'status_bar', None):
+                            try:
+                                app.status_bar.set(text)
+                            except Exception:
+                                pass
                     except Exception:
                         pass
+                
+                # Use after(1) for fast async execution without blocking
+                app.root.after(1, _do_update)
             except Exception:
                 pass
         
@@ -379,14 +383,19 @@ def run_app(app_instance: Any) -> None:
         setup_event_handlers(app)
         log_timing("Event handlers set up")
         
-        # 7. Set up system tray (optional)
-        _write_crash_log("run_app: Step 7 - Initializing system tray")
-        update_status("Initializing system tray...")
-        try:
-            init_tray(app)
-        except Exception as e:
-            logger.warning(f"Failed to set up system tray: {e}")
-        log_timing("System tray initialized")
+        # 7. Set up system tray (async - don't block UI)
+        _write_crash_log("run_app: Step 7 - Scheduling system tray initialization")
+        # Don't update status here - tray init happens in background
+        def _init_tray_async():
+            try:
+                init_tray(app)
+                logger.info("System tray initialized")
+            except Exception as e:
+                logger.warning(f"Failed to set up system tray: {e}")
+        
+        # Schedule tray initialization for after main loop starts (500ms delay)
+        app.root.after(500, _init_tray_async)
+        log_timing("System tray scheduled")
         
         # 8. Initialize all panels (with progress updates)
         _write_crash_log("run_app: Step 8 - Initializing panels")
@@ -519,70 +528,148 @@ def run_app(app_instance: Any) -> None:
             except Exception:
                 logger.debug("Failed to schedule post-start foreground boost", exc_info=True)
         
-        # Remove loading screen with smooth transition
+        # Remove loading screen with smooth fade-out transition
         if hasattr(app, '_loading_frame') and app._loading_frame:
-            logger.debug("Preparing loading overlay removal")
+            logger.debug("Preparing loading overlay removal with fade effect")
 
-            def _remove_loading(source: str = "unknown") -> None:
+            def _fade_and_remove_loading(source: str = "unknown") -> None:
+                """Fade out the loading screen smoothly before removing it."""
                 try:
                     if getattr(app, '_loading_removed', False):
                         logger.debug("Loading overlay already removed (source=%s)", source)
                         return
 
-                    logger.debug("Removing loading overlay (source=%s)", source)
-
-                    app._loading_removed = True
-
+                    logger.debug("Fading out loading overlay (source=%s)", source)
+                    
+                    # Disable canvas updates during fade
                     if getattr(app, '_loading_active', False):
                         app._loading_active = False
-
-                    try:
-                        app._loading_frame.destroy()
-                    finally:
-                        app._loading_frame = None
-
-                    app.root.update_idletasks()
+                    
+                    # Unbind resize event to prevent updates during fade
+                    if hasattr(app, '_loading_canvas') and app._loading_canvas:
+                        try:
+                            app._loading_canvas.unbind('<Configure>')
+                        except Exception:
+                            pass
+                    
+                    # Quick fade out effect (5 steps over 150ms)
+                    fade_steps = 5
+                    fade_delay = 30  # ms per step
+                    
+                    def _fade_step(step: int = 0) -> None:
+                        try:
+                            if step >= fade_steps or not hasattr(app, '_loading_frame') or not app._loading_frame:
+                                # Fade complete or frame already destroyed - finish removal
+                                _complete_removal()
+                                return
+                            
+                            # Calculate opacity (1.0 to 0.0)
+                            alpha = 1.0 - (step / fade_steps)
+                            
+                            # Update canvas opacity by adjusting all item fills
+                            if hasattr(app, '_loading_canvas') and app._loading_canvas:
+                                try:
+                                    # Convert alpha to hex color with opacity approximation
+                                    # Since tkinter canvas doesn't support true alpha, we blend with background
+                                    gray_value = int(30 + (200 * alpha))  # Fade to dark background
+                                    text_color = f'#{gray_value:02x}{gray_value:02x}{gray_value:02x}'
+                                    
+                                    for item in app._loading_canvas.find_all():
+                                        item_type = app._loading_canvas.type(item)
+                                        if item_type == 'text':
+                                            app._loading_canvas.itemconfig(item, fill=text_color)
+                                        elif item_type == 'image':
+                                            # Images fade by widget alpha if supported
+                                            pass
+                                except Exception:
+                                    pass
+                            
+                            # Schedule next fade step
+                            app.root.after(fade_delay, lambda: _fade_step(step + 1))
+                            
+                        except Exception as e:
+                            logger.debug(f"Fade step {step} failed: {e}")
+                            _complete_removal()
+                    
+                    def _complete_removal() -> None:
+                        """Complete the loading screen removal."""
+                        try:
+                            if getattr(app, '_loading_removed', False):
+                                return
+                            
+                            logger.debug("Completing loading overlay removal")
+                            app._loading_removed = True
+                            
+                            if hasattr(app, '_loading_frame') and app._loading_frame:
+                                try:
+                                    app._loading_frame.destroy()
+                                except Exception:
+                                    pass
+                                finally:
+                                    app._loading_frame = None
+                            
+                            # Clear canvas reference
+                            if hasattr(app, '_loading_canvas'):
+                                app._loading_canvas = None
+                            
+                            # Final UI update
+                            app.root.update_idletasks()
+                            logger.info("Loading screen removed successfully")
+                            
+                        except Exception as e:
+                            logger.warning(f"Error completing loading screen removal: {e}")
+                    
+                    # Start fade animation
+                    _fade_step(0)
+                    
                 except Exception as e:
-                    logger.warning(f"Error removing loading screen: {e}")
+                    logger.warning(f"Error fading loading screen: {e}")
+                    # Fallback to immediate removal
+                    if hasattr(app, '_loading_frame') and app._loading_frame:
+                        try:
+                            app._loading_frame.destroy()
+                            app._loading_frame = None
+                            app._loading_removed = True
+                        except Exception:
+                            pass
 
             def _ensure_overlay_removed(attempt: int = 1) -> None:
+                """Watchdog to ensure loading overlay is removed."""
                 try:
                     if getattr(app, '_loading_removed', False):
                         logger.debug("Loading overlay removal confirmed (attempt=%s)", attempt)
                         return
 
                     logger.warning("Loading overlay still present after %s attempt(s); forcing removal", attempt)
-                    _remove_loading(f"watchdog-{attempt}")
+                    
+                    # Force immediate removal without fade
+                    if hasattr(app, '_loading_frame') and app._loading_frame:
+                        try:
+                            app._loading_active = False
+                            app._loading_frame.destroy()
+                            app._loading_frame = None
+                            app._loading_removed = True
+                            logger.info("Loading screen forcibly removed by watchdog")
+                        except Exception:
+                            pass
 
-                    if not getattr(app, '_loading_removed', False) and attempt < 5:
+                    if not getattr(app, '_loading_removed', False) and attempt < 3:
                         app.root.after(500, lambda: _ensure_overlay_removed(attempt + 1))
                 except Exception:
                     logger.debug("Loading overlay watchdog failed", exc_info=True)
             
-            # Best-effort immediate removal now that startup is complete
+            # Wait a brief moment to ensure UI is fully rendered, then start fade
             try:
-                _remove_loading("pre-loop")
+                logger.debug("Scheduling loading overlay fade-out in 100ms")
+                app.root.after(100, lambda: _fade_and_remove_loading("scheduled"))
             except Exception:
-                logger.debug("Immediate loading overlay removal failed; will rely on scheduled callbacks", exc_info=True)
+                logger.debug("Failed to schedule fade; attempting immediate removal")
+                _fade_and_remove_loading("immediate-fallback")
 
-            # Schedule removal as soon as Tk is idle; fall back to a short delay if idle scheduling fails
+            # Watchdog to ensure overlay is removed even if fade fails
             try:
-                logger.debug("Scheduling loading overlay removal via after_idle")
-                app.root.after_idle(lambda: _remove_loading("after_idle"))
-            except Exception:
-                app.root.after(100, lambda: _remove_loading("after_idle-fallback"))
-
-            # Safety fallback in case Tk never reaches idle during busy startup
-            try:
-                logger.debug("Scheduling loading overlay removal fallback in 250ms")
-                app.root.after(250, lambda: _remove_loading("delay-250ms"))
-            except Exception:
-                pass
-
-            # Additional watchdog to ensure overlay cannot linger indefinitely
-            try:
-                logger.debug("Scheduling loading overlay watchdog in 750ms")
-                app.root.after(750, lambda: _ensure_overlay_removed(1))
+                logger.debug("Scheduling loading overlay watchdog in 1000ms")
+                app.root.after(1000, lambda: _ensure_overlay_removed(1))
             except Exception:
                 pass
         

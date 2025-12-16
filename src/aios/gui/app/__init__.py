@@ -24,6 +24,7 @@ Public API:
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from pathlib import Path
 from typing import Any, Callable, cast, TYPE_CHECKING
@@ -176,6 +177,24 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
         # CRITICAL: Withdraw window initially so we can set up loading screen before showing
         self.root.withdraw()
         
+        # Ensure window decorations are enabled on all platforms
+        # This ensures minimize/maximize/close buttons are present on the window frame
+        try:
+            # Explicitly disable overrideredirect to ensure decorations are shown
+            self.root.overrideredirect(False)
+            
+            # Make window resizable (required for window manager to add decorations)
+            self.root.resizable(True, True)
+            
+            # On Linux/GNOME: minimize/maximize buttons may be disabled by default
+            # Users can enable them via: gsettings set org.gnome.desktop.wm.preferences button-layout ":minimize,maximize,close"
+            # Or through GNOME Tweaks -> Window Titlebars -> Titlebar Buttons
+            if sys.platform.startswith("linux"):
+                logger.debug("Running on Linux - window decorations enabled. "
+                           "Note: GNOME disables minimize/maximize buttons by default.")
+        except Exception:
+            logger.debug("Failed to configure window decorations", exc_info=True)
+        
         # Set window icon if available
         try:
             icon_path = Path(__file__).parent.parent.parent.parent / "installers" / "AI-OS.ico"
@@ -201,8 +220,12 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
             canvas.place(relx=0, rely=0, relwidth=1, relheight=1)
             
             # Function to update canvas when window resizes
+            # Image cache to prevent repeated loading/resizing
+            _image_cache = {}
+            _last_canvas_size = [0, 0]
+            
             def update_loading_canvas(event=None):
-                """Redraw canvas content when window size changes."""
+                """Redraw canvas content when window size changes (optimized with caching)."""
                 # Skip if loading is no longer active
                 if hasattr(self, '_loading_active') and not self._loading_active:
                     return
@@ -214,22 +237,36 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
                     if w <= 1 or h <= 1:  # Not yet rendered
                         return
                     
+                    # Skip if size hasn't changed significantly (prevent micro-updates)
+                    if abs(w - _last_canvas_size[0]) < 10 and abs(h - _last_canvas_size[1]) < 10:
+                        return
+                    
+                    _last_canvas_size[0] = w
+                    _last_canvas_size[1] = h
+                    
                     # Clear canvas
                     canvas.delete('all')
                     
-                    # Reload and scale background image to current window size
+                    # Use cached images if available for this size
+                    cache_key = f"{w}x{h}"
+                    
+                    # Load and scale background image (with caching)
                     if hasattr(canvas, '_bg_image_path') and canvas._bg_image_path:
                         try:
-                            bg_img = Image.open(canvas._bg_image_path)
-                            # Scale to FIT INSIDE window (maintain aspect ratio)
-                            img_w, img_h = bg_img.size
-                            scale = min(w / img_w, h / img_h)  # FIT inside, not fill
-                            new_w = int(img_w * scale)
-                            new_h = int(img_h * scale)
-                            bg_img = bg_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                            bg_photo = ImageTk.PhotoImage(bg_img)
+                            if cache_key not in _image_cache:
+                                bg_img = Image.open(canvas._bg_image_path)
+                                # Scale to FIT INSIDE window (maintain aspect ratio)
+                                img_w, img_h = bg_img.size
+                                scale = min(w / img_w, h / img_h)
+                                new_w = int(img_w * scale)
+                                new_h = int(img_h * scale)
+                                bg_img = bg_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                                bg_photo = ImageTk.PhotoImage(bg_img)
+                                _image_cache[cache_key] = {'bg': bg_photo}
+                            else:
+                                bg_photo = _image_cache[cache_key]['bg']
+                            
                             canvas._bg_photo = bg_photo  # Keep reference
-                            # Center the image
                             canvas.create_image(w // 2, h // 2, image=bg_photo, anchor='center', tags='bg')
                         except Exception as e:
                             logger.error(f"[CANVAS] Failed to redraw background: {e}")
@@ -237,26 +274,29 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
                     # Semi-transparent overlay
                     canvas.create_rectangle(0, 0, w, h, fill='black', stipple='gray50', tags='overlay')
                     
-                    # Reload and position logo
+                    # Load and position logo (logo doesn't need size-specific caching)
                     if hasattr(canvas, '_logo_image_path') and canvas._logo_image_path:
                         try:
-                            logo_img = Image.open(canvas._logo_image_path)
-                            logo_img.thumbnail((100, 100), Image.Resampling.LANCZOS)
-                            logo_photo = ImageTk.PhotoImage(logo_img)
+                            if 'logo' not in _image_cache:
+                                logo_img = Image.open(canvas._logo_image_path)
+                                logo_img.thumbnail((100, 100), Image.Resampling.LANCZOS)
+                                logo_photo = ImageTk.PhotoImage(logo_img)
+                                _image_cache['logo'] = {'photo': logo_photo, 'size': logo_img.size}
+                            
+                            logo_photo = _image_cache['logo']['photo']
+                            logo_w, logo_h = _image_cache['logo']['size']
                             canvas._logo_photo = logo_photo  # Keep reference
-                            logo_w, logo_h = logo_img.size
                             canvas.create_image(20 + logo_w // 2, h - 20 - logo_h // 2,
                                               image=logo_photo, anchor='center', tags='logo')
                         except Exception as e:
                             logger.error(f"[CANVAS] Failed to redraw logo: {e}")
                     
-                    # Text elements at very bottom (don't overlap with brain image text)
-                    # Position near bottom to avoid covering any image content
+                    # Text elements at very bottom
                     loading_y = h - 80  # 80px from bottom
                     canvas.create_text(w // 2, loading_y, text="⏳ Loading...",
                                      font=("Arial", 16), fill='#cccccc', tags='loading')
                     
-                    # Store status text ID for updates (right below "Loading...")
+                    # Store status text ID for updates
                     status_id = canvas.create_text(w // 2, loading_y + 30, text="Starting up...",
                                                    font=("Arial", 11), fill='#999999', tags='status')
                     canvas._status_text_id = status_id
@@ -271,33 +311,61 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
             canvas._bg_image_path = bg_image_path if bg_image_path.exists() else None
             canvas._logo_image_path = logo_image_path if logo_image_path.exists() else None
             
-            # Bind canvas resize with debouncing to prevent excessive redraws
+            # Bind canvas resize with aggressive debouncing to prevent UI hangs
             _resize_scheduled = [False]  # Mutable flag for closure
+            _last_resize_time = [0.0]  # Track last resize to prevent rapid updates
+            _pending_resize_timer = [None]  # Track pending timer
             
             def _safe_canvas_update(event=None):
-                """Canvas update with debouncing to prevent UI hangs."""
+                """Canvas update with aggressive debouncing to prevent UI hangs."""
                 try:
                     # Skip if loading is done
                     if hasattr(self, '_loading_active') and not self._loading_active:
                         return
                     
+                    # Skip if canvas or frame no longer exists
+                    if not hasattr(self, '_loading_canvas') or not self._loading_canvas:
+                        return
+                    if not hasattr(self, '_loading_frame') or not self._loading_frame:
+                        return
+                    
+                    # Cancel any pending update
+                    if _pending_resize_timer[0] is not None:
+                        try:
+                            self.root.after_cancel(_pending_resize_timer[0])
+                        except Exception:
+                            pass
+                        _pending_resize_timer[0] = None
+                    
                     # Debounce: only schedule one update at a time
                     if _resize_scheduled[0]:
+                        return
+                    
+                    # Rate limit: don't update more than once every 200ms
+                    import time
+                    now = time.time()
+                    if now - _last_resize_time[0] < 0.2:
+                        # Schedule for later
+                        _pending_resize_timer[0] = self.root.after(200, lambda: _safe_canvas_update(event))
                         return
                     
                     _resize_scheduled[0] = True
                     
                     def _do_update():
                         _resize_scheduled[0] = False
+                        _pending_resize_timer[0] = None
                         try:
-                            # Only update if window is viewable
-                            if self.root.winfo_viewable():
+                            # Only update if window is viewable and loading is still active
+                            if (hasattr(self, '_loading_active') and self._loading_active and
+                                self.root.winfo_viewable() and 
+                                hasattr(self, '_loading_canvas') and self._loading_canvas):
                                 update_loading_canvas(event)
+                                _last_resize_time[0] = time.time()
                         except Exception:
                             pass
                     
-                    # Debounce by 100ms to batch rapid resize events
-                    self.root.after(100, _do_update)
+                    # Debounce by 250ms to batch rapid resize events
+                    _pending_resize_timer[0] = self.root.after(250, _do_update)
                 except Exception:
                     _resize_scheduled[0] = False
             
@@ -609,6 +677,9 @@ def run(exit_after: float | None = None, minimized: bool = False):
             root.after(int(exit_after * 1000), root.destroy)
         
         logger.info("GUI initialized successfully")
+        
+        # Note: mainloop is already started by run_app() called in __init__
+        # No need to call it again here
         
     except Exception as e:
         logger.error(f"Failed to start GUI: {e}", exc_info=True)

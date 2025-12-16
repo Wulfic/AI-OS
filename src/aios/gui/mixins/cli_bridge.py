@@ -90,7 +90,7 @@ class CliBridgeMixin:
         py_exec = get_preferred_python_executable()
         cmd = [py_exec, "-u", "-m", "aios.cli.aios", *args]
         try:
-            res = _sp.run(cmd, check=False, capture_output=True, text=True)
+            res = _sp.run(cmd, check=False, capture_output=True, text=True, encoding='utf-8', errors='replace')
             header = f"[cli] $ {' '.join(cmd)} (rc={res.returncode})\n"
             out = header + (res.stdout or "") + ("\n" + res.stderr if res.stderr else "")
             try:

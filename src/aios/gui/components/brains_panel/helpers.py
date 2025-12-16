@@ -376,3 +376,35 @@ def calculate_params_from_metadata(metadata: dict[str, Any]) -> int:
         
     except Exception:
         return 0
+
+
+def detect_orphaned_parallel_checkpoints(brain_dir: str) -> bool:
+    """Detect if a brain has orphaned parallel checkpoints.
+    
+    Returns True if:
+    1. No actv1_student.safetensors exists in the brain directory
+    2. parallel_checkpoints subdirectory exists with checkpoint files
+    
+    Args:
+        brain_dir: Path to brain directory
+        
+    Returns:
+        True if orphaned parallel checkpoints detected
+    """
+    try:
+        # Check if final checkpoint exists
+        final_checkpoint = os.path.join(brain_dir, "actv1_student.safetensors")
+        if os.path.exists(final_checkpoint):
+            return False  # Final checkpoint exists, no issue
+        
+        # Check for parallel checkpoints directory
+        parallel_dir = os.path.join(brain_dir, "parallel_checkpoints")
+        if not os.path.isdir(parallel_dir):
+            return False  # No parallel checkpoints directory
+        
+        # Check for checkpoint files
+        import glob
+        checkpoint_files = glob.glob(os.path.join(parallel_dir, "*.safetensors"))
+        return len(checkpoint_files) > 0
+    except Exception:
+        return False

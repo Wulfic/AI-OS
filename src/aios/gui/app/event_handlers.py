@@ -194,7 +194,9 @@ def setup_periodic_tasks(app: Any) -> None:
     # UI watchdog to detect long-running callbacks on the Tk thread
     watchdog_interval_ms = 250
     watchdog_threshold = 0.35  # seconds
+    watchdog_startup_grace = 30.0  # seconds - suppress warnings during startup
     app._ui_watchdog_last_tick = time.perf_counter()
+    app._ui_watchdog_start_time = time.perf_counter()
     app._ui_watchdog_max_delta = 0.0
 
     def _ui_watchdog() -> None:
@@ -202,16 +204,21 @@ def setup_periodic_tasks(app: Any) -> None:
         try:
             now = time.perf_counter()
             last_tick = getattr(app, "_ui_watchdog_last_tick", now)
+            start_time = getattr(app, "_ui_watchdog_start_time", now)
             delta = now - last_tick
             app._ui_watchdog_last_tick = now
 
+            # Suppress warnings during startup grace period
+            in_startup = (now - start_time) < watchdog_startup_grace
+            
             if delta > watchdog_threshold:
                 app._ui_watchdog_max_delta = max(getattr(app, "_ui_watchdog_max_delta", 0.0), delta)
-                logger.warning(
-                    "UI watchdog detected %.1f ms pause (threshold %.0f ms)",
-                    delta * 1000.0,
-                    watchdog_threshold * 1000.0,
-                )
+                if not in_startup:
+                    logger.warning(
+                        "UI watchdog detected %.1f ms pause (threshold %.0f ms)",
+                        delta * 1000.0,
+                        watchdog_threshold * 1000.0,
+                    )
         except Exception:
             logger.debug("UI watchdog encountered an error", exc_info=True)
         finally:

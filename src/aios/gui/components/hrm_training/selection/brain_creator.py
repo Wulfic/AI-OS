@@ -57,9 +57,14 @@ def create_brain_directory(
     os.makedirs(brain_dir, exist_ok=True)
     logger.debug(f"Directory path: {brain_dir}")
     
+    # Generate unique brain ID (YYYYMMDDHHMMSS format)
+    from datetime import datetime
+    brain_id = datetime.now().strftime("%Y%m%d%H%M%S")
+    
     # Build brain metadata
     brain_metadata = {
         "name": safe_name,
+        "brain_id": brain_id,  # Unique identifier for this brain
         "type": "actv1",
         "tokenizer_id": tokenizer_id,
         "tokenizer_model": tokenizer_model,

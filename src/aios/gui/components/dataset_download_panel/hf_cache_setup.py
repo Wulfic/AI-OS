@@ -39,19 +39,10 @@ def setup_hf_cache_env():
     else:
         _hf_cache_base = None
     
-    # Use smart defaults if no config
+    # Use install root default if no config
     if not _hf_cache_base or not (_hf_cache_base.exists() or _hf_cache_base.parent.exists()):
-        # Try non-C data drives first
-        for _drive in ["D", "E", "F", "Z"]:
-            try:
-                _drive_path = Path(f"{_drive}:/")
-                if _drive_path.exists():
-                    _hf_cache_base = _drive_path / "AI-OS-Data" / "hf_cache"
-                    break
-            except Exception:
-                continue
-        else:
-            _hf_cache_base = Path.cwd() / "training_datasets" / "hf_cache"
+        # Default to install root location
+        _hf_cache_base = Path.cwd() / "training_datasets" / "hf_cache"
     
     try:
         _hf_cache_base.mkdir(parents=True, exist_ok=True)

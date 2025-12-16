@@ -125,7 +125,80 @@ class BlockManager:
         logger.debug("Detecting total blocks at initialization")
         self._detect_total_blocks_at_init()
         
+        # Pre-download state
+        self._predownload_thread: Optional[threading.Thread] = None
+        self._predownload_blocks: int = 5  # Number of blocks to pre-download
+        
         logger.info(f"BlockManager initialized successfully{f' ({self.total_blocks_detected} blocks detected)' if self.total_blocks_detected else ''}")
+    
+    def start_predownload(self, num_blocks: int = 5) -> None:
+        """Start background pre-download of first N blocks for HuggingFace streaming datasets.
+        
+        This downloads blocks in the background to reduce wait time when training reaches them.
+        Only applicable to HF streaming datasets (hf://...).
+        
+        Args:
+            num_blocks: Number of blocks to pre-download (default: 5)
+        """
+        # Only pre-download for HF streaming datasets
+        if not (isinstance(self.dataset_path, str) and self.dataset_path.startswith("hf://")):
+            logger.debug("Skipping pre-download: not an HF streaming dataset")
+            return
+        
+        self._predownload_blocks = num_blocks
+        
+        # Don't start if already running
+        if self._predownload_thread and self._predownload_thread.is_alive():
+            logger.debug("Pre-download already in progress")
+            return
+        
+        def _predownload_worker():
+            """Background worker that pre-downloads first N blocks."""
+            logger.info(f"Starting pre-download of first {num_blocks} blocks in background...")
+            
+            for block_id in range(num_blocks):
+                try:
+                    # Check if already cached
+                    hf_path = self.dataset_path[5:]  # Remove 'hf://' prefix
+                    parts = hf_path.split(":")
+                    dataset_path = parts[0]
+                    config = parts[1] if len(parts) > 1 else None
+                    split = parts[2] if len(parts) > 2 else "train"
+                    
+                    # Check cache first
+                    cached = self._cache.get_cached_chunk(
+                        dataset_path=dataset_path,
+                        config=config,
+                        split=split,
+                        chunk_index=block_id,
+                        max_age_hours=168.0,  # 7 days
+                        max_lines=self.samples_per_block
+                    )
+                    
+                    if cached:
+                        logger.debug(f"Pre-download: Block {block_id} already cached ({len(cached)} samples)")
+                        continue
+                    
+                    # Load block (this will cache it)
+                    logger.info(f"Pre-downloading Block {block_id} ({block_id + 1}/{num_blocks})...")
+                    block = self._load_hf_block(block_id)
+                    
+                    if block is None:
+                        logger.info(f"Pre-download stopped: dataset exhausted at block {block_id}")
+                        break
+                    
+                    logger.info(f"Pre-downloaded Block {block_id}: {len(block.samples)} samples")
+                    
+                except Exception as e:
+                    logger.warning(f"Pre-download failed for block {block_id}: {e}")
+                    continue
+            
+            logger.info(f"Pre-download complete")
+        
+        # Start background thread
+        self._predownload_thread = threading.Thread(target=_predownload_worker, daemon=True, name="BlockPredownload")
+        self._predownload_thread.start()
+        logger.debug("Pre-download thread started")
     
     def get_chunk(self, block_id: int, chunk_id: int, chunk_size: int) -> Optional[List[str]]:
         """Get a specific chunk from a block, loading only that chunk into memory.

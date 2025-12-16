@@ -289,6 +289,12 @@ class TrainingConfig(
         args.extend(["--save-dir", self.save_dir])
         args.extend(["--bundle-dir", self.bundle_dir])
         
+        # Start position (Phase 6.4 - Training Resume Start Position Selector)
+        if self.start_block_id > 0:
+            args.extend(["--start-block-id", str(self.start_block_id)])
+        if self.start_chunk_id > 0:
+            args.extend(["--start-chunk-id", str(self.start_chunk_id)])
+        
         return args
     
     def __repr__(self) -> str:

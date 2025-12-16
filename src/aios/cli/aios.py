@@ -95,19 +95,11 @@ def _get_hf_cache_dir() -> Path:
     except Exception:
         pass
 
-    for drive_letter in ["D", "E", "F", "Z"]:
-        try:
-            drive_path = Path(f"{drive_letter}:/")
-            if drive_path.exists():
-                candidates.append(drive_path / "AI-OS-Data" / "hf_cache")
-        except Exception:
-            continue
-
+    # Use install root as default fallback
     candidates.extend(
         [
-            Path.home() / ".cache" / "aios" / "hf_cache",
-            Path.home() / "AI-OS" / "hf_cache",
             Path.cwd() / "training_datasets" / "hf_cache",
+            Path.home() / ".cache" / "aios" / "hf_cache",
         ]
     )
 

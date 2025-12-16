@@ -45,6 +45,7 @@ class SettingsPanel:
         help_panel: Any | None = None,
         debug_panel: Any | None = None,
         worker_pool: Any | None = None,
+        app: Any | None = None,
     ) -> None:
         self.parent = parent
         self._save_state_fn = save_state_fn
@@ -52,6 +53,7 @@ class SettingsPanel:
         self._help_panel = help_panel
         self._debug_panel = debug_panel
         self._worker_pool = worker_pool
+        self._app = app
         self._debug_file_handler: logging.Handler | None = None
         self._last_theme_applied: str | None = None
         self._last_theme_applied_at: float = 0.0
@@ -76,24 +78,42 @@ class SettingsPanel:
         right_column = ttk.Frame(columns_frame)
         right_column.pack(side="left", fill="both", expand=True, padx=(5, 0))
         
-        # Left column: Appearance, General Settings, Support
+        # Left column: Appearance, General Settings, Help, Support
         ui_builders.create_appearance_section(self, left_column)
         ui_builders.create_general_settings_section(self, left_column)
+        ui_builders.create_help_section(self, left_column)
         ui_builders.create_support_section(self, left_column)
         
-        # Right column: Logging, Help, Cache
+        # Right column: Logging, Cache, Dataset Storage
         ui_builders.create_logging_section(self, right_column)
-        ui_builders.create_help_section(self, right_column)
         ui_builders.create_cache_section(self, right_column)
+        ui_builders.create_dataset_storage_section(self, right_column)
         
-        # Load initial settings
+        # Load initial settings (non-blocking only)
         self._load_startup_status()
         self._load_cache_size()
         self._refresh_cache_stats()
+        # NOTE: _load_dataset_cap() and _load_artifacts_path() are called via 
+        # load_settings_deferred() after mainloop starts to avoid blocking
+        # the UI thread with CLI subprocess calls during initialization.
 
     def _apply_theme(self, theme: str) -> None:
         """Apply the selected theme to the application."""
         theme_manager.apply_theme(self, theme)
+
+    def load_settings_deferred(self) -> None:
+        """Load settings that require CLI calls (deferred to after mainloop starts).
+        
+        This method is called from panel_setup after mainloop is running to avoid
+        blocking the UI thread with subprocess calls during initialization.
+        """
+        try:
+            logger.debug("Loading deferred settings (dataset cap, artifacts path)...")
+            self._load_dataset_cap()
+            self._load_artifacts_path()
+            logger.debug("Deferred settings loaded successfully")
+        except Exception as e:
+            logger.error(f"Error loading deferred settings: {e}", exc_info=True)
 
     def _open_kofi_link(self) -> None:
         """Open Ko-fi link in default browser."""
@@ -101,6 +121,339 @@ class SettingsPanel:
             webbrowser.open("https://ko-fi.com/wulfic")
         except Exception as e:
             logger.error(f"Error opening Ko-fi link: {e}")
+
+    def _open_github_link(self) -> None:
+        """Open GitHub repository in default browser (Phase 2.4)."""
+        try:
+            webbrowser.open("https://github.com/Wulfic/AI-OS")
+        except Exception as e:
+            logger.error(f"Error opening GitHub link: {e}")
+
+    def _load_dataset_cap(self) -> None:
+        """Load dataset cap from config (Phase 3.1)."""
+        try:
+            # Prevent re-entry and duplicate calls
+            if getattr(self, '_dataset_cap_loaded', False):
+                return
+            self._dataset_cap_loaded = True
+            
+            # Flag to prevent save during initial load
+            self._loading_dataset_cap = True
+            
+            # Get cap from CLI (use allow_sync_cli for initialization)
+            if hasattr(self, "_app") and hasattr(self._app, "_run_cli"):
+                with self._app.allow_sync_cli(reason="settings_panel_init"):
+                    result_str = self._app._run_cli(["datasets-get-cap"])
+                    # Parse the CLI output string to dictionary
+                    result = self._app._parse_cli_dict(result_str) if hasattr(self._app, "_parse_cli_dict") else {}
+                    if result and "cap_gb" in result:
+                        cap = result.get("cap_gb", 0)
+                        if cap and cap > 0:
+                            self.dataset_cap_var.set(str(cap))
+                        else:
+                            self.dataset_cap_var.set("")
+            
+            # Setup auto-save on change (with debouncing) - only once
+            if not getattr(self, '_cap_trace_added', False):
+                self._cap_trace_added = True
+                self._cap_save_pending = False
+                self._last_cap_value = self.dataset_cap_var.get()
+                
+                def _on_cap_change(*args):
+                    # Skip if loading or value unchanged
+                    if getattr(self, '_loading_dataset_cap', False):
+                        return
+                    new_val = self.dataset_cap_var.get()
+                    if new_val == getattr(self, '_last_cap_value', ''):
+                        return
+                    self._last_cap_value = new_val
+                    
+                    # Debounce: only save after 1000ms of no changes
+                    if getattr(self, '_cap_save_pending', False):
+                        return
+                    self._cap_save_pending = True
+                    
+                    def _do_save():
+                        self._cap_save_pending = False
+                        self._save_dataset_cap()
+                    
+                    if hasattr(self, '_app') and hasattr(self._app, 'root'):
+                        self._app.root.after(1000, _do_save)
+                    else:
+                        _do_save()
+                
+                self.dataset_cap_var.trace_add("write", _on_cap_change)
+            
+            # Mark loading complete
+            self._loading_dataset_cap = False
+            
+            # Refresh usage display only once (async to not block)
+            if hasattr(self, '_app') and hasattr(self._app, 'root'):
+                if not getattr(self, '_usage_refresh_scheduled', False):
+                    self._usage_refresh_scheduled = True
+                    self._app.root.after(500, self._refresh_dataset_usage)
+        except Exception as e:
+            self._loading_dataset_cap = False
+            logger.error(f"Error loading dataset cap: {e}", exc_info=True)
+
+    def _save_dataset_cap(self) -> None:
+        """Save dataset cap to config (Phase 3.1)."""
+        try:
+            if not hasattr(self, "_app") or not hasattr(self._app, "_run_cli"):
+                return
+            
+            cap_str = self.dataset_cap_var.get().strip()
+            if cap_str:
+                try:
+                    cap_gb = float(cap_str)
+                    if cap_gb > 0:
+                        with self._app.allow_sync_cli(reason="save_dataset_cap"):
+                            self._app._run_cli(["datasets-set-cap", str(cap_gb)])
+                        logger.info(f"Dataset cap set to {cap_gb} GB")
+                        # Schedule refresh only if not already scheduled
+                        if hasattr(self, '_app') and hasattr(self._app, 'root'):
+                            if not getattr(self, '_usage_refresh_scheduled', False):
+                                self._usage_refresh_scheduled = True
+                                self._app.root.after(500, self._refresh_dataset_usage)
+                except ValueError:
+                    logger.warning(f"Invalid dataset cap value: {cap_str}")
+            else:
+                # Empty = unlimited
+                with self._app.allow_sync_cli(reason="save_dataset_cap_unlimited"):
+                    self._app._run_cli(["datasets-set-cap", "0"])
+                logger.info("Dataset cap set to unlimited")
+                # Schedule refresh only if not already scheduled
+                if hasattr(self, '_app') and hasattr(self._app, 'root'):
+                    if not getattr(self, '_usage_refresh_scheduled', False):
+                        self._usage_refresh_scheduled = True
+                        self._app.root.after(500, self._refresh_dataset_usage)
+        except Exception as e:
+            logger.error(f"Error saving dataset cap: {e}", exc_info=True)
+
+    def _refresh_dataset_usage(self) -> None:
+        """Refresh dataset storage usage display (Phase 3.1)."""
+        try:
+            # Clear the scheduled flag
+            self._usage_refresh_scheduled = False
+            
+            if not hasattr(self, "_app") or not hasattr(self._app, "_run_cli"):
+                return
+            
+            # Use the correct CLI command: datasets-stats
+            with self._app.allow_sync_cli(reason="refresh_dataset_usage"):
+                result_str = self._app._run_cli(["datasets-stats"])
+            # Parse the JSON response from the CLI output
+            import json
+            result = None
+            try:
+                # Try to parse as JSON directly
+                result = json.loads(result_str)
+            except Exception:
+                # If direct parse fails, try to extract JSON from CLI output
+                import re
+                match = re.search(r'\{.*\}', result_str, re.DOTALL)
+                if match:
+                    result = json.loads(match.group(0))
+            
+            if result and isinstance(result, dict):
+                usage = result.get("usage_gb", 0)
+                cap = result.get("cap_gb", 0)
+                
+                if cap and cap > 0:
+                    usage_text = f"Using {usage:.2f} GB / {cap:.2f} GB"
+                else:
+                    usage_text = f"Using {usage:.2f} GB (unlimited)"
+                
+                if hasattr(self, "dataset_usage_label"):
+                    self.dataset_usage_label.config(text=usage_text)
+        except Exception as e:
+            logger.debug(f"Error refreshing dataset usage: {e}")
+
+    def _resolve_default_artifacts_dir(self) -> str:
+        """Resolve the default artifacts directory (Phase 3.2)."""
+        try:
+            from aios.system import paths as system_paths
+            if system_paths is not None:
+                try:
+                    return str(system_paths.get_artifacts_root())
+                except Exception:
+                    logger.debug("Failed to resolve ProgramData artifacts root", exc_info=True)
+        except ImportError:
+            logger.debug("aios.system.paths not available, using fallback", exc_info=True)
+        try:
+            from pathlib import Path
+            return str(Path(__file__).resolve().parents[5] / "artifacts")
+        except Exception:
+            from pathlib import Path
+            return str(Path.cwd() / "artifacts")
+
+    def _set_artifacts_status(self, message: str, color: str = "gray") -> None:
+        """Set artifacts directory status message (Phase 3.2)."""
+        try:
+            self._artifacts_status_var.set(message)
+            if self._artifacts_status_label is not None:
+                self._artifacts_status_label.configure(foreground=color)
+        except Exception:
+            logger.debug("Failed to update artifacts status label", exc_info=True)
+
+    def _probe_directory_writable(self, path) -> str | None:
+        """Test if directory is writable (Phase 3.2)."""
+        from pathlib import Path
+        import os
+        
+        path = Path(path)
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            return f"Failed to create directory: {exc}"
+
+        probe = path / f".aios-write-test-{os.getpid()}"
+        try:
+            probe.write_text("ok", encoding="utf-8")
+        except Exception as exc:
+            try:
+                probe.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return f"Failed to write probe file: {exc}"
+
+        try:
+            probe.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return None
+
+    def _apply_artifacts_override(self, path) -> None:
+        """Apply artifacts directory override (Phase 3.2)."""
+        try:
+            from aios.system.paths import system_paths
+        except ImportError:
+            import aios.system.paths as system_paths
+        import os
+        
+        if system_paths is not None:
+            try:
+                system_paths.set_artifacts_root_override(path)
+            except Exception:
+                logger.debug("Failed to apply artifacts override", exc_info=True)
+
+        if path is None:
+            os.environ.pop("AIOS_ARTIFACTS_DIR", None)
+        else:
+            os.environ["AIOS_ARTIFACTS_DIR"] = str(path)
+
+    def _validate_artifacts_dir(self, value: str | None = None, *, apply_override: bool = True) -> bool:
+        """Validate artifacts directory path (Phase 3.2)."""
+        from pathlib import Path
+        try:
+            from aios.system.paths import system_paths
+        except ImportError:
+            import aios.system.paths as system_paths
+        
+        if not hasattr(self, "_artifacts_default_dir"):
+            self._artifacts_default_dir = self._resolve_default_artifacts_dir()
+        
+        raw_value = (value if value is not None else self.artifacts_dir_var.get() or "").strip()
+        if not raw_value:
+            self._artifacts_dir_is_valid = True
+            self._set_artifacts_status(f"Using default path: {self._artifacts_default_dir}", "gray")
+            if apply_override:
+                self._apply_artifacts_override(None)
+            return True
+
+        candidate = Path(raw_value).expanduser()
+        if not candidate.is_absolute():
+            self._artifacts_dir_is_valid = False
+            self._set_artifacts_status("Enter an absolute path (e.g., D:\\AI-OS\\artifacts)", "#c0392b")
+            return False
+
+        if system_paths is not None:
+            try:
+                error = system_paths.test_directory_writable(candidate)
+            except Exception as exc:
+                error = str(exc)
+        else:
+            error = self._probe_directory_writable(candidate)
+
+        if error:
+            self._artifacts_dir_is_valid = False
+            self._set_artifacts_status(error, "#c0392b")
+            return False
+
+        self._artifacts_dir_is_valid = True
+        self._set_artifacts_status(f"Custom path OK: {candidate}", "#1d8348")
+        if apply_override:
+            self._apply_artifacts_override(candidate)
+        return True
+
+    def _browse_artifacts_dir(self) -> None:
+        """Browse for artifacts directory (Phase 3.2)."""
+        from tkinter import filedialog
+        
+        if not hasattr(self, "_artifacts_default_dir"):
+            self._artifacts_default_dir = self._resolve_default_artifacts_dir()
+        
+        initial = self.artifacts_dir_var.get().strip() or self._artifacts_default_dir
+        try:
+            selected = filedialog.askdirectory(initialdir=initial, title="Select artifacts directory")
+        except Exception:
+            logger.warning("Failed to open artifacts folder picker", exc_info=True)
+            return
+
+        if selected:
+            self.artifacts_dir_var.set(selected)
+            self._validate_artifacts_dir()
+
+    def _reset_artifacts_dir(self) -> None:
+        """Reset artifacts directory to default (Phase 3.2)."""
+        self.artifacts_dir_var.set("")
+        self._validate_artifacts_dir()
+
+    def _load_artifacts_path(self) -> None:
+        """Load artifacts directory configuration (Phase 3.2)."""
+        try:
+            # Initialize defaults
+            self._artifacts_default_dir = self._resolve_default_artifacts_dir()
+            self._artifacts_dir_is_valid = True
+            
+            # Check for existing override from environment
+            import os
+            override = os.environ.get("AIOS_ARTIFACTS_DIR", "").strip()
+            if override:
+                self.artifacts_dir_var.set(override)
+            
+            # Validate initial path
+            self._validate_artifacts_dir(apply_override=False)
+            
+            # Setup auto-save on change
+            def _on_artifacts_change(*args):
+                if not self._restoring_state:
+                    self._validate_artifacts_dir()
+            
+            self.artifacts_dir_var.trace_add("write", _on_artifacts_change)
+            
+        except Exception as e:
+            logger.error(f"Error loading artifacts path: {e}", exc_info=True)
+
+    def _browse_download_location(self) -> None:
+        """Browse for download location (Phase 3.3)."""
+        from tkinter import filedialog
+        
+        initial = self.download_location_var.get().strip() or "training_datasets"
+        try:
+            selected = filedialog.askdirectory(initialdir=initial, title="Select dataset download location")
+        except Exception:
+            logger.warning("Failed to open download location picker", exc_info=True)
+            return
+
+        if selected:
+            self.download_location_var.set(selected)
+            logger.info(f"Download location set to: {selected}")
+
+    def _reset_download_location(self) -> None:
+        """Reset download location to default (Phase 3.3)."""
+        self.download_location_var.set("training_datasets")
+        logger.info("Download location reset to default: training_datasets")
 
     def _load_startup_status(self) -> None:
         """Load current startup status from Windows registry."""
@@ -191,6 +544,7 @@ class SettingsPanel:
             "start_minimized": self.start_minimized_var.get(),
             "minimize_to_tray": self.minimize_to_tray_var.get(),
             "log_level": self.log_level_var.get(),
+            "download_location": self.download_location_var.get() if hasattr(self, 'download_location_var') else "training_datasets",
         }
 
     def set_state(self, state: dict[str, Any]) -> None:
@@ -231,6 +585,14 @@ class SettingsPanel:
                 self.start_minimized_var.set(bool(start_minimized))
         except Exception:
             pass
+        
+        try:
+            download_location = state.get("download_location")
+            if download_location and hasattr(self, 'download_location_var'):
+                self.download_location_var.set(download_location)
+                logger.info(f"Restored download location: {download_location}")
+        except Exception as e:
+            logger.error(f"Failed to restore download location: {e}")
         
         try:
             minimize_to_tray = state.get("minimize_to_tray")
@@ -535,3 +897,140 @@ class SettingsPanel:
                     enable_debug,
                     elapsed,
                 )
+
+    def _clear_old_logs(self) -> None:
+        """Clear old log files (non-current session).
+        
+        Deletes rotated/archived log files to free disk space while preserving
+        the current session's log files.
+        """
+        try:
+            from tkinter import messagebox
+            import glob
+            
+            logger.info("User action: Clearing old log files")
+            
+            # Get all log files in the logs directory
+            log_files = []
+            patterns = [
+                os.path.join(LOG_DIR, "aios.log.*"),  # Rotated standard logs
+                os.path.join(LOG_DIR, "aios_debug.log.*"),  # Rotated debug logs
+            ]
+            
+            for pattern in patterns:
+                log_files.extend(glob.glob(pattern))
+            
+            if not log_files:
+                messagebox.showinfo(
+                    "Clear Old Logs",
+                    "No old log files found to clear.\n\n"
+                    "Only rotated/archived logs (e.g., aios.log.1, aios.log.2) are cleared.\n"
+                    "Current session logs are always preserved."
+                )
+                return
+            
+            # Ask for confirmation
+            file_count = len(log_files)
+            total_size = sum(os.path.getsize(f) for f in log_files if os.path.exists(f))
+            size_mb = total_size / (1024 * 1024)
+            
+            ok = messagebox.askyesno(
+                "Clear Old Logs",
+                f"Found {file_count} old log file(s) totaling {size_mb:.2f} MB.\n\n"
+                "This will delete rotated/archived logs from previous sessions.\n"
+                "Current session logs (aios.log, aios_debug.log) will be preserved.\n\n"
+                "Continue?"
+            )
+            
+            if not ok:
+                logger.info("User cancelled log clearing operation")
+                return
+            
+            # Delete old log files
+            deleted = 0
+            errors = []
+            for log_file in log_files:
+                try:
+                    os.remove(log_file)
+                    deleted += 1
+                    logger.debug(f"Deleted old log file: {log_file}")
+                except Exception as e:
+                    errors.append(f"{os.path.basename(log_file)}: {e}")
+                    logger.warning(f"Failed to delete {log_file}: {e}")
+            
+            # Show result
+            if errors:
+                messagebox.showwarning(
+                    "Clear Old Logs",
+                    f"Deleted {deleted} of {file_count} log files.\n\n"
+                    f"Failed to delete {len(errors)} file(s):\n" +
+                    "\n".join(errors[:5]) +
+                    ("\n..." if len(errors) > 5 else "")
+                )
+            else:
+                messagebox.showinfo(
+                    "Clear Old Logs",
+                    f"Successfully deleted {deleted} old log file(s) ({size_mb:.2f} MB freed)."
+                )
+            
+            logger.info(f"Cleared {deleted} old log files, {len(errors)} errors")
+            
+            # Update log size display
+            self._update_log_size()
+            
+        except Exception as e:
+            logger.error(f"Error clearing old logs: {e}", exc_info=True)
+            try:
+                from tkinter import messagebox
+                messagebox.showerror("Clear Old Logs", f"Error: {e}")
+            except Exception:
+                pass
+
+    def _update_log_size(self) -> None:
+        """Update the log folder size indicator."""
+        def _calculate():
+            try:
+                total_size = 0
+                file_count = 0
+                
+                # Walk through logs directory
+                if os.path.isdir(LOG_DIR):
+                    for root, dirs, files in os.walk(LOG_DIR):
+                        for file in files:
+                            if file.endswith('.log') or '.log.' in file:
+                                file_path = os.path.join(root, file)
+                                try:
+                                    total_size += os.path.getsize(file_path)
+                                    file_count += 1
+                                except Exception:
+                                    pass
+                
+                # Format size
+                size_mb = total_size / (1024 * 1024)
+                size_str = f"Log Folder: {size_mb:.2f} MB ({file_count} files)"
+                
+                # Update UI on main thread
+                if hasattr(self, 'log_size_var'):
+                    try:
+                        self.log_size_var.set(size_str)
+                    except Exception:
+                        pass
+                
+                logger.debug(f"Log folder size: {size_mb:.2f} MB ({file_count} files)")
+                
+            except Exception as e:
+                logger.warning(f"Error calculating log size: {e}")
+                if hasattr(self, 'log_size_var'):
+                    try:
+                        self.log_size_var.set("Log Folder: ? MB")
+                    except Exception:
+                        pass
+        
+        # Run in background
+        if hasattr(self, '_worker_pool'):
+            try:
+                submit_background("log-size-calc", _calculate, pool=self._worker_pool)
+            except Exception:
+                _calculate()  # Fallback to sync
+        else:
+            _calculate()

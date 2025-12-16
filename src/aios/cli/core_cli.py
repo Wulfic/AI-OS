@@ -160,17 +160,8 @@ def gui(
             _hf_cache_dir = None
         
         if not _hf_cache_dir or not (_hf_cache_dir.exists() or _hf_cache_dir.parent.exists()):
-            # Smart default: find non-C data drive
-            for drive in ["D", "E", "F", "Z"]:
-                try:
-                    drive_path = Path(f"{drive}:/")
-                    if drive_path.exists():
-                        _hf_cache_dir = drive_path / "AI-OS-Data" / "hf_cache"
-                        break
-                except Exception:
-                    continue
-            else:
-                _hf_cache_dir = Path.cwd() / "training_datasets" / "hf_cache"
+            # Default to install root location
+            _hf_cache_dir = Path.cwd() / "training_datasets" / "hf_cache"
         
         try:
             _hf_cache_dir.mkdir(parents=True, exist_ok=True)

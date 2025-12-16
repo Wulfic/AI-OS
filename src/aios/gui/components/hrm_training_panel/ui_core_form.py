@@ -203,6 +203,10 @@ def build_core_form(panel: HRMTrainingPanel, parent: any) -> None:  # type: igno
         dialog.grab_set()
         dialog.minsize(640, 480)
         dialog.resizable(True, True)
+        
+        # Apply theme styling
+        from aios.gui.utils.theme_utils import apply_theme_to_toplevel
+        apply_theme_to_toplevel(dialog)
 
         container = ttk.Frame(dialog, padding=12)
         container.pack(fill="both", expand=True)
@@ -536,6 +540,10 @@ def show_dataset_selector(panel: HRMTrainingPanel) -> None:
         dialog.title("Select Dataset")
         dialog.grab_set()
         dialog.geometry("700x450")
+        
+        # Apply theme styling
+        from aios.gui.utils.theme_utils import apply_theme_to_toplevel
+        apply_theme_to_toplevel(dialog)
         
         frame = ttk.Frame(dialog)
         frame.pack(fill="both", expand=True, padx=10, pady=10)

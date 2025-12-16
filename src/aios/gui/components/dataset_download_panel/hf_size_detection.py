@@ -19,9 +19,10 @@ from typing import Optional, Dict, Any, Tuple, List
 
 import httpx
 
-from ....data.hf_async_client import fetch_json_sync
-
 logger = logging.getLogger(__name__)
+
+# Create a reusable HTTP client for synchronous requests
+_http_client = httpx.Client(timeout=10.0, follow_redirects=True)
 
 # Lazy import - will be None if library not installed
 try:
@@ -138,7 +139,13 @@ def get_hf_dataset_size_api(
     try:
         url = f"https://datasets-server.huggingface.co/size?dataset={dataset_name}"
         timeout = request_timeout or API_TIMEOUT_DEFAULT
-        data = fetch_json_sync(url, timeout=timeout, max_attempts=max_attempts)
+        logger.debug(f"🔍 [SIZE API] Requesting: {dataset_name} (config={config}, split={split}, timeout={timeout}s)")
+        
+        # Use synchronous HTTP client (works in threads without async loop)
+        response = _http_client.get(url, timeout=timeout)
+        response.raise_for_status()
+        data = response.json()
+        logger.debug(f"📦 [SIZE API] Response keys for {dataset_name}: {list(data.keys())}")
         
         # Check if partial (incomplete data)
         is_partial = data.get("partial", False)
@@ -166,7 +173,9 @@ def get_hf_dataset_size_api(
             target_split = size_info.get("dataset", {})
         
         if not target_split or "num_rows" not in target_split:
-            logger.debug(f"No row count found in Dataset Viewer API response for {dataset_name}")
+            logger.debug(f"❌ [SIZE API] No row count for {dataset_name} - target_split: {target_split}")
+            logger.debug(f"   Available splits: {[s.get('split') for s in size_info.get('splits', [])]}")
+            logger.debug(f"   Available configs: {[c.get('config') for c in size_info.get('configs', [])]}")
             return None
         
         num_rows = target_split["num_rows"]
@@ -178,7 +187,7 @@ def get_hf_dataset_size_api(
         # Calculate blocks (100k samples per block)
         total_blocks = calculate_blocks(num_rows)
         
-        return {
+        result = {
             "num_rows": num_rows,
             "num_bytes": num_bytes,
             "size_mb": num_bytes / (1024 * 1024),
@@ -188,15 +197,17 @@ def get_hf_dataset_size_api(
             "is_partial": is_partial,
             "source": "dataset_viewer_api"
         }
+        logger.debug(f"✅ [SIZE API] Success for {dataset_name}: {num_rows:,} rows, {result['size_gb']:.3f} GB")
+        return result
         
     except httpx.HTTPStatusError as e:
-        logger.debug(f"Dataset Viewer API returned status {e.response.status_code} for {dataset_name}")
+        logger.debug(f"❌ [SIZE API] HTTP {e.response.status_code} for {dataset_name}: {e}")
         return None
     except httpx.HTTPError as e:
-        logger.debug(f"Network error fetching dataset size via API for {dataset_name}: {e}")
+        logger.debug(f"❌ [SIZE API] Network error for {dataset_name}: {e}")
         return None
     except Exception as e:
-        logger.debug(f"Error fetching dataset size via API for {dataset_name}: {e}")
+        logger.debug(f"❌ [SIZE API] Unexpected error for {dataset_name}: {type(e).__name__}: {e}")
         return None
 
 
@@ -222,7 +233,7 @@ def get_hf_dataset_info_api(
     Returns:
         Dictionary with keys:
             - num_rows: Number of rows (exact)
-            - num_bytes: Size in bytes
+            - num_bytes: Size in bytes (estimated from row count if not available)
             - size_mb: Size in megabytes
             - size_gb: Size in gigabytes
             - total_blocks: Number of 100k-sample blocks
@@ -242,8 +253,15 @@ def get_hf_dataset_info_api(
     try:
         url = f"https://datasets-server.huggingface.co/info?dataset={dataset_name}"
         timeout = request_timeout or API_TIMEOUT_DEFAULT
-        data = fetch_json_sync(url, timeout=timeout, max_attempts=max_attempts)
+        logger.debug(f"🔍 [INFO API] Requesting: {dataset_name} (config={config}, split={split}, timeout={timeout}s)")
+        
+        # Use synchronous HTTP client (works in threads without async loop)
+        response = _http_client.get(url, timeout=timeout)
+        response.raise_for_status()
+        data = response.json()
+        logger.debug(f"📦 [INFO API] Response keys for {dataset_name}: {list(data.keys())}")
         dataset_info = data.get("dataset_info", {})
+        logger.debug(f"   Configs available: {list(dataset_info.keys())}")
         
         # Find the right config
         if config and config in dataset_info:
@@ -271,12 +289,13 @@ def get_hf_dataset_info_api(
         num_bytes = split_info.get("num_bytes", 0)
         
         if num_examples == 0:
+            logger.debug(f"❌ [INFO API] Zero examples for {dataset_name}")
             return None
         
         # Calculate blocks
         total_blocks = calculate_blocks(num_examples)
         
-        return {
+        result = {
             "num_rows": num_examples,
             "num_bytes": num_bytes,
             "size_mb": num_bytes / (1024 * 1024),
@@ -290,15 +309,17 @@ def get_hf_dataset_info_api(
             "num_rows_estimated": False,
             "source": "info_api"
         }
+        logger.debug(f"✅ [INFO API] Success for {dataset_name}: {num_examples:,} rows, {result['size_gb']:.3f} GB, features={feature_types}")
+        return result
         
     except httpx.HTTPStatusError as e:
-        logger.debug(f"Dataset Info API returned status {e.response.status_code} for {dataset_name}")
+        logger.debug(f"❌ [INFO API] HTTP {e.response.status_code} for {dataset_name}: {e}")
         return None
     except httpx.HTTPError as e:
-        logger.debug(f"Network error fetching dataset info API for {dataset_name}: {e}")
+        logger.debug(f"❌ [INFO API] Network error for {dataset_name}: {e}")
         return None
     except Exception as e:
-        logger.debug(f"Error fetching dataset info API for {dataset_name}: {e}")
+        logger.debug(f"❌ [INFO API] Unexpected error for {dataset_name}: {type(e).__name__}: {e}")
         return None
 
 
@@ -472,6 +493,35 @@ def calculate_blocks(num_rows: int) -> int:
     return (num_rows + SAMPLES_PER_BLOCK - 1) // SAMPLES_PER_BLOCK
 
 
+def estimate_download_size_gb(num_rows: int, modality: str = "text", feature_types: Optional[List[str]] = None) -> float:
+    """
+    Estimate download size based on row count and data type.
+    
+    Args:
+        num_rows: Number of rows/samples
+        modality: Dataset modality from tags (text, image, audio, video, etc.)
+        feature_types: List of feature types from dataset_info (if available)
+        
+    Returns:
+        Estimated size in GB
+    """
+    # Detect data type from feature_types if available
+    if feature_types:
+        if "Image" in feature_types:
+            bytes_per_row = BYTES_PER_ROW_ESTIMATES["image_medium"]
+        elif "Audio" in feature_types:
+            bytes_per_row = BYTES_PER_ROW_ESTIMATES["audio"]
+        elif "Video" in feature_types:
+            bytes_per_row = BYTES_PER_ROW_ESTIMATES["video"]
+        else:
+            bytes_per_row = BYTES_PER_ROW_ESTIMATES.get(modality.lower(), DEFAULT_BYTES_PER_ROW)
+    else:
+        bytes_per_row = BYTES_PER_ROW_ESTIMATES.get(modality.lower(), DEFAULT_BYTES_PER_ROW)
+    
+    total_bytes = num_rows * bytes_per_row
+    return total_bytes / (1024 ** 3)
+
+
 def get_hf_dataset_metadata(
     dataset_name: str,
     config: Optional[str] = None,
@@ -521,6 +571,8 @@ def get_hf_dataset_metadata(
     # Try Dataset Viewer /size API first (fastest, exact row counts)
     timeout = request_timeout or API_TIMEOUT_DEFAULT
     attempts = max_attempts or 2
+    
+    logger.debug(f"📋 [METADATA] Starting lookup for {dataset_name}")
 
     info = get_hf_dataset_size_api(
         dataset_name,
@@ -533,7 +585,10 @@ def get_hf_dataset_metadata(
         info["num_rows_estimated"] = False
         info["estimation_quality"] = "exact"
         _record_success(dataset_name)
+        logger.debug(f"✅ [METADATA] Got exact data from SIZE API for {dataset_name}")
         return info
+    elif info:
+        logger.debug(f"⚠️ [METADATA] SIZE API returned partial data for {dataset_name}, trying INFO API")
     
     # Try Dataset Viewer /info API (exact rows + feature types)
     info = get_hf_dataset_info_api(
@@ -546,6 +601,7 @@ def get_hf_dataset_metadata(
     if info:
         info["estimation_quality"] = "exact"
         _record_success(dataset_name)
+        logger.debug(f"✅ [METADATA] Got exact data from INFO API for {dataset_name}")
         return info
     
     allow_hub_fallback = ENABLE_HUB_FALLBACK and HF_API_AVAILABLE
@@ -586,7 +642,7 @@ def get_hf_dataset_metadata(
         else:
             logger.debug("Hub API fallback disabled; skipping dataset %s", dataset_name)
 
-    logger.debug(f"All methods failed to get size info for {dataset_name}")
+    logger.warning(f"❌ [METADATA] All methods failed for {dataset_name} - dataset will show as 'Unknown'")
     _record_failure(dataset_name)
     return None
 
@@ -663,12 +719,13 @@ def enrich_dataset_with_size(
                 dataset["has_audio"] = metadata.get("has_audio", False)
                 dataset["has_video"] = metadata.get("has_video", False)
             
-            logger.debug(
-                f"Enriched {dataset_name}: {dataset['num_rows']:,} rows, "
+            logger.info(
+                f"✅ [ENRICH] {dataset_name}: {dataset['num_rows']:,} rows, "
                 f"{dataset['size_gb']:.2f} GB, {dataset['total_blocks']} blocks "
-                f"(quality: {dataset['estimation_quality']})"
+                f"(quality: {dataset['estimation_quality']}, source: {dataset['size_source']})"
             )
         else:
+            logger.warning(f"❌ [ENRICH] Failed to enrich {dataset_name} - will show as 'Unknown' in UI")
             logger.debug(f"Could not fetch size metadata for {dataset_name}")
             
     except Exception as e:
