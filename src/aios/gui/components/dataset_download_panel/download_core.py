@@ -155,16 +155,29 @@ def download_dataset(panel, dataset: Dict[str, Any], download_location: str):
                 # If we can't get configs, try without config (might work for some datasets)
                 panel.log(f"   ⚠️ Could not check configs: {e}")
         
-        # Download with streaming - save in 100k blocks for efficient training
-        max_samples = dataset.get("max_samples", 0)  # 0 = unlimited
+        # Determine download strategy
+        max_samples = dataset.get("max_samples", 0)  # 0 = download entire dataset
         use_block_format = max_samples == 0 or max_samples >= DEFAULT_BLOCK_SIZE
         
-        if max_samples == 0:
-            panel.log(f"   Streaming entire dataset (saving in {DEFAULT_BLOCK_SIZE:,}-sample blocks)...")
-        else:
-            panel.log(f"   Streaming up to {max_samples:,} samples...")
-            if use_block_format:
-                panel.log(f"   📦 Using block format ({DEFAULT_BLOCK_SIZE:,} samples per block)...")
+        # Always try fast download first (let user manage bandwidth/storage)
+        # Fast download: bulk downloads pre-built parquet files (much faster)
+        # Will automatically fall back to streaming if fast download fails
+        size_gb = dataset.get("size_gb", 0)
+        num_rows = dataset.get("num_rows", 0)
+        use_streaming = False
+        
+        # Log download info
+        panel.log(f"   ⚡ Fast download mode - bulk downloading pre-built files...")
+        if num_rows > 0:
+            if max_samples > 0 and max_samples < num_rows:
+                panel.log(f"   📊 Downloading {max_samples:,} of {num_rows:,} samples ({size_gb:.2f} GB)")
+            else:
+                panel.log(f"   📊 Downloading complete dataset: {num_rows:,} samples ({size_gb:.2f} GB)")
+        elif size_gb > 0:
+            panel.log(f"   📊 Dataset size: {size_gb:.2f} GB")
+        
+        if use_block_format:
+            panel.log(f"   📦 Will save in {DEFAULT_BLOCK_SIZE:,}-sample blocks for efficient training")
         
         # Get streaming cache for chunk caching
         chunk_cache = None
@@ -182,7 +195,7 @@ def download_dataset(panel, dataset: Dict[str, Any], download_location: str):
         load_kwargs = {
             "path": dataset_path,
             "split": dataset.get("split", "train"),
-            "streaming": True,
+            "streaming": use_streaming,  # Use streaming only when needed
             "trust_remote_code": False,
             "cache_dir": str(cache_dir),
         }
@@ -194,9 +207,38 @@ def download_dataset(panel, dataset: Dict[str, Any], download_location: str):
         progress_capture = RealTimeProgressCapture(panel.log, panel.frame)
         old_stderr = sys.stderr
         
+        # Try fast download first, fall back to streaming if it fails
+        dataset_stream = None
         try:
             sys.stderr = progress_capture
             dataset_stream = load_dataset(**load_kwargs)
+            
+            # If fast download succeeded, get the correct split
+            if not use_streaming:
+                # Non-streaming returns DatasetDict or Dataset
+                from datasets import DatasetDict
+                if isinstance(dataset_stream, DatasetDict):
+                    split_name = dataset.get("split", "train")
+                    if split_name in dataset_stream:
+                        dataset_stream = dataset_stream[split_name]
+                    else:
+                        # Use first available split
+                        dataset_stream = dataset_stream[list(dataset_stream.keys())[0]]
+                        panel.log(f"   ℹ️ Split '{split_name}' not found, using first available split")
+        except Exception as e:
+            # Fast download failed, fall back to streaming
+            if not use_streaming:
+                panel.log(f"   ⚠️ Fast download failed: {e}")
+                panel.log(f"   🔄 Falling back to streaming mode...")
+                load_kwargs["streaming"] = True
+                use_streaming = True
+                try:
+                    dataset_stream = load_dataset(**load_kwargs)
+                except Exception as e2:
+                    panel.log(f"   ❌ Streaming download also failed: {e2}")
+                    raise
+            else:
+                raise
         finally:
             sys.stderr = old_stderr
             progress_capture.flush()
@@ -211,6 +253,87 @@ def download_dataset(panel, dataset: Dict[str, Any], download_location: str):
                 panel.log("   ⚠️ Cannot download: training is active on this dataset")
                 panel.log("   💡 Wait for training to complete or use a different dataset")
                 return
+        
+        # Handle fast (non-streaming) downloads
+        if not use_streaming:
+            try:
+                panel.log(f"   💾 Dataset downloaded to cache, converting to training format...")
+                logger.info(f"Fast download complete, converting {dataset_name} to training format")
+                
+                # Get actual dataset length
+                dataset_length = len(dataset_stream) if hasattr(dataset_stream, '__len__') else 0
+                actual_samples = min(max_samples, dataset_length) if max_samples > 0 else dataset_length
+                panel.log(f"   📊 Dataset size: {dataset_length:,} samples")
+                
+                # Initialize progress for conversion
+                progress_tracker = DownloadProgressTracker(
+                    total_samples=actual_samples,
+                    total_blocks=0,
+                    speed_window_seconds=3.0,
+                )
+                progress_tracker.start()
+                
+                # Save to training format (arrow/parquet blocks)
+                if use_block_format:
+                    block_writer = StreamingBlockWriter(
+                        output_dir=output_path,
+                        dataset_name=dataset_name,
+                        block_size=DEFAULT_BLOCK_SIZE,
+                        log_callback=panel.log,
+                    )
+                    
+                    # Process in blocks
+                    for i in range(0, actual_samples, DEFAULT_BLOCK_SIZE):
+                        if panel.cancel_download:
+                            panel.log("   ❌ Conversion cancelled by user")
+                            logger.info(f"Fast download conversion cancelled at {i}/{actual_samples}")
+                            break
+                        
+                        end_idx = min(i + DEFAULT_BLOCK_SIZE, actual_samples)
+                        try:
+                            chunk = dataset_stream.select(range(i, end_idx))
+                            
+                            for sample in chunk:
+                                block_writer.add_sample(dict(sample))
+                            
+                            panel.log(f"   Progress: {end_idx:,}/{actual_samples:,} samples converted...")
+                            logger.debug(f"Converted block {i//DEFAULT_BLOCK_SIZE + 1}: {i}-{end_idx}")
+                        except Exception as chunk_error:
+                            logger.error(f"Error converting block {i}-{end_idx}: {chunk_error}")
+                            raise
+                    
+                    # Finalize
+                    if not panel.cancel_download:
+                        block_info = block_writer.finalize()
+                        panel.log(f"   ✅ Saved {block_info.total_blocks} blocks ({block_info.total_samples:,} samples)")
+                        logger.info(f"Fast download complete: {block_info.total_blocks} blocks saved")
+                else:
+                    # Save as single file
+                    dataset_subset = dataset_stream.select(range(actual_samples)) if max_samples > 0 else dataset_stream
+                    output_path.mkdir(parents=True, exist_ok=True)
+                    dataset_subset.save_to_disk(str(output_path))
+                    panel.log(f"   ✅ Saved {actual_samples:,} samples to {output_path}")
+                    logger.info(f"Fast download complete: saved to {output_path}")
+                
+                progress_tracker.complete()
+                panel.log(f"\n{'='*60}")
+                panel.log(f"✅ Download complete: {dataset_name}")
+                panel.log(f"{'='*60}\n")
+                return
+                
+            except Exception as e:
+                logger.exception(f"Fast download conversion failed for {dataset_name}")
+                panel.log(f"   ⚠️ Fast download conversion failed: {e}")
+                panel.log(f"   🔄 Falling back to streaming mode...")
+                # Fall back to streaming
+                use_streaming = True
+                load_kwargs["streaming"] = True
+                try:
+                    dataset_stream = load_dataset(**load_kwargs)
+                except Exception as fallback_error:
+                    logger.exception(f"Streaming fallback also failed for {dataset_name}")
+                    panel.log(f"   ❌ Streaming fallback failed: {fallback_error}")
+                    raise
         
         # Initialize block writer for streaming block-format downloads
         block_writer: Optional[StreamingBlockWriter] = None
@@ -297,13 +420,17 @@ def download_dataset(panel, dataset: Dict[str, Any], download_location: str):
             # Add sample to block writer OR collect in memory
             if block_writer:
                 block_metadata = block_writer.add_sample(dict(sample))
-                # Update blocks_completed when a block is flushed
-                if block_metadata:
-                    progress_tracker.set_progress(
-                        bytes_downloaded=progress_tracker._bytes_downloaded,
-                        samples_downloaded=j,
-                        blocks_completed=len(block_writer.blocks)
-                    )
+                # Calculate fractional block progress: completed blocks + progress in current block
+                completed_blocks = len(block_writer.blocks)
+                current_block_progress = (j % DEFAULT_BLOCK_SIZE) / DEFAULT_BLOCK_SIZE
+                fractional_blocks = completed_blocks + current_block_progress
+                
+                # Update progress every sample with fractional block count for smooth percentage
+                progress_tracker.set_progress(
+                    bytes_downloaded=progress_tracker._bytes_downloaded,
+                    samples_downloaded=j,
+                    blocks_completed=fractional_blocks
+                )
             else:
                 samples.append(sample)
             

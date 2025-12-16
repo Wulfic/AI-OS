@@ -25,7 +25,7 @@ class DownloadStats:
     total_bytes: int = 0
     samples_downloaded: int = 0
     total_samples: int = 0
-    blocks_completed: int = 0
+    blocks_completed: float = 0.0  # Can be fractional for smooth progress
     total_blocks: int = 0
     speed_bytes_per_sec: float = 0.0
     elapsed_seconds: float = 0.0
@@ -73,7 +73,7 @@ class DownloadProgressTracker:
         self._start_time: Optional[float] = None
         self._bytes_downloaded = 0
         self._samples_downloaded = 0
-        self._blocks_completed = 0
+        self._blocks_completed = 0.0  # Can be fractional for smooth progress
         self._is_complete = False
         self._is_cancelled = False
         
@@ -100,8 +100,8 @@ class DownloadProgressTracker:
             self._bytes_downloaded += samples_delta * bytes_per_sample
             return self._calculate_stats()
     
-    def set_progress(self, bytes_downloaded: int = 0, samples_downloaded: int = 0, blocks_completed: int = 0) -> DownloadStats:
-        """Set absolute progress values."""
+    def set_progress(self, bytes_downloaded: int = 0, samples_downloaded: int = 0, blocks_completed: float = 0.0) -> DownloadStats:
+        """Set absolute progress values. blocks_completed can be fractional for smooth progress."""
         with self._lock:
             self._bytes_downloaded = bytes_downloaded
             self._samples_downloaded = samples_downloaded
