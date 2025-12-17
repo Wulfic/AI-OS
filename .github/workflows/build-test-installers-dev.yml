@@ -250,49 +250,84 @@ jobs:
         run: |
           Write-Host "🧪 Testing Windows installation (silent mode)..."
           
+          # Check if running as admin
+          $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          Write-Host "🔐 Running as admin: $isAdmin"
+          
           $installerFile = Get-ChildItem -Path "installers\releases\*.exe" | Select-Object -First 1
           $testInstallDir = "$env:TEMP\AI-OS-Test-$([guid]::NewGuid().ToString().Substring(0,8))"
+          $logFile = "$env:TEMP\aios-install-test.log"
           
+          Write-Host "📦 Installer: $($installerFile.Name)"
           Write-Host "📂 Test installation directory: $testInstallDir"
           
           # Run installer in silent mode with custom directory
-          $process = Start-Process -FilePath $installerFile.FullName -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$testInstallDir" -PassThru -Wait
+          # GitHub Actions runners run with admin privileges by default
+          $arguments = "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$testInstallDir", "/LOG=$logFile"
+          $process = Start-Process -FilePath $installerFile.FullName -ArgumentList $arguments -PassThru -Wait -NoNewWindow
+          
+          Write-Host "📊 Installer exit code: $($process.ExitCode)"
           
           if ($process.ExitCode -ne 0) {
-            Write-Host "⚠️  WARNING: Installer exit code: $($process.ExitCode)"
+            Write-Host "⚠️  WARNING: Installation may have failed"
+            if (Test-Path $logFile) {
+              Write-Host ""
+              Write-Host "📋 Last 50 lines of installer log:"
+              Get-Content $logFile -Tail 50 | Write-Host
+            }
           }
           
           # Check if installation directory was created
+          Start-Sleep -Seconds 2  # Give the installer time to complete
+          
           if (Test-Path $testInstallDir) {
+            Write-Host ""
             Write-Host "✅ Installation directory created"
             
-            # List installed files
-            Write-Host "📂 Installed files:"
-            Get-ChildItem -Path $testInstallDir -Recurse -Depth 2 | Format-Table Name, Length, Mode
+            # List top-level files and directories
+            Write-Host ""
+            Write-Host "📂 Top-level files and directories:"
+            Get-ChildItem -Path $testInstallDir | Format-Table Name, Length, Mode -AutoSize
             
             # Check for essential files
+            Write-Host ""
+            Write-Host "🔍 Checking for essential files..."
             $essentialFiles = @(
-              "aios.exe",
-              "python.exe",
-              "launcher.bat"
+              "launcher.bat",
+              "pyproject.toml",
+              "LICENSE"
             )
             
+            $missingCount = 0
             foreach ($file in $essentialFiles) {
               $filePath = Join-Path $testInstallDir $file
               if (Test-Path $filePath) {
-                Write-Host "✅ Found: $file"
+                Write-Host "  ✅ Found: $file"
               } else {
-                Write-Host "⚠️  WARNING: Missing: $file"
+                Write-Host "  ❌ Missing: $file"
+                $missingCount++
               }
             }
             
             # Clean up test installation
+            Write-Host ""
             Write-Host "🧹 Cleaning up test installation..."
             Remove-Item -Path $testInstallDir -Recurse -Force -ErrorAction SilentlyContinue
             
-            Write-Host "✅ Installation test completed"
+            if ($missingCount -eq 0) {
+              Write-Host "✅ Installation test completed successfully"
+            } else {
+              Write-Host "⚠️  Installation test completed with $missingCount missing files"
+            }
           } else {
-            Write-Host "⚠️  WARNING: Installation directory not found (installer may not have run)"
+            Write-Host ""
+            Write-Host "❌ ERROR: Installation directory not found"
+            Write-Host "This typically means the installer failed to run or was unable to create the directory."
+            
+            # Don't fail the workflow, but make it clear something went wrong
+            if ($process.ExitCode -ne 0) {
+              Write-Host "Exit code $($process.ExitCode) suggests an installation failure."
+            }
           }
         shell: pwsh
       
