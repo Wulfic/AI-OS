@@ -59,6 +59,23 @@ jobs:
     needs: prepare
     
     steps:
+      - name: Free up disk space
+        run: |
+          echo "🧹 Freeing up disk space..."
+          df -h
+          echo ""
+          echo "Removing unnecessary packages..."
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          sudo apt-get autoremove -y
+          sudo apt-get clean
+          echo ""
+          echo "✅ Disk space after cleanup:"
+          df -h
+      
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -182,6 +199,18 @@ jobs:
       changes_file: ${{ steps.build_source.outputs.changes_file }}
     
     steps:
+      - name: Free up disk space
+        run: |
+          echo "🧹 Freeing up disk space..."
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          sudo apt-get autoremove -y
+          sudo apt-get clean
+          df -h
+      
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
