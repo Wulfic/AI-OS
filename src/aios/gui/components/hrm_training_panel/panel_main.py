@@ -212,6 +212,7 @@ class HRMTrainingPanel(ttk.LabelFrame):  # type: ignore[misc]
             import platform
 
             is_linux = platform.system() == "Linux"
+            is_windows = platform.system() == "Windows"
             rvals = self._resources_panel.get_values()
             training_mode = rvals.get("training_mode", "none")
             selected = rvals.get("train_cuda_selected", [])
@@ -225,21 +226,30 @@ class HRMTrainingPanel(ttk.LabelFrame):  # type: ignore[misc]
             num_gpus = len(selected) if isinstance(selected, list) else 0
             zero_stage_resource = rvals.get("zero_stage", "none")
 
+            # ZeRO 1 and 2 are available on:
+            # - Linux with 1+ GPUs
+            # - Windows with 1 GPU (single GPU mode) or parallel mode
             linux_gpu_available = is_linux and num_gpus >= 1
+            windows_single_gpu = is_windows and num_gpus == 1
+            windows_parallel_mode = is_windows and num_gpus > 1 and training_mode == "parallel"
+            zero12_available = linux_gpu_available or windows_single_gpu or windows_parallel_mode
+            
             zero3_active = zero_stage_resource == "zero3" or training_mode == "zero3"
 
             allowed_values: list[str] = ["none"]
-            if linux_gpu_available:
+            if zero12_available:
                 allowed_values.extend(["zero1", "zero2"])
             if zero3_active and "zero3" not in allowed_values:
                 allowed_values.append("zero3")
 
             logger.debug(
-                "DeepSpeed state update (linux=%s, gpus=%d, mode=%s, zero=%s)",
+                "DeepSpeed state update (linux=%s, windows=%s, gpus=%d, mode=%s, zero=%s, zero12_avail=%s)",
                 is_linux,
+                is_windows,
                 num_gpus,
                 training_mode,
                 zero_stage_resource,
+                zero12_available,
             )
 
             if not hasattr(self, "zero_combo"):
@@ -254,12 +264,14 @@ class HRMTrainingPanel(ttk.LabelFrame):  # type: ignore[misc]
             if desired_values != current_values:
                 self.zero_combo["values"] = desired_values
 
-            if not linux_gpu_available:
-                if self.zero_stage_var.get() != "none":
-                    logger.debug("ZeRO disabled (no eligible GPUs or platform), resetting to none")
+            if not zero12_available:
+                if self.zero_stage_var.get() not in ["none", "zero3"]:
+                    logger.debug("ZeRO 1/2 disabled (incompatible platform/mode), resetting to none")
                     self.zero_stage_var.set("none")
-                self.zero_combo.config(state="disabled")
-                return
+                # Only disable if zero3 is also not active
+                if not zero3_active:
+                    self.zero_combo.config(state="disabled")
+                    return
 
             if zero3_active:
                 if self.zero_stage_var.get() != "zero3":

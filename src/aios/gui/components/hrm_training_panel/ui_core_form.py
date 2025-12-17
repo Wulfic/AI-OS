@@ -492,26 +492,37 @@ def populate_dataset_dropdown(panel: HRMTrainingPanel) -> list:
             if settings_panel and hasattr(settings_panel, 'download_location_var'):
                 configured_location = settings_panel.download_location_var.get().strip()
                 if configured_location:
-                    locations.append((configured_location, "Configured location"))
+                    locations.append((configured_location, "Local"))
                     log(panel, f"[hrm] Using configured dataset location: {configured_location}")
     except Exception as e:
         log(panel, f"[hrm] Could not get configured download location: {e}")
     
     # Add default fallback locations
     locations.extend([
-        ("training_datasets", "Local training_datasets"),
-        ("artifacts/datasets", "Local artifacts"),
+        ("training_datasets", "Local"),
+        ("artifacts/datasets", "Local"),
     ])
     
     for base_path, label in locations:
         try:
-            if os.path.isdir(base_path):
-                for entry in sorted(os.listdir(base_path)):
-                    full_path = os.path.join(base_path, entry)
+            # Resolve relative paths to absolute paths
+            if not os.path.isabs(base_path):
+                # Try relative to project root first
+                if hasattr(panel, '_project_root') and panel._project_root:
+                    abs_base_path = os.path.join(panel._project_root, base_path)
+                else:
+                    abs_base_path = os.path.abspath(base_path)
+            else:
+                abs_base_path = base_path
+            
+            if os.path.isdir(abs_base_path):
+                for entry in sorted(os.listdir(abs_base_path)):
+                    full_path = os.path.join(abs_base_path, entry)
                     if os.path.isdir(full_path):
                         # Check if it looks like a dataset directory
+                        # Include block_manifest.json for downloaded datasets
                         if any(os.path.exists(os.path.join(full_path, f)) 
-                              for f in ["dataset_info.json", "data", "dataset.arrow"]):
+                              for f in ["dataset_info.json", "data", "dataset.arrow", "block_manifest.json"]):
                             datasets.append(("local", full_path, f"{entry} ({label})"))
         except Exception:
             pass
@@ -523,14 +534,10 @@ def populate_dataset_dropdown(panel: HRMTrainingPanel) -> list:
         for fav in favorites:
             hf_path = fav.get("path", "")
             if hf_path:
-                display_name = f"🤗 {fav.get('full_name', fav.get('name', 'Unknown'))} (HuggingFace)"
+                display_name = f"🤗 {fav.get('full_name', fav.get('name', 'Unknown'))} (Streaming)"
                 datasets.append(("huggingface", hf_path, display_name, fav))
     except Exception as e:
         log(panel, f"[hrm] Could not load HuggingFace favorites: {e}")
-    
-    # Mounted volumes (drives, network shares, etc.) for quick navigation
-    for display_name, mount_path in get_mounted_volumes():
-        datasets.append(("mount", mount_path, display_name))
 
     return datasets
 
@@ -564,7 +571,7 @@ def show_dataset_selector(panel: HRMTrainingPanel) -> None:
         
         ttk.Label(
             frame, 
-            text="Available datasets (local directories and HuggingFace favorites):"
+            text="Available datasets (local directories and streaming favorites):"
         ).pack(anchor="w", pady=(0, 5))
         
         # Listbox with scrollbar
@@ -578,26 +585,36 @@ def show_dataset_selector(panel: HRMTrainingPanel) -> None:
         listbox.pack(side="left", fill="both", expand=True)
         scrollbar.config(command=listbox.yview)
         
-        # Populate listbox
+        # Populate listbox with dividers
         dataset_info = []
-        for item in datasets:
-            if item[0] == "local":
+        
+        # Add local datasets with header
+        local_items = [item for item in datasets if item[0] == "local"]
+        streaming_items = [item for item in datasets if item[0] == "huggingface"]
+        
+        if local_items:
+            listbox.insert("end", "─── LOCAL DATASETS ───────────────────────────────────────────────")
+            dataset_info.append(("divider", None, None))
+            for item in local_items:
                 _, path, display_name = item
                 listbox.insert("end", display_name)
                 dataset_info.append(("local", path, None))
-            elif item[0] == "huggingface":
+        
+        if streaming_items:
+            if local_items:  # Add spacing between sections
+                listbox.insert("end", "")
+                dataset_info.append(("divider", None, None))
+            listbox.insert("end", "─── STREAMING DATASETS ───────────────────────────────────────────")
+            dataset_info.append(("divider", None, None))
+            for item in streaming_items:
                 _, hf_path, display_name, fav_data = item
                 listbox.insert("end", display_name)
                 dataset_info.append(("huggingface", hf_path, fav_data))
-            elif item[0] == "mount":
-                _, mount_path, display_name = item
-                listbox.insert("end", display_name)
-                dataset_info.append(("mount", mount_path, None))
         
         # Info label
         info_label = ttk.Label(
             frame,
-            text="💡 Tip: HuggingFace datasets will be streamed during training",
+            text="💡 Tip: Streaming datasets will be loaded from HuggingFace Hub during training",
             font=("", 8, "italic"),
             foreground="gray"
         )
@@ -611,6 +628,10 @@ def show_dataset_selector(panel: HRMTrainingPanel) -> None:
             selection = listbox.curselection()
             if selection:
                 dataset_type, dataset_path, dataset_data = dataset_info[selection[0]]
+                
+                # Skip dividers
+                if dataset_type == "divider":
+                    return
                 
                 if dataset_type == "local":
                     panel.dataset_var.set(dataset_path)
@@ -639,26 +660,6 @@ def show_dataset_selector(panel: HRMTrainingPanel) -> None:
                         panel.after(100, lambda: detect_and_display_dataset_info(panel))
                     except Exception as e:
                         log(panel, f"[hrm] Could not auto-detect dataset size: {e}")
-                elif dataset_type == "mount":
-                    dialog.destroy()
-
-                    def _open_from_mount(initial_path: str = dataset_path) -> None:
-                        chooser = getattr(panel, "_choose_dataset_directory", None)
-                        if callable(chooser):
-                            chooser(initial_path)
-                            return
-                        try:
-                            selected = filedialog.askdirectory(
-                                initialdir=initial_path,
-                                title="Select dataset directory",
-                            )
-                            if selected:
-                                panel.dataset_var.set(selected)
-                        except Exception as exc:
-                            log(panel, f"[hrm] Browse error: {exc}")
-
-                    panel.after(10, _open_from_mount)
-                    return
 
             dialog.destroy()
         

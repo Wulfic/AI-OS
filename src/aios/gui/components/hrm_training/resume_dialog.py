@@ -181,18 +181,21 @@ class ResumeDialog(tk.Toplevel):
                     dt = datetime.fromtimestamp(checkpoint_mtime)
                     time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
                     
-                    # Calculate chunk size from samples_trained (use first chunk if available)
-                    chunk_size = None
-                    if completed_chunks:
-                        first_chunk_samples = completed_chunks[0].get("samples_trained", 0)
-                        if first_chunk_samples > 0:
-                            chunk_size = first_chunk_samples
+                    # Get chunk size from tracker config (not samples_trained!)
+                    chunk_size = tracker_state.get("chunk_size")
+                    if not chunk_size:
+                        # Fallback: try to get from panel or use default
+                        chunk_size = self._get_chunk_size_from_panel()
                     
                     # Calculate total chunks per block (standard block is 100k samples)
                     total_chunks_per_block = None
                     if chunk_size and chunk_size > 0:
                         samples_per_block = 100000  # Standard block size
                         total_chunks_per_block = max(1, (samples_per_block + chunk_size - 1) // chunk_size)
+                    
+                    # Override total_blocks if we can read from block_manifest or dataset_info
+                    if not total_blocks_in_dataset:
+                        total_blocks_in_dataset = self._estimate_total_blocks(dataset_file)
                     
                     self.resume_info = {
                         "checkpoint_path": str(checkpoint_path),
@@ -287,9 +290,77 @@ class ResumeDialog(tk.Toplevel):
             pass
         return 4000  # Default
     
+    def _extract_clean_dataset_name(self, dataset_file: str) -> str:
+        """Extract clean dataset name from file path or HF URI.
+        
+        Examples:
+            - "hf://TinyStories:default:train" -> "TinyStories"
+            - "hf://roneneldan/TinyStories:default:train" -> "TinyStories"
+            - "/path/to/dataset" -> "dataset"
+        """
+        if not dataset_file:
+            return "unknown"
+        
+        # Handle HuggingFace format: hf://dataset_name:config:split
+        if dataset_file.startswith("hf://"):
+            hf_path = dataset_file[5:]  # Remove 'hf://' prefix
+            dataset_path = hf_path.split(":")[0]  # Get dataset name before first colon
+            # Extract just the dataset name (after last slash if author/dataset format)
+            if "/" in dataset_path:
+                return dataset_path.split("/")[-1]
+            return dataset_path
+        
+        # For local paths, get the directory/file name
+        return Path(dataset_file).name
+    
+    def _detect_dataset_type(self, dataset_file: str) -> str:
+        """Detect if dataset is Streaming (HF) or Local/Downloaded.
+        
+        Returns:
+            "Streaming" for HuggingFace streaming datasets
+            "Local" for downloaded/local datasets
+        """
+        if not dataset_file:
+            return "Unknown"
+        
+        # HuggingFace streaming datasets
+        if dataset_file.startswith("hf://"):
+            return "Streaming"
+        
+        # Check if it's a downloaded dataset with block structure
+        try:
+            dataset_path = Path(dataset_file)
+            if dataset_path.is_dir():
+                # Check for block_manifest.json (downloaded in block format)
+                if (dataset_path / "block_manifest.json").exists():
+                    return "Local"
+                # Check for HuggingFace dataset structure
+                if (dataset_path / "dataset_info.json").exists():
+                    return "Local"
+            return "Local"
+        except Exception:
+            return "Local"
+    
     def _estimate_total_blocks(self, dataset_file: str) -> Optional[int]:
         """Get total blocks for the dataset from cache or chunk tracker."""
-        # Try to get from chunk_tracker_state.json even if no checkpoint exists
+        # Priority 1: Try to read from dataset's block_manifest.json (most reliable)
+        try:
+            from pathlib import Path
+            if dataset_file:
+                dataset_path = Path(dataset_file)
+                manifest_path = dataset_path / "block_manifest.json"
+                if manifest_path.exists():
+                    import json
+                    with manifest_path.open("r", encoding="utf-8") as f:
+                        manifest_data = json.load(f)
+                    total_blocks = manifest_data.get("total_blocks")
+                    if total_blocks is not None:
+                        logger.debug(f"Found total_blocks from block_manifest: {total_blocks}")
+                        return total_blocks
+        except Exception as e:
+            logger.debug(f"Could not read from block_manifest.json: {e}")
+        
+        # Priority 2: Try to get from chunk_tracker_state.json
         try:
             from pathlib import Path
             brain_path = Path(self.parent_panel.brain_bundle_dir) if hasattr(self.parent_panel, 'brain_bundle_dir') else None
@@ -308,6 +379,68 @@ class ResumeDialog(tk.Toplevel):
                         return total_blocks
         except Exception as e:
             logger.debug(f"Could not read total_blocks from chunk_tracker: {e}")
+        
+        # For HuggingFace streaming datasets, try to get metadata from API
+        if dataset_file and dataset_file.startswith("hf://"):
+            try:
+                from ..dataset_download_panel.hf_size_detection import get_hf_dataset_metadata
+                
+                # Parse hf://dataset_name:config:split
+                hf_path = dataset_file[5:]  # Remove 'hf://' prefix
+                parts = hf_path.split(":")
+                dataset_name = parts[0]
+                config = parts[1] if len(parts) > 1 and parts[1] != "default" else None
+                split = parts[2] if len(parts) > 2 else "train"
+                
+                logger.debug(f"Fetching HF metadata for {dataset_name}...")
+                metadata = get_hf_dataset_metadata(dataset_name, config, split, request_timeout=5.0)
+                
+                if metadata and metadata.get('total_blocks'):
+                    total_blocks = metadata['total_blocks']
+                    logger.debug(f"Found total_blocks from HF API: {total_blocks}")
+                    return total_blocks
+            except Exception as e:
+                logger.debug(f"Could not get total_blocks from HF API: {e}")
+        
+        # Priority 3: Try to read from dataset's dataset_info.json (for preprocessed datasets)
+        try:
+            from pathlib import Path
+            if dataset_file:
+                dataset_path = Path(dataset_file)
+                info_path = dataset_path / "dataset_info.json"
+                if info_path.exists():
+                    import json
+                    with info_path.open("r", encoding="utf-8") as f:
+                        info_data = json.load(f)
+                    
+                    # Check if this is our preprocessed format (has total_blocks directly)
+                    if "total_blocks" in info_data:
+                        total_blocks = info_data["total_blocks"]
+                        logger.debug(f"Found total_blocks directly from dataset_info: {total_blocks}")
+                        return total_blocks
+                    
+                    # Calculate blocks from total samples (our format)
+                    total_samples = info_data.get("total_samples")
+                    if total_samples is not None:
+                        samples_per_block = 100000  # Standard block size
+                        total_blocks = max(1, (total_samples + samples_per_block - 1) // samples_per_block)
+                        logger.debug(f"Calculated total_blocks from dataset_info: {total_blocks}")
+                        return total_blocks
+                    
+                    # Handle HuggingFace dataset_info.json format (has 'splits' with row counts)
+                    if "splits" in info_data:
+                        # HF format - try to get row count from splits
+                        splits = info_data.get("splits", {})
+                        for split_name, split_info in splits.items():
+                            if isinstance(split_info, dict):
+                                num_examples = split_info.get("num_examples") or split_info.get("num_rows")
+                                if num_examples:
+                                    samples_per_block = 100000
+                                    total_blocks = max(1, (num_examples + samples_per_block - 1) // samples_per_block)
+                                    logger.debug(f"Calculated total_blocks from HF dataset_info split '{split_name}': {total_blocks}")
+                                    return total_blocks
+        except Exception as e:
+            logger.debug(f"Could not read from dataset_info.json: {e}")
         
         # Try to get from streaming cache stats (if blocks have been cached)
         try:
@@ -329,6 +462,28 @@ class ResumeDialog(tk.Toplevel):
                         return chunk_count
         except Exception as e:
             logger.debug(f"Could not read from streaming cache: {e}")
+        
+        # Try to count existing block directories directly
+        try:
+            from pathlib import Path
+            if dataset_file and not dataset_file.startswith("hf://"):
+                dataset_path = Path(dataset_file)
+                if dataset_path.is_dir():
+                    block_count = 0
+                    while True:
+                        block_dir = dataset_path / f"block_{block_count}"
+                        if not block_dir.is_dir():
+                            break
+                        samples_file = block_dir / "samples.txt"
+                        if not samples_file.exists():
+                            break
+                        block_count += 1
+                    
+                    if block_count > 0:
+                        logger.debug(f"Counted {block_count} existing block directories")
+                        return block_count
+        except Exception as e:
+            logger.debug(f"Could not count block directories: {e}")
         
         # Return None if we can't determine - let it be calculated during training
         return None
@@ -428,7 +583,7 @@ class ResumeDialog(tk.Toplevel):
         dataset_info_frame = ttk.LabelFrame(info_container, text="Dataset Information", padding=padding_15)
         dataset_info_frame.grid(row=0, column=1, sticky="nsew", padx=(int(5 * spacing), 0))
         
-        # Dataset name
+        # Dataset name (clean display)
         dataset_name_frame = ttk.Frame(dataset_info_frame)
         dataset_name_frame.pack(fill=tk.X, pady=int(5 * spacing))
         
@@ -439,10 +594,32 @@ class ResumeDialog(tk.Toplevel):
             width=15
         ).pack(side=tk.LEFT, padx=(0, int(10 * spacing)))
         
-        dataset_display_name = self.resume_info.get('saved_dataset_name') or Path(self.resume_info['current_dataset']).name
+        # Extract clean dataset name (e.g., "TinyStories" instead of "TinyStories:default:train")
+        current_dataset = self.resume_info['current_dataset']
+        clean_name = self._extract_clean_dataset_name(current_dataset)
         ttk.Label(
             dataset_name_frame,
-            text=dataset_display_name,
+            text=clean_name,
+            font=("TkDefaultFont", 9)
+        ).pack(side=tk.LEFT)
+        
+        # Dataset type (Streaming vs Local)
+        dataset_type_frame = ttk.Frame(dataset_info_frame)
+        dataset_type_frame.pack(fill=tk.X, pady=int(5 * spacing))
+        
+        ttk.Label(
+            dataset_type_frame,
+            text="Dataset Type:",
+            font=("TkDefaultFont", 9, "bold"),
+            width=15
+        ).pack(side=tk.LEFT, padx=(0, int(10 * spacing)))
+        
+        dataset_type = self._detect_dataset_type(current_dataset)
+        # Add emoji indicator
+        type_emoji = "📡" if dataset_type == "Streaming" else "💾"
+        ttk.Label(
+            dataset_type_frame,
+            text=f"{type_emoji} {dataset_type}",
             font=("TkDefaultFont", 9)
         ).pack(side=tk.LEFT)
         
@@ -458,7 +635,7 @@ class ResumeDialog(tk.Toplevel):
         ).pack(side=tk.LEFT, padx=(0, int(10 * spacing)))
         
         total_blocks = self.resume_info.get('total_blocks')
-        blocks_text = f"{total_blocks} blocks" if total_blocks is not None else "Unknown (will be determined)"
+        blocks_text = f"{total_blocks} blocks" if total_blocks is not None else "Unknown"
         ttk.Label(
             blocks_frame,
             text=blocks_text,
@@ -472,38 +649,29 @@ class ResumeDialog(tk.Toplevel):
             
             ttk.Label(
                 chunks_frame,
-                text="Chunks/Block:",
+                text="Chunks per Block:",
                 font=("TkDefaultFont", 9, "bold"),
                 width=15
             ).pack(side=tk.LEFT, padx=(0, int(10 * spacing)))
             
-            chunk_size_text = f"{self.resume_info['chunks_per_block']} chunks"
-            if self.resume_info.get('chunk_size'):
-                chunk_size_text += f" ({self.resume_info['chunk_size']:,} samples/chunk)"
+            # Create a vertical container for chunks and samples
+            chunks_info_frame = ttk.Frame(chunks_frame)
+            chunks_info_frame.pack(side=tk.LEFT)
             
+            chunk_size_text = f"{self.resume_info['chunks_per_block']} chunks"
             ttk.Label(
-                chunks_frame,
+                chunks_info_frame,
                 text=chunk_size_text,
                 font=("TkDefaultFont", 9)
-            ).pack(side=tk.LEFT)
-        
-        # Chunk size warning note
-        note_frame = ttk.Frame(dataset_info_frame)
-        note_frame.pack(fill=tk.X, pady=(int(10 * spacing), 0))
-        
-        ttk.Label(
-            note_frame,
-            text="ℹ️  Note: Changing chunk size requires starting a new training run",
-            font=("TkDefaultFont", 8),
-            foreground="blue"
-        ).pack(anchor=tk.W)
-        
-        ttk.Label(
-            note_frame,
-            text="(New chunk sizes must be computed from the beginning)",
-            font=("TkDefaultFont", 7),
-            foreground="gray"
-        ).pack(anchor=tk.W, padx=(int(15 * spacing), 0))
+            ).pack(anchor=tk.W)
+            
+            if self.resume_info.get('chunk_size'):
+                ttk.Label(
+                    chunks_info_frame,
+                    text=f"{self.resume_info['chunk_size']:,} samples",
+                    font=("TkDefaultFont", 8),
+                    foreground="gray"
+                ).pack(anchor=tk.W)
         
         # Dataset validation
         dataset_frame = ttk.Frame(info_frame)

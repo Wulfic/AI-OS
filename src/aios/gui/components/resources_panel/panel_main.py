@@ -621,9 +621,13 @@ class ResourcesPanel(ttk.LabelFrame):  # type: ignore[misc]
                     with self.suspend_auto_apply():
                         self.training_mode_var.set("parallel")
                     mode = "parallel"
-            if self.zero_stage_var.get() != "none":
+            # Windows supports ZeRO 1 and 2 with single GPU or parallel mode
+            # Only reset ZeRO if it's zero3 (which is Linux-only)
+            current_zero = self.zero_stage_var.get()
+            if current_zero == "zero3":
                 with self.suspend_auto_apply():
                     self.zero_stage_var.set("none")
+            # Allow zero1 and zero2 on Windows (single GPU or parallel mode)
             return
 
         if mode == "none":

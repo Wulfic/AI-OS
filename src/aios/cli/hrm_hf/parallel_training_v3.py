@@ -1201,7 +1201,7 @@ def run_parallel_training_v3(
         except ValueError as e:
             print(f"\n❌ Dataset validation failed: {e}\n")
             write_jsonl({"started": False, "error": f"dataset_validation_failed: {e}"})
-            raise typer.Exit(code=1)
+            raise RuntimeError(f"Dataset validation failed: {e}")
     
     if is_primary:
         print(f"[INIT] Initializing BlockManager (async)...")

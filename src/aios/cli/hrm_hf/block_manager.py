@@ -673,15 +673,24 @@ class BlockManager:
                     return block
             
             # Fall back to traditional loading for single files or non-block-structured directories
-            max_lines = self.samples_per_block
+            # First, check if we know the total sample count from metadata
+            total_samples_from_metadata = self._get_total_samples_from_metadata()
             
-            # Load all lines on first block, then slice appropriately
-            # This is simpler for local files since they're typically smaller
             if block_id == 0 or len(self.blocks) == 0:
                 # Load initial samples
+                if total_samples_from_metadata and total_samples_from_metadata > 1000000:
+                    # For large datasets with known size, load only what we need for current block
+                    # Don't load all samples into memory
+                    print(f"[BlockManager] Large dataset detected ({total_samples_from_metadata:,} samples), loading blocks on demand")
+                    # Just load the current block's worth
+                    max_lines = self.samples_per_block
+                else:
+                    # For smaller datasets, load multiple blocks
+                    max_lines = self.samples_per_block * 10
+                
                 all_samples = self.read_fn(
                     self.dataset_path,
-                    max_lines=max_lines * 10,  # Load more to have multiple blocks
+                    max_lines=max_lines,
                     cycle=0
                 )
                 
@@ -692,13 +701,19 @@ class BlockManager:
                 # Cache total size for future blocks
                 self._all_local_samples = all_samples
                 
-                # Calculate total blocks now that we know sample count
-                if len(all_samples) > 0:
+                # Calculate total blocks - prefer metadata if available
+                if total_samples_from_metadata:
+                    total_blocks = (total_samples_from_metadata + self.samples_per_block - 1) // self.samples_per_block
+                    with self.lock:
+                        if self.total_blocks_detected is None:
+                            self.total_blocks_detected = total_blocks
+                    print(f"[BlockManager] Detected {total_blocks} blocks from metadata ({total_samples_from_metadata:,} total samples)")
+                elif len(all_samples) > 0:
                     total_blocks = (len(all_samples) + self.samples_per_block - 1) // self.samples_per_block
                     with self.lock:
                         if self.total_blocks_detected is None:
                             self.total_blocks_detected = total_blocks
-                    print(f"[BlockManager] Detected {total_blocks} blocks from local file ({len(all_samples):,} samples)")
+                    print(f"[BlockManager] Detected {total_blocks} blocks from loaded samples ({len(all_samples):,} samples)")
             else:
                 # Use cached samples
                 all_samples = getattr(self, '_all_local_samples', [])
@@ -904,6 +919,54 @@ class BlockManager:
         except Exception as e:
             print(f"[BlockManager] Warning: Error counting blocks in {directory}: {e}")
             return None
+    
+    def _get_total_samples_from_metadata(self) -> Optional[int]:
+        """Try to get total sample count from dataset metadata files.
+        
+        Returns:
+            Total sample count if found in metadata, None otherwise
+        """
+        try:
+            from pathlib import Path
+            dataset_path = Path(self.dataset_path)
+            
+            # Try block_manifest.json first (most reliable for preprocessed datasets)
+            manifest_path = dataset_path / "block_manifest.json"
+            if manifest_path.exists():
+                import json
+                with open(manifest_path, 'r', encoding='utf-8') as f:
+                    manifest = json.load(f)
+                total_samples = manifest.get("total_samples")
+                if total_samples:
+                    print(f"[BlockManager] Found total_samples from block_manifest.json: {total_samples:,}")
+                    return total_samples
+            
+            # Try dataset_info.json (preprocessed format)
+            info_path = dataset_path / "dataset_info.json"
+            if info_path.exists():
+                import json
+                with open(info_path, 'r', encoding='utf-8') as f:
+                    info = json.load(f)
+                
+                # Check for our preprocessed format
+                total_samples = info.get("total_samples")
+                if total_samples:
+                    print(f"[BlockManager] Found total_samples from dataset_info.json: {total_samples:,}")
+                    return total_samples
+                
+                # Check for HF format (splits)
+                if "splits" in info:
+                    splits = info.get("splits", {})
+                    for split_name, split_info in splits.items():
+                        if isinstance(split_info, dict):
+                            num_examples = split_info.get("num_examples") or split_info.get("num_rows")
+                            if num_examples:
+                                print(f"[BlockManager] Found {num_examples:,} samples from HF dataset_info.json split '{split_name}'")
+                                return num_examples
+        except Exception as e:
+            print(f"[BlockManager] Could not read metadata: {e}")
+        
+        return None
     
     @staticmethod
     def _is_ascii(s: str) -> bool:
