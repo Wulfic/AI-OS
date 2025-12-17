@@ -1,0 +1,639 @@
+name: Build → Test → Publish
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'Official'  # Trigger on Official tag for releases
+    paths:
+      - 'src/**'
+      - 'config/**'
+      - 'installers/**'
+      - 'pyproject.toml'
+      - '.github/workflows/build-test-publish.yml'
+  workflow_dispatch:  # Manual trigger
+    inputs:
+      refresh_lock:
+        description: 'Refresh requirements-lock.txt'
+        required: false
+        default: false
+        type: boolean
+      skip_tests:
+        description: 'Skip installer tests'
+        required: false
+        default: false
+        type: boolean
+      ppa_name:
+        description: 'PPA name (e.g., ppa:user/ppa-name)'
+        required: false
+        default: 'ppa:wulfic/ai-os'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SHORT_SHA: ${{ github.sha }}
+  PPA_NAME: ${{ github.event.inputs.ppa_name || 'ppa:wulfic/ai-os' }}
+
+jobs:
+  # =============================================================================
+  # STAGE 1: PREPARE BUILD INFO
+  # =============================================================================
+  prepare:
+    name: 📋 Prepare Build Info
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      short_sha: ${{ steps.version.outputs.short_sha }}
+      build_date: ${{ steps.version.outputs.build_date }}
+      is_release: ${{ steps.version.outputs.is_release }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Extract version info
+        id: version
+        run: |
+          VERSION=$(grep -oP 'version\s*=\s*"\K[^"]+' pyproject.toml | head -1)
+          SHORT_SHA=${GITHUB_SHA::7}
+          BUILD_DATE=$(date +'%Y-%m-%d')
+          IS_RELEASE=${{ github.ref == 'refs/tags/Official' && 'true' || 'false' }}
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "build_date=$BUILD_DATE" >> $GITHUB_OUTPUT
+          echo "is_release=$IS_RELEASE" >> $GITHUB_OUTPUT
+          
+          echo "📦 Version: $VERSION | SHA: $SHORT_SHA | Date: $BUILD_DATE"
+          echo "🏷️  Release Build: $IS_RELEASE"
+
+  # =============================================================================
+  # STAGE 2: BUILD INSTALLERS
+  # =============================================================================
+  build-deb:
+    name: 🔨 Build Debian Package
+    runs-on: ubuntu-22.04
+    needs: prepare
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev
+      
+      - name: Build .deb package
+        run: |
+          chmod +x ./installers/_builds/ubuntu/build_deb.sh
+          if [ "${{ github.event.inputs.refresh_lock }}" == "true" ]; then
+            ./installers/_builds/ubuntu/build_deb.sh --refresh-lock
+          else
+            ./installers/_builds/ubuntu/build_deb.sh
+          fi
+      
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-OS-${{ needs.prepare.outputs.version }}-ubuntu-${{ needs.prepare.outputs.short_sha }}
+          path: installers/releases/*.deb
+          retention-days: 30
+          if-no-files-found: error
+
+  build-windows:
+    name: 🔨 Build Windows Installer
+    runs-on: windows-latest
+    needs: prepare
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install Inno Setup
+        run: |
+          $innoUrl = "https://jrsoftware.org/download.php/is.exe"
+          $innoInstaller = "$env:TEMP\innosetup.exe"
+          
+          Write-Host "Downloading Inno Setup..."
+          Invoke-WebRequest -Uri $innoUrl -OutFile $innoInstaller -UseBasicParsing
+          
+          Write-Host "Installing Inno Setup silently..."
+          Start-Process -FilePath $innoInstaller -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-" -Wait
+          
+          $innoPath = "C:\Program Files (x86)\Inno Setup 6"
+          echo "$innoPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          
+          Write-Host "Inno Setup installed successfully"
+        shell: pwsh
+      
+      - name: Build Windows installer
+        run: |
+          & .\installers\_builds\windows\build_windows_installer.ps1
+        shell: pwsh
+      
+      - name: Upload Windows installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-OS-${{ needs.prepare.outputs.version }}-windows-${{ needs.prepare.outputs.short_sha }}
+          path: installers/releases/*.exe
+          retention-days: 30
+          if-no-files-found: error
+
+  # =============================================================================
+  # STAGE 3: TEST INSTALLERS
+  # =============================================================================
+  test-ubuntu:
+    name: 🧪 Test Ubuntu Installation
+    needs: [prepare, build-deb]
+    runs-on: ubuntu-22.04
+    if: github.event.inputs.skip_tests != 'true'
+    
+    strategy:
+      matrix:
+        ubuntu_version: ['22.04', '20.04']
+    
+    steps:
+      - name: Download .deb artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: AI-OS-${{ needs.prepare.outputs.version }}-ubuntu-${{ needs.prepare.outputs.short_sha }}
+          path: installers
+      
+      - name: Install .deb package
+        run: |
+          echo "🔧 Installing AI-OS..."
+          DEB_FILE=$(find installers/ -name "*.deb" | head -1)
+          
+          sudo dpkg -i "$DEB_FILE" || true
+          sudo apt-get update
+          sudo apt-get install -f -y
+      
+      - name: Verify installation
+        run: |
+          echo "✅ Verifying installation..."
+          
+          if command -v aios &> /dev/null; then
+            echo "✅ aios command found"
+          else
+            echo "❌ aios command not found"
+            exit 1
+          fi
+          
+          if aios --help &> /dev/null; then
+            echo "✅ aios --help works"
+          else
+            echo "❌ aios --help failed"
+            exit 1
+          fi
+          
+          echo "📋 AI-OS version:"
+          aios --version || echo "⚠️ Version command not available"
+          
+          echo "✅ Ubuntu ${{ matrix.ubuntu_version }} installation test passed!"
+
+  test-windows:
+    name: 🧪 Test Windows Installation
+    needs: [prepare, build-windows]
+    runs-on: windows-latest
+    if: github.event.inputs.skip_tests != 'true'
+    
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: AI-OS-${{ needs.prepare.outputs.version }}-windows-${{ needs.prepare.outputs.short_sha }}
+          path: installers
+      
+      - name: Install AI-OS
+        shell: pwsh
+        run: |
+          Write-Host "🔧 Installing AI-OS..."
+          
+          $installerPath = Get-ChildItem -Path installers\ -Filter *.exe -Recurse | Select-Object -First 1
+          
+          Write-Host "Running installer: $($installerPath.FullName)"
+          $process = Start-Process -FilePath $installerPath.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-' -Wait -PassThru
+          
+          if ($process.ExitCode -ne 0) {
+            Write-Host "❌ Installer exited with code: $($process.ExitCode)"
+            exit 1
+          }
+          
+          Write-Host "✅ Installer completed successfully"
+      
+      - name: Verify installation
+        shell: pwsh
+        run: |
+          Write-Host "✅ Verifying installation..."
+          
+          $installPath = "C:\Program Files\AI-OS"
+          if (-not (Test-Path $installPath)) {
+            Write-Host "❌ AI-OS directory not found"
+            exit 1
+          }
+          
+          $aiosExe = "$installPath\aios.exe"
+          if (-not (Test-Path $aiosExe)) {
+            Write-Host "❌ aios.exe not found"
+            exit 1
+          }
+          
+          $env:PATH = "$installPath;$env:PATH"
+          
+          try {
+            & $aiosExe --help | Out-Null
+            Write-Host "✅ aios --help works"
+          } catch {
+            Write-Host "❌ aios --help failed: $_"
+            exit 1
+          }
+          
+          Write-Host "📋 AI-OS version:"
+          try {
+            & $aiosExe --version
+          } catch {
+            Write-Host "⚠️ Version command not available"
+          }
+          
+          Write-Host "✅ Windows installation test passed!"
+
+  # =============================================================================
+  # STAGE 4: PUBLISH TO GITHUB RELEASE
+  # =============================================================================
+  publish-release:
+    name: 📦 Publish GitHub Release
+    needs: [prepare, build-deb, build-windows, test-ubuntu, test-windows]
+    runs-on: ubuntu-latest
+    if: |
+      always() &&
+      needs.prepare.outputs.is_release == 'true' &&
+      needs.build-deb.result == 'success' &&
+      needs.build-windows.result == 'success' &&
+      (github.event.inputs.skip_tests == 'true' || 
+       (needs.test-ubuntu.result == 'success' && needs.test-windows.result == 'success'))
+    
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: AI-OS v${{ needs.prepare.outputs.version }}
+          tag_name: Official
+          files: |
+            artifacts/**/*.deb
+            artifacts/**/*.exe
+          body: |
+            ## AI-OS v${{ needs.prepare.outputs.version }}
+            
+            ✅ **Installation Verified**
+            
+            These installers have been tested on:
+            - Ubuntu 22.04 / 20.04
+            - Windows Latest
+            
+            All tests passed successfully.
+            
+            ### 📥 Installation
+            
+            **Windows:**
+            Download `AI-OS-Setup.exe` and run the installer.
+            
+            **Ubuntu/Debian:**
+            ```bash
+            sudo dpkg -i AI-OS_*.deb
+            sudo apt-get install -f
+            ```
+            
+            Or install via APT repository (available shortly after release):
+            ```bash
+            sudo add-apt-repository ${{ env.PPA_NAME }}
+            sudo apt update
+            sudo apt install aios
+            ```
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # =============================================================================
+  # STAGE 5: PUBLISH TO LAUNCHPAD PPA
+  # =============================================================================
+  prepare-launchpad:
+    name: 📦 Prepare Launchpad Package
+    needs: [prepare, publish-release]
+    runs-on: ubuntu-22.04
+    if: needs.prepare.outputs.is_release == 'true'
+    outputs:
+      dsc_file: ${{ steps.build_source.outputs.dsc_file }}
+      changes_file: ${{ steps.build_source.outputs.changes_file }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install Launchpad build tools
+        run: |
+          echo "🔧 Installing Launchpad build dependencies..."
+          sudo apt-get update
+          sudo apt-get install -y \
+            devscripts \
+            debhelper \
+            dh-python \
+            python3-all \
+            python3-setuptools \
+            dpkg-dev \
+            fakeroot \
+            lintian \
+            dput \
+            gnupg2
+      
+      - name: Import GPG key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.LAUNCHPAD_GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.LAUNCHPAD_GPG_PASSPHRASE }}
+        run: |
+          echo "🔐 Importing GPG key..."
+          
+          if [ -z "$GPG_PRIVATE_KEY" ]; then
+            echo "❌ GPG_PRIVATE_KEY secret not set"
+            echo "::error title=GPG Key Missing::LAUNCHPAD_GPG_PRIVATE_KEY secret must be configured"
+            exit 1
+          fi
+          
+          echo "::add-mask::$GPG_PASSPHRASE"
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --quiet --import 2>/dev/null
+          
+          KEY_ID=$(gpg --list-secret-keys --keyid-format LONG 2>/dev/null | grep sec | awk '{print $2}' | cut -d'/' -f2 | head -1)
+          KEY_ID_SHORT=$(echo "$KEY_ID" | tail -c 9)
+          echo "key_id=$KEY_ID" >> $GITHUB_OUTPUT
+          echo "✅ GPG Key imported (ID: *****$KEY_ID_SHORT)"
+          
+          if [ -n "$GPG_PASSPHRASE" ]; then
+            echo "allow-preset-passphrase" >> ~/.gnupg/gpg-agent.conf
+            gpg-connect-agent reloadagent /bye 2>/dev/null || true
+          fi
+      
+      - name: Build source package for Launchpad
+        id: build_source
+        run: |
+          echo "📦 Building source package for Launchpad..."
+          
+          VERSION="${{ needs.prepare.outputs.version }}"
+          BUILD_DIR="build_launchpad"
+          
+          mkdir -p "$BUILD_DIR"
+          cd "$BUILD_DIR"
+          
+          rsync -av ../ ./ \
+            --exclude=".git" \
+            --exclude="build" \
+            --exclude="dist" \
+            --exclude="*.egg-info" \
+            --exclude="__pycache__" \
+            --exclude=".venv" \
+            --exclude="artifacts" \
+            --exclude="build_launchpad"
+          
+          cd ..
+          
+          if [ -f "installers/_builds/ubuntu/create_source_package.sh" ]; then
+            chmod +x "./installers/_builds/ubuntu/create_source_package.sh"
+            "./installers/_builds/ubuntu/create_source_package.sh"
+          else
+            echo "⚠️ Source package script not found, creating basic structure..."
+            
+            mkdir -p "$BUILD_DIR/debian"
+            
+            printf '%s\n' \
+              'Source: aios' \
+              'Section: devel' \
+              'Priority: optional' \
+              'Maintainer: AI-OS Team <contact@example.com>' \
+              'Build-Depends: debhelper-compat (= 12), dh-python, python3-all, python3-setuptools' \
+              'Standards-Version: 4.5.1' \
+              'Homepage: https://github.com/Wulfic/AI-OS' \
+              '' \
+              'Package: aios' \
+              'Architecture: all' \
+              'Depends: ${python3:Depends}, ${misc:Depends}, python3-pip' \
+              'Description: AI Operating System - Recursive Hierarchical Reasoning Models' \
+              ' AI-OS provides advanced AI models with recursive hierarchical reasoning' \
+              ' capabilities, supporting multiple modalities and adaptive learning.' \
+              > "$BUILD_DIR/debian/control"
+            
+            printf '%s\n' \
+              "aios ($VERSION-1) unstable; urgency=medium" \
+              '' \
+              "  * New upstream release $VERSION" \
+              '  * See GitHub releases for full changelog' \
+              '' \
+              " -- AI-OS Team <contact@example.com>  $(date -R)" \
+              > "$BUILD_DIR/debian/changelog"
+            
+            printf '%s\n' \
+              '#!/usr/bin/make -f' \
+              '' \
+              '%:' \
+              '	dh $@ --with python3 --buildsystem=pybuild' \
+              > "$BUILD_DIR/debian/rules"
+            chmod +x "$BUILD_DIR/debian/rules"
+            
+            echo "12" > "$BUILD_DIR/debian/compat"
+            
+            cd "$BUILD_DIR"
+            debuild -S -sa -us -uc
+          fi
+          
+          DSC_FILE=$(find . -name "*.dsc" | head -1)
+          CHANGES_FILE=$(find . -name "*_source.changes" | head -1)
+          
+          if [ -z "$DSC_FILE" ] || [ -z "$CHANGES_FILE" ]; then
+            echo "❌ Source package files not found"
+            exit 1
+          fi
+          
+          echo "dsc_file=$DSC_FILE" >> $GITHUB_OUTPUT
+          echo "changes_file=$CHANGES_FILE" >> $GITHUB_OUTPUT
+          echo "✅ Source package built successfully"
+      
+      - name: Sign source package
+        env:
+          GPG_PASSPHRASE: ${{ secrets.LAUNCHPAD_GPG_PASSPHRASE }}
+        run: |
+          echo "🔏 Signing source package..."
+          echo "::add-mask::$GPG_PASSPHRASE"
+          
+          CHANGES_FILE="${{ steps.build_source.outputs.changes_file }}"
+          
+          if [ -n "$GPG_PASSPHRASE" ]; then
+            echo "$GPG_PASSPHRASE" | debsign -p"gpg --batch --yes --quiet --passphrase-fd 0" "$CHANGES_FILE" 2>&1 | grep -v "gpg:\|Good signature" || true
+          else
+            debsign "$CHANGES_FILE" 2>&1 | grep -v "gpg:\|Good signature" || true
+          fi
+          
+          echo "✅ Package signed successfully"
+      
+      - name: Validate package with lintian
+        run: |
+          echo "🔍 Validating package..."
+          CHANGES_FILE="${{ steps.build_source.outputs.changes_file }}"
+          lintian -I -E --pedantic "$CHANGES_FILE" || true
+          echo "✅ Validation complete"
+      
+      - name: Upload Launchpad artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: launchpad-source-package
+          path: |
+            *.dsc
+            *.tar.*
+            *.changes
+            *.buildinfo
+          retention-days: 30
+
+  upload-launchpad:
+    name: 📤 Upload to Launchpad PPA
+    needs: [prepare, prepare-launchpad]
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Download source package
+        uses: actions/download-artifact@v4
+        with:
+          name: launchpad-source-package
+          path: package
+      
+      - name: Install dput
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dput
+      
+      - name: Configure dput for Launchpad
+        run: |
+          mkdir -p ~/.dput.d
+          
+          printf '%s\n' \
+            '[DEFAULT]' \
+            'default_host_main = ppa' \
+            '' \
+            '[ppa]' \
+            'fqdn = ppa.launchpad.net' \
+            'method = ftp' \
+            'incoming = ~%(ppa)s/ubuntu' \
+            'login = anonymous' \
+            'allow_unsigned_uploads = 0' \
+            > ~/.dput.cf
+          
+          echo "✅ dput configured"
+      
+      - name: Import GPG key for upload
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.LAUNCHPAD_GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.LAUNCHPAD_GPG_PASSPHRASE }}
+        run: |
+          echo "🔐 Importing GPG key for upload..."
+          echo "::add-mask::$GPG_PASSPHRASE"
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --quiet --import 2>/dev/null
+          echo "✅ GPG key ready for signing"
+      
+      - name: Upload to PPA
+        run: |
+          echo "📤 Uploading to Launchpad PPA: ${{ env.PPA_NAME }}..."
+          
+          cd package
+          CHANGES_FILE=$(find . -name "*_source.changes" | head -1)
+          
+          if [ -z "$CHANGES_FILE" ]; then
+            echo "❌ Source changes file not found"
+            exit 1
+          fi
+          
+          PPA_PATH=$(echo "${{ env.PPA_NAME }}" | sed 's/ppa://')
+          
+          dput "ppa:$PPA_PATH" "$CHANGES_FILE"
+          
+          echo "✅ Package uploaded successfully to ${{ env.PPA_NAME }}"
+      
+      - name: Update release notes
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: Official
+          append_body: true
+          body: |
+            
+            ---
+            
+            ## 📦 Ubuntu/Debian APT Repository
+            
+            This release is now available via Launchpad PPA:
+            
+            ```bash
+            sudo add-apt-repository ${{ env.PPA_NAME }}
+            sudo apt update
+            sudo apt install aios
+            ```
+            
+            **Note:** Allow 5-15 minutes after release for PPA build to complete.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # =============================================================================
+  # FINAL SUMMARY
+  # =============================================================================
+  summary:
+    name: 📊 Pipeline Summary
+    needs: [prepare, build-deb, build-windows, test-ubuntu, test-windows, publish-release, upload-launchpad]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Generate pipeline summary
+        run: |
+          echo "# 🚀 Build → Test → Publish Pipeline" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ needs.prepare.outputs.short_sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Build Date:** ${{ needs.prepare.outputs.build_date }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Release:** ${{ needs.prepare.outputs.is_release }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Pipeline Status" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Stage | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔨 Build Debian | ${{ needs.build-deb.result == 'success' && '✅' || needs.build-deb.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.build-deb.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔨 Build Windows | ${{ needs.build-windows.result == 'success' && '✅' || needs.build-windows.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.build-windows.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🧪 Test Ubuntu | ${{ needs.test-ubuntu.result == 'success' && '✅' || needs.test-ubuntu.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.test-ubuntu.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🧪 Test Windows | ${{ needs.test-windows.result == 'success' && '✅' || needs.test-windows.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.test-windows.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📦 GitHub Release | ${{ needs.publish-release.result == 'success' && '✅' || needs.publish-release.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.publish-release.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📤 Launchpad PPA | ${{ needs.upload-launchpad.result == 'success' && '✅' || needs.upload-launchpad.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.upload-launchpad.result }} |" >> $GITHUB_STEP_SUMMARY

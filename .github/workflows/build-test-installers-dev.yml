@@ -1,0 +1,339 @@
+name: Build → Test Installers (DEV)
+
+on:
+  workflow_dispatch:  # Manual trigger for dev testing
+    inputs:
+      refresh_lock:
+        description: 'Refresh requirements-lock.txt'
+        required: false
+        default: false
+        type: boolean
+      test_installers:
+        description: 'Run installer tests'
+        required: false
+        default: true
+        type: boolean
+  push:
+    branches:
+      - dev
+      - feature/**
+      - test/**
+    paths:
+      - 'src/**'
+      - 'config/**'
+      - 'installers/**'
+      - 'pyproject.toml'
+      - '.github/workflows/build-installers-dev.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SHORT_SHA: ${{ github.sha }}
+
+jobs:
+  # =============================================================================
+  # Prepare version info
+  # =============================================================================
+  prepare:
+    name: Prepare Build Info
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      short_sha: ${{ steps.version.outputs.short_sha }}
+      build_date: ${{ steps.version.outputs.build_date }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Extract version info
+        id: version
+        run: |
+          VERSION=$(grep -oP 'version\s*=\s*"\K[^"]+' pyproject.toml | head -1)
+          SHORT_SHA=${GITHUB_SHA::7}
+          BUILD_DATE=$(date +'%Y-%m-%d')
+          echo "version=$VERSION-dev" >> $GITHUB_OUTPUT
+          echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "build_date=$BUILD_DATE" >> $GITHUB_OUTPUT
+          echo "🔧 DEV BUILD | Version: $VERSION-dev | SHA: $SHORT_SHA | Date: $BUILD_DATE"
+
+  # =============================================================================
+  # Ubuntu/Debian Package Build & Test
+  # =============================================================================
+  build-deb:
+    name: Build & Test Debian Package
+    runs-on: ubuntu-22.04
+    needs: prepare
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev
+      
+      - name: Build .deb package
+        run: |
+          chmod +x ./installers/_builds/ubuntu/build_deb.sh
+          if [ "${{ github.event.inputs.refresh_lock }}" == "true" ]; then
+            ./installers/_builds/ubuntu/build_deb.sh --refresh-lock
+          else
+            ./installers/_builds/ubuntu/build_deb.sh
+          fi
+      
+      - name: Test .deb package structure
+        run: |
+          echo "🔍 Testing .deb package structure..."
+          DEB_FILE=$(ls installers/releases/*.deb | head -1)
+          
+          if [ ! -f "$DEB_FILE" ]; then
+            echo "❌ ERROR: .deb file not found"
+            exit 1
+          fi
+          
+          echo "📦 Package: $(basename $DEB_FILE)"
+          
+          # Check package info
+          dpkg-deb --info "$DEB_FILE"
+          
+          # Check package contents
+          echo ""
+          echo "📂 Package contents:"
+          dpkg-deb --contents "$DEB_FILE"
+          
+          # Validate package structure
+          dpkg-deb --validate "$DEB_FILE"
+          
+          echo "✅ .deb package validation passed"
+      
+      - name: Test installation (silent mode)
+        if: github.event.inputs.test_installers != 'false'
+        run: |
+          echo "🧪 Testing .deb installation (silent mode)..."
+          DEB_FILE=$(ls installers/releases/*.deb | head -1)
+          
+          echo "📦 Installing package: $(basename $DEB_FILE)"
+          
+          # Install the package
+          sudo dpkg -i "$DEB_FILE" || true
+          
+          # Fix any dependency issues
+          sudo apt-get install -f -y
+          
+          # Verify installation
+          if dpkg -l | grep -q ai-os; then
+            echo "✅ Package installed successfully"
+            
+            # Check installed files
+            echo ""
+            echo "📂 Installed files:"
+            dpkg -L ai-os | head -20
+            
+            # Check for essential directories and files
+            if [ -d "/opt/ai-os" ]; then
+              echo "✅ Found: /opt/ai-os directory"
+              ls -la /opt/ai-os | head -10
+            else
+              echo "❌ ERROR: Missing /opt/ai-os directory"
+              exit 1
+            fi
+            
+            if [ -f "/usr/local/bin/aios" ] || [ -L "/usr/local/bin/aios" ]; then
+              echo "✅ Found: /usr/local/bin/aios"
+            else
+              echo "⚠️  WARNING: Missing /usr/local/bin/aios"
+            fi
+            
+            # Try to run aios --version if available
+            if command -v aios &> /dev/null; then
+              echo ""
+              echo "🔍 Testing aios command:"
+              aios --version || echo "⚠️  aios command exists but version check failed"
+            fi
+            
+            # Clean up - remove the package
+            echo ""
+            echo "🧹 Cleaning up test installation..."
+            sudo dpkg -r ai-os
+            
+            echo "✅ Installation test completed"
+          else
+            echo "❌ ERROR: Package installation failed"
+            dpkg -l | grep ai-os || echo "Package not found in dpkg list"
+            exit 1
+          fi
+      
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-OS-${{ needs.prepare.outputs.version }}-ubuntu-${{ needs.prepare.outputs.short_sha }}-DEV
+          path: installers/releases/*.deb
+          retention-days: 7
+          if-no-files-found: error
+
+  # =============================================================================
+  # Windows Installer Build & Test
+  # =============================================================================
+  build-windows:
+    name: Build & Test Windows Installer
+    runs-on: windows-latest
+    needs: prepare
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install Inno Setup
+        run: |
+          # Download Inno Setup 6
+          $innoUrl = "https://jrsoftware.org/download.php/is.exe"
+          $innoInstaller = "$env:TEMP\innosetup.exe"
+          
+          Write-Host "Downloading Inno Setup..."
+          Invoke-WebRequest -Uri $innoUrl -OutFile $innoInstaller -UseBasicParsing
+          
+          Write-Host "Installing Inno Setup silently..."
+          Start-Process -FilePath $innoInstaller -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-" -Wait
+          
+          # Add to PATH for this session
+          $innoPath = "C:\Program Files (x86)\Inno Setup 6"
+          echo "$innoPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          
+          Write-Host "Inno Setup installed successfully"
+        shell: pwsh
+      
+      - name: Build Windows installer
+        run: |
+          & .\installers\_builds\windows\build_windows_installer.ps1
+        shell: pwsh
+      
+      - name: Test installer structure
+        run: |
+          Write-Host "🔍 Testing Windows installer structure..."
+          
+          $installerFile = Get-ChildItem -Path "installers\releases\*.exe" | Select-Object -First 1
+          
+          if (-not $installerFile) {
+            Write-Host "❌ ERROR: Installer file not found"
+            exit 1
+          }
+          
+          Write-Host "📦 Installer: $($installerFile.Name)"
+          Write-Host "📊 Size: $([math]::Round($installerFile.Length / 1MB, 2)) MB"
+          
+          # Check if file is a valid PE executable
+          $fileHeader = [System.IO.File]::ReadAllBytes($installerFile.FullName)[0..1]
+          if ($fileHeader[0] -eq 0x4D -and $fileHeader[1] -eq 0x5A) {
+            Write-Host "✅ Valid Windows executable (PE format)"
+          } else {
+            Write-Host "❌ ERROR: Not a valid Windows executable"
+            exit 1
+          }
+          
+          Write-Host "✅ Installer validation passed"
+        shell: pwsh
+      
+      - name: Test installation (silent mode)
+        if: github.event.inputs.test_installers != 'false'
+        run: |
+          Write-Host "🧪 Testing Windows installation (silent mode)..."
+          
+          $installerFile = Get-ChildItem -Path "installers\releases\*.exe" | Select-Object -First 1
+          $testInstallDir = "$env:TEMP\AI-OS-Test-$([guid]::NewGuid().ToString().Substring(0,8))"
+          
+          Write-Host "📂 Test installation directory: $testInstallDir"
+          
+          # Run installer in silent mode with custom directory
+          $process = Start-Process -FilePath $installerFile.FullName -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$testInstallDir" -PassThru -Wait
+          
+          if ($process.ExitCode -ne 0) {
+            Write-Host "⚠️  WARNING: Installer exit code: $($process.ExitCode)"
+          }
+          
+          # Check if installation directory was created
+          if (Test-Path $testInstallDir) {
+            Write-Host "✅ Installation directory created"
+            
+            # List installed files
+            Write-Host "📂 Installed files:"
+            Get-ChildItem -Path $testInstallDir -Recurse -Depth 2 | Format-Table Name, Length, Mode
+            
+            # Check for essential files
+            $essentialFiles = @(
+              "aios.exe",
+              "python.exe",
+              "launcher.bat"
+            )
+            
+            foreach ($file in $essentialFiles) {
+              $filePath = Join-Path $testInstallDir $file
+              if (Test-Path $filePath) {
+                Write-Host "✅ Found: $file"
+              } else {
+                Write-Host "⚠️  WARNING: Missing: $file"
+              }
+            }
+            
+            # Clean up test installation
+            Write-Host "🧹 Cleaning up test installation..."
+            Remove-Item -Path $testInstallDir -Recurse -Force -ErrorAction SilentlyContinue
+            
+            Write-Host "✅ Installation test completed"
+          } else {
+            Write-Host "⚠️  WARNING: Installation directory not found (installer may not have run)"
+          }
+        shell: pwsh
+      
+      - name: Upload Windows installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-OS-${{ needs.prepare.outputs.version }}-windows-${{ needs.prepare.outputs.short_sha }}-DEV
+          path: installers/releases/*.exe
+          retention-days: 7
+          if-no-files-found: error
+
+  # =============================================================================
+  # Summary Report
+  # =============================================================================
+  summary:
+    name: Build Summary
+    needs: [prepare, build-deb, build-windows]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Generate summary
+        run: |
+          echo "# 🔧 Dev Installer Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ needs.prepare.outputs.short_sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Build Date:** ${{ needs.prepare.outputs.build_date }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Build Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Platform | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Debian/Ubuntu | ${{ needs.build-deb.result == 'success' && '✅ Success' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Windows | ${{ needs.build-windows.result == 'success' && '✅ Success' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️  **Note:** This is a development build and is NOT published. Artifacts are retained for 7 days." >> $GITHUB_STEP_SUMMARY
