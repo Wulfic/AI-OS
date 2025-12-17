@@ -193,7 +193,7 @@ jobs:
     name: Prepare PPA Source Package (aios-dev)
     runs-on: ubuntu-22.04
     needs: [prepare, build-deb]
-    if: success() && secrets.LAUNCHPAD_GPG_PRIVATE_KEY != ''
+    if: success()
     outputs:
       dsc_file: ${{ steps.build_source.outputs.dsc_file }}
       changes_file: ${{ steps.build_source.outputs.changes_file }}
@@ -403,7 +403,6 @@ jobs:
     name: Upload to PPA (aios-dev)
     needs: [prepare, prepare-ppa-dev]
     runs-on: ubuntu-22.04
-    if: success() && secrets.LAUNCHPAD_GPG_PRIVATE_KEY != ''
     
     steps:
       - name: Download source package
@@ -468,7 +467,7 @@ jobs:
     name: Test PPA Installation (aios-dev)
     runs-on: ubuntu-22.04
     needs: [prepare, publish-ppa-dev]
-    if: success() && secrets.LAUNCHPAD_GPG_PRIVATE_KEY != ''
+    if: success()
     
     steps:
       - name: Wait for PPA processing
