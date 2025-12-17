@@ -317,17 +317,20 @@ jobs:
             if ($missingCount -eq 0) {
               Write-Host "✅ Installation test completed successfully"
             } else {
-              Write-Host "⚠️  Installation test completed with $missingCount missing files"
+              Write-Host "❌ ERROR: Installation test failed - $missingCount essential files missing"
+              exit 1
             }
           } else {
             Write-Host ""
             Write-Host "❌ ERROR: Installation directory not found"
             Write-Host "This typically means the installer failed to run or was unable to create the directory."
             
-            # Don't fail the workflow, but make it clear something went wrong
             if ($process.ExitCode -ne 0) {
-              Write-Host "Exit code $($process.ExitCode) suggests an installation failure."
+              Write-Host "Installer exit code: $($process.ExitCode)"
             }
+            
+            Write-Host "❌ Installation test failed"
+            exit 1
           }
         shell: pwsh
       
