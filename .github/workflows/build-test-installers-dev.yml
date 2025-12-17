@@ -197,12 +197,37 @@ jobs:
       
       - name: Install Inno Setup
         run: |
-          # Download Inno Setup 6
-          $innoUrl = "https://jrsoftware.org/download.php/is.exe"
+          # Download Inno Setup 6 with retry logic
+          $innoUrls = @(
+            "https://jrsoftware.org/download.php/is.exe",
+            "https://files.jrsoftware.org/is/6/innosetup-6.3.3.exe"
+          )
           $innoInstaller = "$env:TEMP\innosetup.exe"
+          $maxRetries = 3
+          $downloaded = $false
           
-          Write-Host "Downloading Inno Setup..."
-          Invoke-WebRequest -Uri $innoUrl -OutFile $innoInstaller -UseBasicParsing
+          foreach ($url in $innoUrls) {
+            for ($i = 1; $i -le $maxRetries; $i++) {
+              try {
+                Write-Host "Downloading Inno Setup from $url (attempt $i/$maxRetries)..."
+                Invoke-WebRequest -Uri $url -OutFile $innoInstaller -UseBasicParsing -TimeoutSec 30
+                $downloaded = $true
+                Write-Host "✅ Download successful"
+                break
+              } catch {
+                Write-Host "⚠️  Download failed: $($_.Exception.Message)"
+                if ($i -lt $maxRetries) {
+                  Start-Sleep -Seconds 5
+                }
+              }
+            }
+            if ($downloaded) { break }
+          }
+          
+          if (-not $downloaded) {
+            Write-Error "Failed to download Inno Setup from all sources"
+            exit 1
+          }
           
           Write-Host "Installing Inno Setup silently..."
           Start-Process -FilePath $innoInstaller -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-" -Wait
@@ -211,7 +236,7 @@ jobs:
           $innoPath = "C:\Program Files (x86)\Inno Setup 6"
           echo "$innoPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           
-          Write-Host "Inno Setup installed successfully"
+          Write-Host "✅ Inno Setup installed successfully"
         shell: pwsh
       
       - name: Build Windows installer
