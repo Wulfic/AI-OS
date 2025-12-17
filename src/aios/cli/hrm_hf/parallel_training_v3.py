@@ -407,8 +407,11 @@ def train_gpu_worker(
     model.train()
     total_steps_this_gpu = 0  # Optimizer steps (after gradient accumulation)
     total_micro_batches_this_gpu = 0  # True training steps (all forward/backward passes)
-    current_block_id = 0
+    current_block_id = config.start_block_id  # Start from specified block
     graceful_stop_pending = False  # Track graceful stop request
+    
+    if config.start_block_id > 0 or config.start_chunk_id > 0:
+        print(f"[GPU {tracker_id}] Starting from Block {config.start_block_id}, Chunk {config.start_chunk_id}")
     
     print(f"[GPU {tracker_id}] Starting training loop...")
     
@@ -478,7 +481,7 @@ def train_gpu_worker(
                         print(f"[GPU {tracker_id}] Iterate mode enabled, starting new epoch")
                         chunk_tracker.start_new_epoch()
                         block_manager.reset()
-                        current_block_id = 0
+                        current_block_id = config.start_block_id  # Respect start position across epochs
                         continue
                     else:
                         print(f"[GPU {tracker_id}] Iterate mode disabled, stopping after epoch")

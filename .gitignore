@@ -162,3 +162,4 @@ installers/dependencies/winget/ui_xaml_x64.appx
 installers/dependencies/winget/vclibs_x64.appx
 installers/dependencies/winget/windowsappruntime_x64.exe
 installers/dependencies/winget/winget.msixbundle
+artifacts/diagnostics/analytics_events.jsonl

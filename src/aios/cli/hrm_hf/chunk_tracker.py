@@ -453,17 +453,31 @@ class ChunkTracker:
         This method immediately claims the chunk as in-progress to prevent
         multiple GPUs from training on the same chunk (race condition).
         
+        Respects start position bounds - will not return chunks before
+        (start_block_id, start_chunk_id).
+        
         Args:
             block_id: Block ID to search
             total_chunks_in_block: Total number of chunks in the block
             gpu_id: GPU requesting a chunk
             
         Returns:
-            Chunk ID if found, None if all chunks trained
+            Chunk ID if found, None if all chunks trained or all chunks before start position
         """
         with self._locked(refresh=True):
             self._cleanup_stale_in_progress_locked()
-            for chunk_id in range(total_chunks_in_block):
+            
+            # Determine the starting chunk ID based on start position bounds
+            start_chunk = 0
+            if block_id == self.start_block_id:
+                # If we're in the start block, start from start_chunk_id
+                start_chunk = self.start_chunk_id
+            elif block_id < self.start_block_id:
+                # If block is before start_block_id, skip all chunks
+                logger.debug(f"Block {block_id} is before start_block_id {self.start_block_id}, skipping all chunks")
+                return None
+            
+            for chunk_id in range(start_chunk, total_chunks_in_block):
                 chunk_key = (block_id, chunk_id)
                 # Check if chunk is neither completed nor in progress
                 if chunk_key not in self.completed_chunks and chunk_key not in self.in_progress_chunks:

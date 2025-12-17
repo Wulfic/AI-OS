@@ -295,82 +295,139 @@ def _check_resumable_checkpoint(panel: Any, config: Any) -> None:
 
     panel._log(f"[hrm] should_prompt_resume = {should_prompt_resume}")
 
-    # Phase 6.4: Always show the dialog for start position selection
-    panel._log(f"[hrm] ==========================================")
-    panel._log(f"[hrm] SHOWING START/RESUME DIALOG (Phase 6.4 - always shown)")
-    panel._log(f"[hrm] Brain: {config.brain_name}")
-    panel._log(f"[hrm] ==========================================")
-    try:
-        from ..resume_dialog import show_resume_dialog
-
-        # Get root window for dialog parent (panel is a Frame, not a Toplevel)
+    # Check if we're in shuffle mode (linear_dataset disabled)
+    linear_mode = True
+    if hasattr(panel, 'linear_dataset_var'):
         try:
-            parent_window = panel.winfo_toplevel()
-            panel._log(f"[hrm] Got toplevel window: {parent_window}")
-        except Exception as e:
-            panel._log(f"[hrm] Warning: Could not get toplevel window: {e}, using panel as parent")
-            parent_window = panel
-
-        panel._log(f"[hrm] Calling show_resume_dialog()...")
-        
-        # Dialog now returns a tuple: (resume_choice, start_block_id, start_chunk_id)
-        dialog_result = show_resume_dialog(
-            parent_window,
-            config.brain_name,
-            config.bundle_dir,
-            config.dataset_file,
-            has_checkpoint=should_prompt_resume,
-            parent_panel=panel
-        )
-
-        panel._log(f"[hrm] Dialog returned: {dialog_result}")
+            linear_mode = bool(panel.linear_dataset_var.get())
+        except Exception:
+            pass
+    
+    # In shuffle mode, automatically randomize start position without showing dialog
+    if not linear_mode:
+        panel._log(f"[hrm] ==========================================")
+        panel._log(f"[hrm] SHUFFLE MODE: Randomizing start position")
         panel._log(f"[hrm] ==========================================")
         
-        if dialog_result is None:
-            # User cancelled
-            panel._log("[hrm] [X] User CANCELLED - aborting training")
-            raise SystemExit("User cancelled")
+        import random
         
-        # Unpack result
-        if isinstance(dialog_result, tuple) and len(dialog_result) == 3:
-            resume_choice, start_block_id, start_chunk_id = dialog_result
-        else:
-            # Backward compatibility: old dialog returns just boolean
-            resume_choice = dialog_result
-            start_block_id, start_chunk_id = 0, 0
+        # Get total blocks and chunks from preprocessing info or defaults
+        total_blocks = 22  # Default from preprocessing message
+        chunks_per_block = 25  # Default from preprocessing message
+        
+        # Try to get actual values from preprocessing or manifest
+        try:
+            from pathlib import Path
+            dataset_path = Path(config.dataset_file)
+            if dataset_path.is_dir():
+                manifest_path = dataset_path / "block_manifest.json"
+                if manifest_path.exists():
+                    import json
+                    with open(manifest_path, 'r') as f:
+                        manifest = json.load(f)
+                        total_blocks = manifest.get('total_blocks', total_blocks)
+        except Exception as e:
+            panel._log(f"[hrm] Could not read manifest, using defaults: {e}")
+        
+        # Randomize start position
+        start_block_id = random.randint(0, max(0, total_blocks - 1))
+        start_chunk_id = random.randint(0, max(0, chunks_per_block - 1))
+        
+        panel._log(f"[hrm] Randomly selected: Block {start_block_id}, Chunk {start_chunk_id}")
+        panel._log(f"[hrm] (from {total_blocks} blocks, {chunks_per_block} chunks per block)")
+        
+        resume_choice = False
         
         # Apply start position to config
         config.start_block_id = start_block_id
         config.start_chunk_id = start_chunk_id
-        panel._log(f"[hrm] Start position: Block {start_block_id}, Chunk {start_chunk_id}")
         
-        # Emit telemetry event for start position
+    else:
+        # Linear mode: Show dialog for start position selection
+        panel._log(f"[hrm] ==========================================")
+        panel._log(f"[hrm] SHOWING START/RESUME DIALOG (Linear mode)")
+        panel._log(f"[hrm] Brain: {config.brain_name}")
+        panel._log(f"[hrm] ==========================================")
         try:
-            import json
-            from pathlib import Path
-            from datetime import datetime
-            diagnostics_dir = Path("artifacts/diagnostics")
-            diagnostics_dir.mkdir(parents=True, exist_ok=True)
-            event_file = diagnostics_dir / "analytics_events.jsonl"
+            from ..resume_dialog import show_resume_dialog
+
+            # Get root window for dialog parent (panel is a Frame, not a Toplevel)
+            try:
+                parent_window = panel.winfo_toplevel()
+                panel._log(f"[hrm] Got toplevel window: {parent_window}")
+            except Exception as e:
+                panel._log(f"[hrm] Warning: Could not get toplevel window: {e}, using panel as parent")
+                parent_window = panel
+
+            panel._log(f"[hrm] Calling show_resume_dialog()...")
             
-            event = {
-                "event": "training_start_position_selected",
-                "timestamp": datetime.now().isoformat(),
-                "brain_name": config.brain_name,
-                "dataset": config.dataset_file,
-                "start_block_id": start_block_id,
-                "start_chunk_id": start_chunk_id,
-                "resume": resume_choice,
-                "force_train": getattr(config, "force_train", False),
-            }
+            # Dialog now returns a tuple: (resume_choice, start_block_id, start_chunk_id)
+            dialog_result = show_resume_dialog(
+                parent_window,
+                config.brain_name,
+                config.bundle_dir,
+                config.dataset_file,
+                has_checkpoint=should_prompt_resume,
+                parent_panel=panel
+            )
+
+            panel._log(f"[hrm] Dialog returned: {dialog_result}")
+            panel._log(f"[hrm] ==========================================")
             
-            with event_file.open("a") as f:
-                f.write(json.dumps(event) + "\n")
-                
-            panel._log(f"[hrm] Telemetry: training_start_position_selected event emitted")
-        except Exception as e:
-            panel._log(f"[hrm] Warning: Could not emit telemetry event: {e}")
+            if dialog_result is None:
+                # User cancelled
+                panel._log("[hrm] [X] User CANCELLED - aborting training")
+                raise SystemExit("User cancelled")
+            
+            # Unpack result
+            if isinstance(dialog_result, tuple) and len(dialog_result) == 3:
+                resume_choice, start_block_id, start_chunk_id = dialog_result
+            else:
+                # Backward compatibility: old dialog returns just boolean
+                resume_choice = dialog_result
+                start_block_id, start_chunk_id = 0, 0
+            
+            # Apply start position to config
+            config.start_block_id = start_block_id
+            config.start_chunk_id = start_chunk_id
+            panel._log(f"[hrm] Start position: Block {start_block_id}, Chunk {start_chunk_id}")
         
+        except Exception as e:
+            panel._log(f"[hrm] [ERROR] Failed to show dialog: {e}")
+            import traceback
+            panel._log(f"[hrm] Traceback: {traceback.format_exc()}")
+            raise
+    
+    # Emit telemetry event for start position (applies to both shuffle and linear modes)
+    try:
+        import json
+        from pathlib import Path
+        from datetime import datetime
+        diagnostics_dir = Path("artifacts/diagnostics")
+        diagnostics_dir.mkdir(parents=True, exist_ok=True)
+        event_file = diagnostics_dir / "analytics_events.jsonl"
+        
+        event = {
+            "event": "training_start_position_selected",
+            "timestamp": datetime.now().isoformat(),
+            "brain_name": config.brain_name,
+            "dataset": config.dataset_file,
+            "start_block_id": config.start_block_id,
+            "start_chunk_id": config.start_chunk_id,
+            "resume": resume_choice,
+            "force_train": getattr(config, "force_train", False),
+            "shuffle_mode": not linear_mode,
+        }
+        
+        with event_file.open("a") as f:
+            f.write(json.dumps(event) + "\n")
+            
+        panel._log(f"[hrm] Telemetry: training_start_position_selected event emitted")
+    except Exception as e:
+        panel._log(f"[hrm] Warning: Could not emit telemetry event: {e}")
+    
+    # Handle resume choice (applies to both shuffle and linear modes)
+    try:
         if resume_choice:
             # User chose to resume
             config.resume = True

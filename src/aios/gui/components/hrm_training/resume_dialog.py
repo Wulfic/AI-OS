@@ -830,8 +830,32 @@ class ResumeDialog(tk.Toplevel):
     
     def _start_fresh(self):
         """User chose to start fresh training."""
-        # Return tuple: (resume=False, start_block_id=0, start_chunk_id=0)
-        self.result = (False, 0, 0)
+        # Check if linear mode is disabled (shuffle mode enabled)
+        linear_mode = True
+        if self.parent_panel and hasattr(self.parent_panel, 'linear_dataset_var'):
+            try:
+                linear_mode = bool(self.parent_panel.linear_dataset_var.get())
+            except Exception:
+                pass
+        
+        # In shuffle mode, randomize start position
+        start_block = 0
+        start_chunk = 0
+        
+        if not linear_mode:
+            import random
+            max_blocks = self.resume_info.get('total_blocks', 0) if self.resume_info else 0
+            max_chunks = self.resume_info.get('chunks_per_block', 0) if self.resume_info else 0
+            
+            if max_blocks > 0:
+                start_block = random.randint(0, max_blocks - 1)
+                if max_chunks > 0:
+                    start_chunk = random.randint(0, max_chunks - 1)
+                
+                logger.info(f"Shuffle mode enabled: randomly selected Block {start_block}, Chunk {start_chunk}")
+        
+        # Return tuple: (resume=False, start_block_id, start_chunk_id)
+        self.result = (False, start_block, start_chunk)
         self.destroy()
     
     def _manual_start(self):
