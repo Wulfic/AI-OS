@@ -193,7 +193,7 @@ jobs:
     name: Prepare PPA Source Package (aios-dev)
     runs-on: ubuntu-22.04
     needs: [prepare, build-deb]
-    if: success()
+    if: success() && secrets.LAUNCHPAD_GPG_PRIVATE_KEY != ''
     outputs:
       dsc_file: ${{ steps.build_source.outputs.dsc_file }}
       changes_file: ${{ steps.build_source.outputs.changes_file }}
@@ -239,14 +239,14 @@ jobs:
       
       - name: Import GPG key
         env:
-          GPG_PRIVATE_KEY: ${{ secrets.PPA_GPG_PRIVATE_KEY }}
-          GPG_PASSPHRASE: ${{ secrets.PPA_GPG_PASSPHRASE }}
+          GPG_PRIVATE_KEY: ${{ secrets.LAUNCHPAD_GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.LAUNCHPAD_GPG_PASSPHRASE }}
         run: |
           echo "🔐 Importing GPG key..."
           
           if [ -z "$GPG_PRIVATE_KEY" ]; then
             echo "❌ GPG_PRIVATE_KEY secret not set"
-            echo "::error title=GPG Key Missing::PPA_GPG_PRIVATE_KEY secret must be configured"
+            echo "::error title=GPG Key Missing::LAUNCHPAD_GPG_PRIVATE_KEY secret must be configured"
             exit 1
           fi
           
@@ -363,7 +363,7 @@ jobs:
       
       - name: Sign source package
         env:
-          GPG_PASSPHRASE: ${{ secrets.PPA_GPG_PASSPHRASE }}
+          GPG_PASSPHRASE: ${{ secrets.LAUNCHPAD_GPG_PASSPHRASE }}
         run: |
           echo "🔏 Signing source package..."
           echo "::add-mask::$GPG_PASSPHRASE"
@@ -403,6 +403,7 @@ jobs:
     name: Upload to PPA (aios-dev)
     needs: [prepare, prepare-ppa-dev]
     runs-on: ubuntu-22.04
+    if: success() && secrets.LAUNCHPAD_GPG_PRIVATE_KEY != ''
     
     steps:
       - name: Download source package
@@ -436,8 +437,8 @@ jobs:
       
       - name: Import GPG key for upload
         env:
-          GPG_PRIVATE_KEY: ${{ secrets.PPA_GPG_PRIVATE_KEY }}
-          GPG_PASSPHRASE: ${{ secrets.PPA_GPG_PASSPHRASE }}
+          GPG_PRIVATE_KEY: ${{ secrets.LAUNCHPAD_GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.LAUNCHPAD_GPG_PASSPHRASE }}
         run: |
           echo "🔐 Importing GPG key for upload..."
           echo "::add-mask::$GPG_PASSPHRASE"
@@ -467,7 +468,7 @@ jobs:
     name: Test PPA Installation (aios-dev)
     runs-on: ubuntu-22.04
     needs: [prepare, publish-ppa-dev]
-    if: success()
+    if: success() && secrets.LAUNCHPAD_GPG_PRIVATE_KEY != ''
     
     steps:
       - name: Wait for PPA processing
