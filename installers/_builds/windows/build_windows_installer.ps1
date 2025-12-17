@@ -755,6 +755,10 @@ end;
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
 	Result := True;
+	{ Skip validation checks when running in silent mode }
+	if WizardSilent then
+		Exit;
+		
 	if (LicensePage <> nil) and (CurPageID = LicensePage.ID) then
 	begin
 		if not LicenseAcceptCheck.Checked then
