@@ -1,6 +1,9 @@
 name: Build → Test Installers (DEV)
 
 on:
+  push:
+    branches:
+      - dev
   workflow_dispatch:  # Manual trigger for dev testing
     inputs:
       refresh_lock:
@@ -13,17 +16,6 @@ on:
         required: false
         default: true
         type: boolean
-  push:
-    branches:
-      - dev
-      - feature/**
-      - test/**
-    paths:
-      - 'src/**'
-      - 'config/**'
-      - 'installers/**'
-      - 'pyproject.toml'
-      - '.github/workflows/build-installers-dev.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
