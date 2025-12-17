@@ -38,7 +38,7 @@ def create_appearance_section(panel: "SettingsPanel", container: ttk.Frame) -> N
         container: The main container frame
     """
     appearance_frame = ttk.LabelFrame(container, text="Appearance", padding=8)
-    appearance_frame.pack(fill="x", expand=False, pady=(0, 8))
+    appearance_frame.pack(fill="both", expand=True, pady=(0, 8))
 
     # Theme selection
     theme_row = ttk.Frame(appearance_frame)
@@ -311,9 +311,7 @@ def create_logging_section(panel: "SettingsPanel", container: ttk.Frame) -> None
         "Includes current and archived log files."
     )
 
-    # Start background task to calculate log size
-    if hasattr(panel, '_update_log_size'):
-        panel._update_log_size()
+    # Log size will be calculated when Settings tab is activated
 
 
 def create_help_section(panel: "SettingsPanel", container: ttk.Frame) -> None:
@@ -563,7 +561,8 @@ def create_dataset_storage_section(panel: "SettingsPanel", container: ttk.Frame)
 
     artifacts_label = ttk.Label(artifacts_row, text="Artifacts Directory:", width=20, anchor="e")
     artifacts_label.pack(side="left", padx=(0, 10))
-
+    
+    # Will be populated with default in _load_artifacts_path
     panel.artifacts_dir_var = safe_variables.StringVar(value="")
     artifacts_entry = ttk.Entry(
         artifacts_row,
@@ -613,16 +612,9 @@ def create_dataset_storage_section(panel: "SettingsPanel", container: ttk.Frame)
         "Revert to the default artifacts path."
     )
 
-    # Status label for artifacts directory
+    # Status label for artifacts directory (hidden but kept for compatibility)
     panel._artifacts_status_var = safe_variables.StringVar(value="")
-    status_label = ttk.Label(
-        storage_frame,
-        textvariable=panel._artifacts_status_var,
-        font=("TkDefaultFont", 8),
-        foreground="gray"
-    )
-    status_label.pack(anchor="w", pady=(5, 0))
-    panel._artifacts_status_label = status_label
+    panel._artifacts_status_label = None
 
     # Download location configuration (Phase 3.3)
     download_row = ttk.Frame(storage_frame)

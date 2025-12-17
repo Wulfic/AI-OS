@@ -324,6 +324,7 @@ def initialize_panels(app: Any) -> None:
             worker_pool=app._worker_pool,
             resources_panel=app.resources_panel,
             post_to_ui=app.post_to_ui,
+            app=app,
         )
         log_timing("HRM Training panel")
     except Exception as e:

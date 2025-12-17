@@ -234,7 +234,16 @@ def build_sampling_controls(panel: RichChatPanel, frame: Any) -> None:
         textvariable=panel._top_k_var,
         width=6
     )
-    topk_entry.pack(side="left", padx=(4, 0))
+    topk_entry.pack(side="left", padx=(4, 4))
+    
+    # Note about live changes
+    params_note = ttk.Label(
+        sampling_bar,
+        text="(live, no reload needed)",
+        foreground="gray",
+        font=("TkDefaultFont", 8, "italic")
+    )
+    params_note.pack(side="left", padx=(0, 0))
     
     # Trigger state save on change
     panel._top_k_var.trace_add(

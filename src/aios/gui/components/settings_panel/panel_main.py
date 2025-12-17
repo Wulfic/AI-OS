@@ -60,6 +60,10 @@ class SettingsPanel:
         
         # Flag to prevent trace callbacks during state restoration
         self._restoring_state = False
+        
+        # Cache log size to avoid repeated calculations
+        self._cached_log_size: str | None = None
+        self._log_size_calculating = False
 
         # Main container with canvas for scrolling
         main_container = ttk.Frame(parent)
@@ -108,9 +112,10 @@ class SettingsPanel:
         blocking the UI thread with subprocess calls during initialization.
         """
         try:
-            logger.debug("Loading deferred settings (dataset cap, artifacts path)...")
+            logger.debug("Loading deferred settings (dataset cap, artifacts path, download location)...")
             self._load_dataset_cap()
             self._load_artifacts_path()
+            self._load_download_location()
             logger.debug("Deferred settings loaded successfully")
         except Exception as e:
             logger.error(f"Error loading deferred settings: {e}", exc_info=True)
@@ -288,13 +293,9 @@ class SettingsPanel:
             return str(Path.cwd() / "artifacts")
 
     def _set_artifacts_status(self, message: str, color: str = "gray") -> None:
-        """Set artifacts directory status message (Phase 3.2)."""
-        try:
-            self._artifacts_status_var.set(message)
-            if self._artifacts_status_label is not None:
-                self._artifacts_status_label.configure(foreground=color)
-        except Exception:
-            logger.debug("Failed to update artifacts status label", exc_info=True)
+        """Set artifacts directory status message (Phase 3.2) - deprecated but kept for compatibility."""
+        # Status display removed - keeping method for compatibility
+        pass
 
     def _probe_directory_writable(self, path) -> str | None:
         """Test if directory is writable (Phase 3.2)."""
@@ -421,6 +422,9 @@ class SettingsPanel:
             override = os.environ.get("AIOS_ARTIFACTS_DIR", "").strip()
             if override:
                 self.artifacts_dir_var.set(override)
+            else:
+                # Show default path in the field
+                self.artifacts_dir_var.set(self._artifacts_default_dir)
             
             # Validate initial path
             self._validate_artifacts_dir(apply_override=False)
@@ -448,13 +452,58 @@ class SettingsPanel:
 
         if selected:
             self.download_location_var.set(selected)
+            self._update_hf_home_for_download_location(selected)
             logger.info(f"Download location set to: {selected}")
 
     def _reset_download_location(self) -> None:
         """Reset download location to default (Phase 3.3)."""
-        self.download_location_var.set("training_datasets")
-        logger.info("Download location reset to default: training_datasets")
+        from pathlib import Path
+        default_path = Path.cwd() / "training_datasets"
+        self.download_location_var.set(str(default_path))
+        self._update_hf_home_for_download_location(str(default_path))
+        logger.info(f"Download location reset to default: {default_path}")
 
+    def _update_hf_home_for_download_location(self, download_path: str) -> None:
+        """Update HF_HOME environment variable and config to match download location."""
+        try:
+            from pathlib import Path
+            import os
+            
+            # Set HF_HOME to .hf_cache subdirectory of download location
+            path = Path(download_path)
+            if not path.is_absolute():
+                path = Path.cwd() / download_path
+            
+            hf_cache_path = path / ".hf_cache"
+            
+            # Update environment variable for current session
+            os.environ["HF_HOME"] = str(hf_cache_path.resolve())
+            
+            # Save to config file for future sessions
+            config_file = Path.home() / ".config" / "aios" / "hf_cache_path.txt"
+            config_file.parent.mkdir(parents=True, exist_ok=True)
+            config_file.write_text(str(hf_cache_path.resolve()))
+            
+            logger.info(f"Updated HF_HOME to: {hf_cache_path.resolve()}")
+        except Exception as e:
+            logger.error(f"Error updating HF_HOME: {e}", exc_info=True)
+    
+    def _load_download_location(self) -> None:
+        """Load and expand download location to show full path."""
+        try:
+            from pathlib import Path
+            current = self.download_location_var.get().strip()
+            if current:
+                # Convert to absolute path
+                path = Path(current)
+                if not path.is_absolute():
+                    path = Path.cwd() / current
+                self.download_location_var.set(str(path.resolve()))
+                # Sync HF_HOME with download location
+                self._update_hf_home_for_download_location(str(path.resolve()))
+        except Exception as e:
+            logger.debug(f"Error expanding download location path: {e}")
+    
     def _load_startup_status(self) -> None:
         """Load current startup status from Windows registry."""
         startup_settings.load_startup_status(self)
@@ -587,10 +636,19 @@ class SettingsPanel:
             pass
         
         try:
+            from pathlib import Path
             download_location = state.get("download_location")
             if download_location and hasattr(self, 'download_location_var'):
-                self.download_location_var.set(download_location)
-                logger.info(f"Restored download location: {download_location}")
+                # Convert to absolute path for display
+                path = Path(download_location)
+                if not path.is_absolute():
+                    path = Path.cwd() / download_location
+                self.download_location_var.set(str(path.resolve()))
+                logger.info(f"Restored download location: {path.resolve()}")
+            elif hasattr(self, 'download_location_var'):
+                # Show default as absolute path
+                default_path = Path.cwd() / "training_datasets"
+                self.download_location_var.set(str(default_path))
         except Exception as e:
             logger.error(f"Failed to restore download location: {e}")
         
@@ -910,22 +968,38 @@ class SettingsPanel:
             
             logger.info("User action: Clearing old log files")
             
-            # Get all log files in the logs directory
+            # Get all log files in the logs directory (excluding current session logs and crash.log)
             log_files = []
-            patterns = [
-                os.path.join(LOG_DIR, "aios.log.*"),  # Rotated standard logs
-                os.path.join(LOG_DIR, "aios_debug.log.*"),  # Rotated debug logs
-            ]
             
-            for pattern in patterns:
-                log_files.extend(glob.glob(pattern))
+            if os.path.isdir(LOG_DIR):
+                for file in os.listdir(LOG_DIR):
+                    # Skip crash.log - it's for error reporting
+                    if file == "crash.log":
+                        continue
+                    
+                    # Include any .log file
+                    if file.endswith('.log') or '.log.' in file:
+                        full_path = os.path.join(LOG_DIR, file)
+                        if os.path.isfile(full_path):
+                            # Check if file is locked by attempting to rename it
+                            # This is more reliable on Windows than opening
+                            temp_name = full_path + ".tmp_check"
+                            try:
+                                os.rename(full_path, temp_name)
+                                os.rename(temp_name, full_path)
+                                # File is not locked, safe to delete
+                                log_files.append(full_path)
+                            except (IOError, OSError, PermissionError):
+                                # File is locked/in use, skip it
+                                logger.debug(f"Skipping locked log file: {file}")
+                                continue
             
             if not log_files:
                 messagebox.showinfo(
                     "Clear Old Logs",
                     "No old log files found to clear.\n\n"
-                    "Only rotated/archived logs (e.g., aios.log.1, aios.log.2) are cleared.\n"
-                    "Current session logs are always preserved."
+                    "Only rotated/archived logs are cleared.\n"
+                    "Current session logs (aios.log, aios_debug.log) are always preserved."
                 )
                 return
             
@@ -975,8 +1049,8 @@ class SettingsPanel:
             
             logger.info(f"Cleared {deleted} old log files, {len(errors)} errors")
             
-            # Update log size display
-            self._update_log_size()
+            # Force recalculation of log size after clearing
+            self._update_log_size(force=True)
             
         except Exception as e:
             logger.error(f"Error clearing old logs: {e}", exc_info=True)
@@ -986,8 +1060,27 @@ class SettingsPanel:
             except Exception:
                 pass
 
-    def _update_log_size(self) -> None:
-        """Update the log folder size indicator."""
+    def _update_log_size(self, force: bool = False) -> None:
+        """Update the log folder size indicator.
+        
+        Args:
+            force: If True, force recalculation even if cached value exists
+        """
+        # Use cached value if available and not forcing
+        if not force and self._cached_log_size and not self._log_size_calculating:
+            if hasattr(self, 'log_size_var'):
+                try:
+                    self.log_size_var.set(self._cached_log_size)
+                except Exception:
+                    pass
+            return
+        
+        # Prevent concurrent calculations
+        if self._log_size_calculating:
+            return
+        
+        self._log_size_calculating = True
+        
         def _calculate():
             try:
                 total_size = 0
@@ -1009,6 +1102,10 @@ class SettingsPanel:
                 size_mb = total_size / (1024 * 1024)
                 size_str = f"Log Folder: {size_mb:.2f} MB ({file_count} files)"
                 
+                # Cache the result
+                self._cached_log_size = size_str
+                self._log_size_calculating = False
+                
                 # Update UI on main thread
                 if hasattr(self, 'log_size_var'):
                     try:
@@ -1020,6 +1117,7 @@ class SettingsPanel:
                 
             except Exception as e:
                 logger.warning(f"Error calculating log size: {e}")
+                self._log_size_calculating = False
                 if hasattr(self, 'log_size_var'):
                     try:
                         self.log_size_var.set("Log Folder: ? MB")

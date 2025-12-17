@@ -31,6 +31,7 @@ class HRMTrainingPanel(ttk.LabelFrame):  # type: ignore[misc]
         worker_pool: Any = None,
         resources_panel: Any = None,
         post_to_ui: Optional[Callable[[Callable[..., None]], None]] = None,
+        app: Any = None,
     ) -> None:
         if tk is None or ttk is None:
             raise RuntimeError("Tkinter not available")
@@ -47,6 +48,7 @@ class HRMTrainingPanel(ttk.LabelFrame):  # type: ignore[misc]
         self._worker_pool = worker_pool
         self._resources_panel = resources_panel
         self._post_to_ui = post_to_ui
+        self._app = app
         if self._resources_panel is not None:
             try:
                 self._resources_panel._hrm_deepspeed_callback = self.update_deepspeed_state

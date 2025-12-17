@@ -482,12 +482,26 @@ def populate_dataset_dropdown(panel: HRMTrainingPanel) -> list:
     
     datasets = []
     
-    # Check common dataset locations
-    locations = [
-        ("Z:/training_datasets", "Z: drive"),
+    # Check configured dataset download location and fallback locations
+    locations = []
+    
+    # Try to get configured download location from settings
+    try:
+        if hasattr(panel, '_app') and panel._app and hasattr(panel._app, 'settings_panel'):
+            settings_panel = panel._app.settings_panel
+            if settings_panel and hasattr(settings_panel, 'download_location_var'):
+                configured_location = settings_panel.download_location_var.get().strip()
+                if configured_location:
+                    locations.append((configured_location, "Configured location"))
+                    log(panel, f"[hrm] Using configured dataset location: {configured_location}")
+    except Exception as e:
+        log(panel, f"[hrm] Could not get configured download location: {e}")
+    
+    # Add default fallback locations
+    locations.extend([
         ("training_datasets", "Local training_datasets"),
         ("artifacts/datasets", "Local artifacts"),
-    ]
+    ])
     
     for base_path, label in locations:
         try:

@@ -153,7 +153,7 @@ def datasets_storage_usage_gb() -> float:
     
     # Add curated datasets directory
     base = datasets_base_dir()
-    total_bytes += _dir_size_bytes(base)
+    base_counted = False
     
     # Add HuggingFace datasets directory if HF_HOME is set
     # Use parent directory since datasets are stored alongside .hf_cache
@@ -162,8 +162,31 @@ def datasets_storage_usage_gb() -> float:
         hf_path = Path(hf_home).expanduser().resolve()
         # Get parent directory (e.g., Z:\training_datasets instead of Z:\training_datasets\.hf_cache)
         hf_parent = hf_path.parent
-        if hf_parent.exists() and hf_parent != base and hf_parent != base.parent:
-            total_bytes += _dir_size_bytes(hf_parent)
+        
+        # Check if curated_datasets is under the HF parent directory
+        # If so, just count the HF parent (which includes everything)
+        # Otherwise, count them separately
+        try:
+            base_resolved = base.resolve()
+            hf_parent_resolved = hf_parent.resolve()
+            
+            # If base is under hf_parent, just count hf_parent (avoids double counting)
+            if base_resolved.is_relative_to(hf_parent_resolved):
+                if hf_parent.exists():
+                    total_bytes += _dir_size_bytes(hf_parent)
+                    base_counted = True
+            else:
+                # They're separate directories, count both
+                if hf_parent.exists():
+                    total_bytes += _dir_size_bytes(hf_parent)
+        except Exception:
+            # If path resolution fails, count hf_parent if it exists
+            if hf_parent.exists():
+                total_bytes += _dir_size_bytes(hf_parent)
+    
+    # Add curated datasets if not already counted as part of HF parent
+    if not base_counted and base.exists():
+        total_bytes += _dir_size_bytes(base)
     
     return total_bytes / (1024 ** 3)
 

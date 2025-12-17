@@ -120,6 +120,16 @@ def create_ui_structure(app: Any, root: "tk.Tk") -> None:  # type: ignore[name-d
                         logger.info("Evaluation tab activation handler done")
                 except Exception:
                     logger.exception("Evaluation tab activation handler failed")
+            elif tab_text == "Settings":
+                try:
+                    if hasattr(app, 'settings_panel') and app.settings_panel:
+                        logger.info("Settings tab activation handler start")
+                        # Calculate log size on demand when tab is shown
+                        if hasattr(app.settings_panel, '_update_log_size'):
+                            app.settings_panel._update_log_size(force=False)
+                        logger.info("Settings tab activation handler done")
+                except Exception:
+                    logger.exception("Settings tab activation handler failed")
             elif tab_text == "Help":
                 if hasattr(app, 'help_panel') and app.help_panel:
                     app.help_panel.focus_search()
