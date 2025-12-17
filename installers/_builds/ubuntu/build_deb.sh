@@ -287,9 +287,13 @@ set -euo pipefail
 APP_ROOT="/opt/ai-os"
 VENV="$APP_ROOT/venv"
 REQ_FILE="$APP_ROOT/requirements-lock.txt"
-PYTHON_BIN="$(command -v python3 || true)"
+PYTHON_BIN="$(command -v python3.11 || true)"
 if [[ -z "$PYTHON_BIN" ]]; then
-  echo "python3 is required to finish installing ai-os." >&2
+  echo "ERROR: python3.11 is required to install ai-os." >&2
+  echo "On Ubuntu 22.04, install it from deadsnakes PPA:" >&2
+  echo "  sudo add-apt-repository ppa:deadsnakes/ppa" >&2
+  echo "  sudo apt update" >&2
+  echo "  sudo apt install python3.11 python3.11-venv" >&2
   exit 1
 fi
 printf '[ai-os] Preparing runtime environment...\n'
@@ -347,12 +351,17 @@ Version: $VERSION
 Section: utils
 Priority: optional
 Architecture: $ARCH
-Depends: python3 (>= 3.10), python3-venv, python3-pip, python3-tk, libgdk-pixbuf2.0-0, libgl1, libsndfile1, ffmpeg
+Depends: python3.11, python3.11-venv, python3-pip, python3-tk, libgdk-pixbuf2.0-0, libgl1, libsndfile1, ffmpeg
 Maintainer: Wulfic <support@ai-os.invalid>
 Installed-Size: $INSTALLED_SIZE
 Homepage: https://github.com/Wulfic/AI-OS
 Description: HRM-sMoE LLM Training Toolkit
  Future-facing architecture for OS-integrated autonomous assistance.
+ .
+ Note: On Ubuntu 22.04, install python3.11 from deadsnakes PPA:
+   sudo add-apt-repository ppa:deadsnakes/ppa
+   sudo apt update
+   sudo apt install python3.11 python3.11-venv
 EOF
 
 log_info "Building .deb archive"
