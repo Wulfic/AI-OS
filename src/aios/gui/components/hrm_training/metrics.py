@@ -87,50 +87,81 @@ def _update_from_json(panel: Any, line: str) -> None:
         pass
         
     try:
-        # Track total steps across all GPUs
-        # Two different step counters:
-        # 1. session_true_steps = current session's training steps (for Training Progress display)
-        # 2. total_true_steps = all-time cumulative training steps (for model info display)
-        # session_true_steps = actual training steps in current session (micro-batches) - e.g., 1024
-        # session_steps = optimizer steps in current session (after gradient accumulation) - e.g., 128
+        # Track steps across all GPUs
+        # For multi-GPU training, we need to aggregate steps from each GPU
+        # session_steps = steps trained in current session (samples/rows trained) - aggregated across GPUs
+        # total_steps = all-time cumulative steps (samples/rows trained)
         
-        # Update Training Progress display with current session steps
-        if "session_true_steps" in obj:
-            panel._session_true_steps = obj.get("session_true_steps", 0)
-            panel._seen_session_true_steps = True  # Flag that we've seen true steps
+        # Handle per-GPU step updates (for multi-GPU aggregation)
+        if "gpu_session_steps" in obj:
+            gpu_id = obj.get("gpu_id", 0)
+            gpu_steps = obj.get("gpu_session_steps", 0)
+            
+            # Initialize per-GPU tracking dict if needed
+            if not hasattr(panel, "_gpu_session_steps"):
+                panel._gpu_session_steps = {}
+            
+            # Update this GPU's step count
+            panel._gpu_session_steps[gpu_id] = gpu_steps
+            
+            # Calculate total session steps across all GPUs
+            total_session_steps = sum(panel._gpu_session_steps.values())
+            panel._session_steps = total_session_steps
+            panel._seen_session_steps = True
+            
             if hasattr(panel, "met_step"):
-                panel.met_step.config(text=str(panel._session_true_steps))
+                panel.met_step.config(text=str(total_session_steps))
+        
+        # Update Training Progress display with current session steps (aggregated total from chunk_complete)
         elif "session_steps" in obj:
-            # Only use session_steps (optimizer steps) if we haven't seen session_true_steps yet
-            # This provides backward compatibility with older training sessions
-            if not getattr(panel, "_seen_session_true_steps", False):
-                panel._session_steps = obj.get("session_steps", 0)
-                panel._seen_session_steps = True  # Flag that we've seen session steps
+            panel._session_steps = obj.get("session_steps", 0)
+            panel._seen_session_steps = True  # Flag that we've seen session steps
+            if hasattr(panel, "met_step"):
+                panel.met_step.config(text=str(panel._session_steps))
+        elif "total_optimizer_steps" in obj:
+            # Only use total_optimizer_steps if we haven't seen session_steps yet
+            # (for backward compatibility with non-parallel training modes)
+            if not getattr(panel, "_seen_session_steps", False):
+                panel._total_optimizer_steps = obj.get("total_optimizer_steps", 0)
+                panel._seen_total_optimizer_steps = True  # Flag that we've seen this field
+                if hasattr(panel, "met_step"):
+                    panel.met_step.config(text=str(panel._total_optimizer_steps))
+        # Backward compatibility: handle legacy field names
+        elif "session_true_steps" in obj:
+            if not getattr(panel, "_seen_session_steps", False):
+                panel._session_steps = obj.get("session_true_steps", 0)
+                panel._seen_session_steps = True
                 if hasattr(panel, "met_step"):
                     panel.met_step.config(text=str(panel._session_steps))
         elif "total_gpu_steps" in obj:
-            # Only use total_gpu_steps if we haven't seen session_true_steps or session_steps yet
-            # (for backward compatibility with non-parallel training modes)
-            if not getattr(panel, "_seen_session_steps", False) and not getattr(panel, "_seen_session_true_steps", False):
-                panel._total_gpu_steps = obj.get("total_gpu_steps", 0)
-                panel._seen_total_gpu_steps = True  # Flag that we've seen this field
+            if not getattr(panel, "_seen_session_steps", False) and not getattr(panel, "_seen_total_optimizer_steps", False):
+                panel._total_optimizer_steps = obj.get("total_gpu_steps", 0)
+                panel._seen_total_optimizer_steps = True
                 if hasattr(panel, "met_step"):
-                    panel.met_step.config(text=str(panel._total_gpu_steps))
+                    panel.met_step.config(text=str(panel._total_optimizer_steps))
         elif "step" in obj and hasattr(panel, "met_step"):
-            # If we've ever seen total_gpu_steps, session_steps, or session_true_steps in this session, ignore step values
-            # to prevent jumping between cumulative and per-session counts
-            if not getattr(panel, "_seen_total_gpu_steps", False) and not getattr(panel, "_seen_session_steps", False) and not getattr(panel, "_seen_session_true_steps", False):
-                # Never seen total_gpu_steps, session_steps, or session_true_steps, so use step (normal mode)
+            # If we've ever seen session_steps or total_optimizer_steps in this session, ignore step values
+            if not getattr(panel, "_seen_total_optimizer_steps", False) and not getattr(panel, "_seen_session_steps", False):
                 step_val = obj.get("step", "-")
                 panel.met_step.config(text=str(step_val))
         
         # Update architecture display's Steps field with all-time total
-        if "total_true_steps" in obj and hasattr(panel, "trained_steps_entry"):
-            total_true_steps = obj.get("total_true_steps", 0)
+        if "total_steps" in obj and hasattr(panel, "trained_steps_entry"):
+            total_steps = obj.get("total_steps", 0)
             try:
                 panel.trained_steps_entry.config(state="normal")
                 panel.trained_steps_entry.delete(0, "end")
-                panel.trained_steps_entry.insert(0, f"{total_true_steps:,}")
+                panel.trained_steps_entry.insert(0, f"{total_steps:,}")
+                panel.trained_steps_entry.config(state="readonly")
+            except Exception:
+                pass
+        # Backward compatibility: handle legacy field name
+        elif "total_true_steps" in obj and hasattr(panel, "trained_steps_entry"):
+            total_steps = obj.get("total_true_steps", 0)
+            try:
+                panel.trained_steps_entry.config(state="normal")
+                panel.trained_steps_entry.delete(0, "end")
+                panel.trained_steps_entry.insert(0, f"{total_steps:,}")
                 panel.trained_steps_entry.config(state="readonly")
             except Exception:
                 pass
@@ -224,16 +255,16 @@ def _update_epoch_tracking(panel: Any, obj: dict) -> None:
             
             # Ensure steps display is initialized
             if hasattr(panel, "met_step"):
-                # Initialize with 0 if we have total_gpu_steps, otherwise use current step
-                if hasattr(panel, "_total_steps_all_gpus") and panel._total_steps_all_gpus > 0:
-                    panel.met_step.config(text=str(panel._total_steps_all_gpus))
+                # Initialize with 0 if we have total_optimizer_steps, otherwise use current step
+                if hasattr(panel, "_total_optimizer_steps") and panel._total_optimizer_steps > 0:
+                    panel.met_step.config(text=str(panel._total_optimizer_steps))
                 else:
                     panel.met_step.config(text="0")
             
-            # Reset session tracking flags for new training session
+            # Reset session tracking flags and per-GPU step tracking for new training session
             panel._seen_session_steps = False
-            panel._seen_total_gpu_steps = False
-            panel._seen_session_true_steps = False
+            panel._seen_total_optimizer_steps = False
+            panel._gpu_session_steps = {}  # Reset per-GPU step aggregation
         
         # Epoch tracking disabled - still initialize chunk/block tracking from GUI settings
         elif obj.get("epoch_tracking") == "disabled":
@@ -516,29 +547,44 @@ def _update_epoch_tracking(panel: Any, obj: dict) -> None:
                     # Just show completed blocks without total
                     panel.epoch_blocks_lbl.config(text=str(blocks_completed))
             
-            # Update steps display if session_true_steps, session_steps or total_gpu_steps is in the event
+            # Update steps display with session_steps
             # Update Training Progress with session steps, architecture display with total steps
-            if "session_true_steps" in obj and hasattr(panel, "met_step"):
-                panel._session_true_steps = obj.get("session_true_steps", getattr(panel, "_session_true_steps", 0))
-                panel._seen_session_true_steps = True
-                panel.met_step.config(text=str(panel._session_true_steps))
-            elif "session_steps" in obj and hasattr(panel, "met_step"):
-                if not getattr(panel, "_seen_session_true_steps", False):
-                    panel._session_steps = obj.get("session_steps", getattr(panel, "_session_steps", 0))
+            if "session_steps" in obj and hasattr(panel, "met_step"):
+                panel._session_steps = obj.get("session_steps", getattr(panel, "_session_steps", 0))
+                panel._seen_session_steps = True
+                panel.met_step.config(text=str(panel._session_steps))
+            elif "total_optimizer_steps" in obj and hasattr(panel, "met_step"):
+                if not getattr(panel, "_seen_session_steps", False):
+                    panel._total_optimizer_steps = obj.get("total_optimizer_steps", getattr(panel, "_total_optimizer_steps", 0))
+                    panel.met_step.config(text=str(panel._total_optimizer_steps))
+            # Backward compat: handle legacy field names
+            elif "session_true_steps" in obj and hasattr(panel, "met_step"):
+                if not getattr(panel, "_seen_session_steps", False):
+                    panel._session_steps = obj.get("session_true_steps", 0)
                     panel._seen_session_steps = True
                     panel.met_step.config(text=str(panel._session_steps))
             elif "total_gpu_steps" in obj and hasattr(panel, "met_step"):
-                if not getattr(panel, "_seen_session_steps", False) and not getattr(panel, "_seen_session_true_steps", False):
-                    panel._total_gpu_steps = obj.get("total_gpu_steps", getattr(panel, "_total_gpu_steps", 0))
-                    panel.met_step.config(text=str(panel._total_gpu_steps))
+                if not getattr(panel, "_seen_session_steps", False) and not getattr(panel, "_seen_total_optimizer_steps", False):
+                    panel._total_optimizer_steps = obj.get("total_gpu_steps", 0)
+                    panel.met_step.config(text=str(panel._total_optimizer_steps))
             
             # Update architecture display with all-time total
-            if "total_true_steps" in obj and hasattr(panel, "trained_steps_entry"):
-                total_true_steps = obj.get("total_true_steps", 0)
+            if "total_steps" in obj and hasattr(panel, "trained_steps_entry"):
+                total_steps = obj.get("total_steps", 0)
                 try:
                     panel.trained_steps_entry.config(state="normal")
                     panel.trained_steps_entry.delete(0, "end")
-                    panel.trained_steps_entry.insert(0, f"{total_true_steps:,}")
+                    panel.trained_steps_entry.insert(0, f"{total_steps:,}")
+                    panel.trained_steps_entry.config(state="readonly")
+                except Exception:
+                    pass
+            # Backward compat: handle legacy field name
+            elif "total_true_steps" in obj and hasattr(panel, "trained_steps_entry"):
+                total_steps = obj.get("total_true_steps", 0)
+                try:
+                    panel.trained_steps_entry.config(state="normal")
+                    panel.trained_steps_entry.delete(0, "end")
+                    panel.trained_steps_entry.insert(0, f"{total_steps:,}")
                     panel.trained_steps_entry.config(state="readonly")
                 except Exception:
                     pass
@@ -564,20 +610,25 @@ def _update_epoch_tracking(panel: Any, obj: dict) -> None:
             if not hasattr(panel, '_samples_in_current_block'):
                 panel._samples_in_current_block = 0
             
-            # Update steps if available (prioritize session_true_steps over session_steps)
-            if "session_true_steps" in obj and hasattr(panel, "met_step"):
-                panel._total_steps_all_gpus = obj.get("session_true_steps", getattr(panel, "_total_steps_all_gpus", 0))
-                panel._seen_session_true_steps = True
-                panel.met_step.config(text=str(panel._total_steps_all_gpus))
-            elif "session_steps" in obj and hasattr(panel, "met_step"):
+            # Update steps if available (prioritize session_steps)
+            if "session_steps" in obj and hasattr(panel, "met_step"):
+                panel._session_steps = obj.get("session_steps", getattr(panel, "_session_steps", 0))
+                panel._seen_session_steps = True
+                panel.met_step.config(text=str(panel._session_steps))
+            elif "total_optimizer_steps" in obj and hasattr(panel, "met_step"):
                 if not getattr(panel, "_seen_session_steps", False):
-                    panel._total_steps_all_gpus = obj.get("session_steps", getattr(panel, "_total_steps_all_gpus", 0))
+                    panel._total_optimizer_steps = obj.get("total_optimizer_steps", getattr(panel, "_total_optimizer_steps", 0))
+                    panel.met_step.config(text=str(panel._total_optimizer_steps))
+            # Backward compat
+            elif "session_true_steps" in obj and hasattr(panel, "met_step"):
+                if not getattr(panel, "_seen_session_steps", False):
+                    panel._session_steps = obj.get("session_true_steps", 0)
                     panel._seen_session_steps = True
-                    panel.met_step.config(text=str(panel._total_steps_all_gpus))
+                    panel.met_step.config(text=str(panel._session_steps))
             elif "total_steps" in obj and hasattr(panel, "met_step"):
-                if not getattr(panel, "_seen_session_steps", False) and not getattr(panel, "_seen_session_true_steps", False):
-                    panel._total_steps_all_gpus = obj.get("total_steps", getattr(panel, "_total_steps_all_gpus", 0))
-                    panel.met_step.config(text=str(panel._total_steps_all_gpus))
+                if not getattr(panel, "_seen_session_steps", False):
+                    panel._total_steps = obj.get("total_steps", getattr(panel, "_total_steps", 0))
+                    panel.met_step.config(text=str(panel._total_steps))
             
             # Update chunk and block progress from cycle data
             chunk_samples = obj.get("chunk_samples", 0)
@@ -654,15 +705,19 @@ def _update_epoch_tracking(panel: Any, obj: dict) -> None:
             stats = obj.get("progress_stats", {})
             if isinstance(stats, dict):
                 # Update Training Progress display with session steps
-                if "session_true_steps" in stats:
-                    panel._session_true_steps = stats.get("session_true_steps", getattr(panel, "_session_true_steps", 0))
-                    panel._seen_session_true_steps = True
-                elif "session_steps" in stats:
-                    if not getattr(panel, "_seen_session_true_steps", False):
-                        panel._session_steps = stats.get("session_steps", getattr(panel, "_session_steps", 0))
+                if "session_steps" in stats:
+                    panel._session_steps = stats.get("session_steps", getattr(panel, "_session_steps", 0))
+                    panel._seen_session_steps = True
+                elif "total_optimizer_steps" in stats:
+                    if not getattr(panel, "_seen_session_steps", False):
+                        panel._total_optimizer_steps = stats.get("total_optimizer_steps", getattr(panel, "_total_optimizer_steps", 0))
+                # Backward compat
+                elif "session_true_steps" in stats:
+                    if not getattr(panel, "_seen_session_steps", False):
+                        panel._session_steps = stats.get("session_true_steps", 0)
                 elif "total_gpu_steps" in stats:
-                    if not getattr(panel, "_seen_session_true_steps", False):
-                        panel._total_gpu_steps = stats.get("total_gpu_steps", getattr(panel, "_total_gpu_steps", 0))
+                    if not getattr(panel, "_seen_session_steps", False):
+                        panel._total_optimizer_steps = stats.get("total_gpu_steps", 0)
                 
                 panel._chunks_completed = stats.get("total_chunks_trained", panel._chunks_completed)
                 panel._blocks_processed = stats.get("blocks_completed", panel._blocks_processed)
@@ -671,16 +726,26 @@ def _update_epoch_tracking(panel: Any, obj: dict) -> None:
                 
                 # Update Training Progress display
                 if hasattr(panel, "met_step"):
-                    session_val = getattr(panel, "_session_true_steps", None) or getattr(panel, "_session_steps", None) or getattr(panel, "_total_gpu_steps", 0)
+                    session_val = getattr(panel, "_session_steps", None) or getattr(panel, "_total_optimizer_steps", 0)
                     panel.met_step.config(text=str(session_val))
                 
                 # Update architecture display with all-time total
-                if "total_true_steps" in stats and hasattr(panel, "trained_steps_entry"):
-                    total_true_steps = stats.get("total_true_steps", 0)
+                if "total_steps" in stats and hasattr(panel, "trained_steps_entry"):
+                    total_steps = stats.get("total_steps", 0)
                     try:
                         panel.trained_steps_entry.config(state="normal")
                         panel.trained_steps_entry.delete(0, "end")
-                        panel.trained_steps_entry.insert(0, f"{total_true_steps:,}")
+                        panel.trained_steps_entry.insert(0, f"{total_steps:,}")
+                        panel.trained_steps_entry.config(state="readonly")
+                    except Exception:
+                        pass
+                # Backward compat
+                elif "total_true_steps" in stats and hasattr(panel, "trained_steps_entry"):
+                    total_steps = stats.get("total_true_steps", 0)
+                    try:
+                        panel.trained_steps_entry.config(state="normal")
+                        panel.trained_steps_entry.delete(0, "end")
+                        panel.trained_steps_entry.insert(0, f"{total_steps:,}")
                         panel.trained_steps_entry.config(state="readonly")
                     except Exception:
                         pass

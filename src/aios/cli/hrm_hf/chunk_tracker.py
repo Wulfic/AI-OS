@@ -6,9 +6,11 @@ Ensures no duplicate training and enables resume capability.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
+import re
 import threading
 import time
 from contextlib import contextmanager
@@ -20,6 +22,101 @@ logger = logging.getLogger(__name__)
 
 
 CLAIM_TIMEOUT_SECONDS = 600
+
+
+def sanitize_dataset_name(dataset_path: str) -> str:
+    """Create a safe filename from a dataset path.
+    
+    Args:
+        dataset_path: Full path or URL to dataset
+        
+    Returns:
+        Sanitized name suitable for use in filenames
+    """
+    if not dataset_path:
+        return "unknown"
+    
+    # Extract just the name from the path
+    from pathlib import Path as _Path
+    
+    if dataset_path.startswith("hf://"):
+        # HuggingFace dataset: hf://owner/name:config:split -> owner_name
+        name = dataset_path[5:].split(":")[0].replace("/", "_")
+    else:
+        # Local path: extract directory/file name
+        name = _Path(dataset_path).stem
+    
+    # Sanitize: keep only alphanumeric, underscore, hyphen
+    name = re.sub(r'[^\w\-]', '_', name)
+    
+    # Limit length and remove consecutive underscores
+    name = re.sub(r'_+', '_', name).strip('_')[:50]
+    
+    return name or "unknown"
+
+
+def get_dataset_state_file(brain_dir: Path, dataset_name: str, chunk_size: Optional[int] = None) -> Path:
+    """Get the dataset-specific chunk tracker state file path.
+    
+    Args:
+        brain_dir: Brain directory path
+        dataset_name: Sanitized dataset name
+        chunk_size: Optional chunk size for variation tracking
+        
+    Returns:
+        Path to dataset-specific state file
+    """
+    # Create datasets subdirectory
+    datasets_dir = brain_dir / "datasets"
+    
+    if chunk_size:
+        state_file = datasets_dir / f"{dataset_name}_cs{chunk_size}" / "chunk_tracker_state.json"
+    else:
+        state_file = datasets_dir / dataset_name / "chunk_tracker_state.json"
+    
+    return state_file
+
+
+def find_dataset_state_files(brain_dir: Path, dataset_name: str) -> List[Tuple[Path, Optional[int]]]:
+    """Find all state files for a dataset (possibly with different chunk sizes).
+    
+    Args:
+        brain_dir: Brain directory path
+        dataset_name: Sanitized dataset name
+        
+    Returns:
+        List of (state_file_path, chunk_size) tuples
+    """
+    datasets_dir = brain_dir / "datasets"
+    if not datasets_dir.exists():
+        return []
+    
+    results = []
+    
+    # Look for dataset directories with optional chunk size suffix
+    for entry in datasets_dir.iterdir():
+        if not entry.is_dir():
+            continue
+        
+        dir_name = entry.name
+        state_file = entry / "chunk_tracker_state.json"
+        
+        if not state_file.exists():
+            continue
+        
+        # Check if this matches our dataset
+        if dir_name == dataset_name:
+            # Exact match, no chunk size suffix
+            results.append((state_file, None))
+        elif dir_name.startswith(f"{dataset_name}_cs"):
+            # Has chunk size suffix
+            try:
+                chunk_size = int(dir_name.split("_cs")[1])
+                results.append((state_file, chunk_size))
+            except (ValueError, IndexError):
+                pass
+    
+    return results
 
 
 class _InterProcessLock:
@@ -92,14 +189,11 @@ class ChunkProgress:
     gpu_id: int
     """GPU that trained this chunk."""
     
-    step: int
-    """Training step (optimizer steps) when this chunk was completed."""
+    optimizer_step: int
+    """Optimizer step when this chunk was completed."""
     
-    samples_trained: int
-    """Number of samples trained in this chunk."""
-    
-    true_steps: int = 0
-    """True training steps (micro-batches) for this chunk."""
+    steps: int = 0
+    """Training steps (samples/rows trained) for this chunk."""
 
 
 class ChunkTracker:
@@ -164,13 +258,12 @@ class ChunkTracker:
         self.total_blocks_in_dataset: Optional[int] = None
         
         # Training statistics
-        self.total_samples_trained = 0
-        self.total_true_steps = 0  # Aggregate true steps across all GPUs
+        self.total_steps = 0  # Aggregate steps (samples trained) across all GPUs
         
         # Session tracking (not persisted - resets each training run)
         self.session_start_chunk_count = 0
         self.session_chunks_completed = 0
-        self.session_start_true_steps = 0  # True steps at session start
+        self.session_start_steps = 0  # Steps at session start
         
         # Load existing state if available (synchronized across processes)
         logger.debug("Loading existing chunk tracker state if available")
@@ -179,9 +272,9 @@ class ChunkTracker:
         
         # After loading, mark session start point
         self.session_start_chunk_count = len(self.completed_chunks)
-        self.session_start_true_steps = self.total_true_steps
+        self.session_start_steps = self.total_steps
         logger.info(f"ChunkTracker initialized: {len(self.completed_chunks)} chunks completed, "
-                   f"{self.total_true_steps} true steps, epoch {self.current_epoch}")
+                   f"{self.total_steps} steps, epoch {self.current_epoch}")
     
     @contextmanager
     def _locked(self, refresh: bool = True) -> None:
@@ -222,8 +315,7 @@ class ChunkTracker:
         self.current_epoch = 0
         self.blocks_this_epoch = set()
         self.total_blocks_in_dataset = None
-        self.total_samples_trained = 0
-        self.total_true_steps = 0
+        self.total_steps = 0
 
     def _load_state_from_dict_locked(self, state: Dict) -> None:
         # Load brain_id and dataset_name from state (may be None for old states)
@@ -235,13 +327,15 @@ class ChunkTracker:
         self.completed_chunks = {}
         for chunk_data in state.get("completed_chunks", []):
             chunk_key = (chunk_data["block_id"], chunk_data["chunk_id"])
+            # Backward compat: old files have "step" and "samples_trained"/"true_steps"
+            optimizer_step = chunk_data.get("optimizer_step", chunk_data.get("step", 0))
+            steps = chunk_data.get("steps", chunk_data.get("true_steps", chunk_data.get("samples_trained", 0)))
             self.completed_chunks[chunk_key] = ChunkProgress(
                 block_id=chunk_data["block_id"],
                 chunk_id=chunk_data["chunk_id"],
                 gpu_id=chunk_data["gpu_id"],
-                step=chunk_data["step"],
-                samples_trained=chunk_data["samples_trained"],
-                true_steps=chunk_data.get("true_steps", 0),
+                optimizer_step=optimizer_step,
+                steps=steps,
             )
 
         self.started_blocks = set(state.get("started_blocks", []))
@@ -249,8 +343,8 @@ class ChunkTracker:
         self.blocks_this_epoch = set(state.get("blocks_this_epoch", []))
         self.current_epoch = state.get("current_epoch", 0)
         self.total_blocks_in_dataset = state.get("total_blocks_in_dataset")
-        self.total_samples_trained = state.get("total_samples_trained", 0)
-        self.total_true_steps = state.get("total_true_steps", 0)
+        # Backward compat: try total_steps, fall back to total_true_steps, then total_samples_trained
+        self.total_steps = state.get("total_steps", state.get("total_true_steps", state.get("total_samples_trained", 0)))
         self.in_progress_chunks = {
             (entry["block_id"], entry["chunk_id"]): {
                 "gpu_id": entry.get("gpu_id", -1),
@@ -269,9 +363,8 @@ class ChunkTracker:
                     "block_id": progress.block_id,
                     "chunk_id": progress.chunk_id,
                     "gpu_id": progress.gpu_id,
-                    "step": progress.step,
-                    "samples_trained": progress.samples_trained,
-                    "true_steps": progress.true_steps,
+                    "optimizer_step": progress.optimizer_step,
+                    "steps": progress.steps,
                 }
                 for progress in self.completed_chunks.values()
             ],
@@ -280,8 +373,7 @@ class ChunkTracker:
             "current_epoch": self.current_epoch,
             "blocks_this_epoch": list(self.blocks_this_epoch),
             "total_blocks_in_dataset": self.total_blocks_in_dataset,
-            "total_samples_trained": self.total_samples_trained,
-            "total_true_steps": self.total_true_steps,
+            "total_steps": self.total_steps,
             "in_progress_chunks": [
                 {
                     "block_id": block_id,
@@ -360,9 +452,8 @@ class ChunkTracker:
         block_id: int,
         chunk_id: int,
         gpu_id: int,
-        step: int,
-        samples_trained: int,
-        true_steps: int = 0
+        optimizer_step: int,
+        steps: int = 0
     ) -> None:
         """Mark a chunk as completed.
         
@@ -370,11 +461,10 @@ class ChunkTracker:
             block_id: Block ID
             chunk_id: Chunk ID within block
             gpu_id: GPU that trained this chunk
-            step: Training step (optimizer steps) when completed
-            samples_trained: Number of samples trained in this chunk
-            true_steps: True training steps (micro-batches) for this chunk
+            optimizer_step: Optimizer step when completed
+            steps: Training steps (samples/rows trained) for this chunk
         """
-        logger.debug(f"Marking chunk complete: block={block_id}, chunk={chunk_id}, gpu={gpu_id}, step={step}, samples={samples_trained}, true_steps={true_steps}")
+        logger.debug(f"Marking chunk complete: block={block_id}, chunk={chunk_id}, gpu={gpu_id}, optimizer_step={optimizer_step}, steps={steps}")
         with self._locked(refresh=True):
             chunk_key = (block_id, chunk_id)
             
@@ -386,22 +476,19 @@ class ChunkTracker:
                 block_id=block_id,
                 chunk_id=chunk_id,
                 gpu_id=gpu_id,
-                step=step,
-                samples_trained=samples_trained,
-                true_steps=true_steps
+                optimizer_step=optimizer_step,
+                steps=steps
             )
             
             self.completed_chunks[chunk_key] = progress
-            # Note: step is per-GPU local step counter, we track samples as the true metric
-            self.total_samples_trained += samples_trained
-            self.total_true_steps += true_steps  # Aggregate true steps across all GPUs
+            self.total_steps += steps  # Aggregate steps across all GPUs
             self.session_chunks_completed += 1  # Track chunks completed this session
             
             # Track blocks visited this epoch
             self.blocks_this_epoch.add(block_id)
             
-            print(f"[ChunkTracker] GPU {gpu_id} completed Block {block_id} Chunk {chunk_id} (Step {step})")
-            logger.info(f"Chunk completed: block={block_id}, chunk={chunk_id}, gpu={gpu_id}, total_samples={self.total_samples_trained}, total_true_steps={self.total_true_steps}")
+            print(f"[ChunkTracker] GPU {gpu_id} completed Block {block_id} Chunk {chunk_id} (Optimizer Step {optimizer_step}, Steps {steps})")
+            logger.info(f"Chunk completed: block={block_id}, chunk={chunk_id}, gpu={gpu_id}, total_steps={self.total_steps}")
             
             # Auto-save state after every chunk for better resume granularity
             # This matches checkpoint save frequency in single-GPU and parallel modes
@@ -523,27 +610,27 @@ class ChunkTracker:
         """Get current training progress statistics.
         
         Returns:
-            Dictionary with progress statistics
+            Dictionary with progress statistics including:
+            - session_steps: Steps trained in current session (samples/rows)
+            - total_steps: All-time cumulative steps (samples/rows)
+            - total_optimizer_steps: Max optimizer step across all chunks
         """
         with self._locked(refresh=True):
-            # Get the maximum step value (steps are cumulative, not per-chunk)
-            # Each chunk stores the total step count when it completed
-            total_gpu_steps = max((p.step for p in self.completed_chunks.values()), default=0)
+            # Get the maximum optimizer step value (optimizer steps are cumulative, not per-chunk)
+            total_optimizer_steps = max((p.optimizer_step for p in self.completed_chunks.values()), default=0)
             
-            # Calculate session steps: max step from chunks completed this session
-            # Get chunks completed this session (after session_start_chunk_count)
+            # Calculate session optimizer steps: max optimizer step from chunks completed this session
             session_chunks = list(self.completed_chunks.values())[-self.session_chunks_completed:] if self.session_chunks_completed > 0 else []
-            session_steps = max((p.step for p in session_chunks), default=0)
+            session_optimizer_steps = max((p.optimizer_step for p in session_chunks), default=0)
             
-            # Calculate session true steps: total true steps completed this session
-            session_true_steps = self.total_true_steps - self.session_start_true_steps
+            # Calculate session steps: total steps completed this session
+            session_steps = self.total_steps - self.session_start_steps
             
             return {
-                "total_gpu_steps": total_gpu_steps,  # Historical max (all sessions)
-                "session_steps": session_steps,  # Current session max
-                "session_true_steps": session_true_steps,  # Current session aggregated true steps (all GPUs)
-                "total_true_steps": self.total_true_steps,  # All-time aggregated true steps (all GPUs, all sessions)
-                "total_samples_trained": self.total_samples_trained,
+                "total_optimizer_steps": total_optimizer_steps,  # Historical max optimizer steps (all sessions)
+                "session_optimizer_steps": session_optimizer_steps,  # Current session max optimizer steps
+                "session_steps": session_steps,  # Current session steps (samples trained, all GPUs)
+                "total_steps": self.total_steps,  # All-time cumulative steps (samples trained, all GPUs, all sessions)
                 "total_chunks_trained": len(self.completed_chunks),
                 "session_chunks_trained": self.session_chunks_completed,
                 "blocks_started": len(self.started_blocks),

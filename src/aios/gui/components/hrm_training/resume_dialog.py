@@ -22,13 +22,27 @@ logger = logging.getLogger(__name__)
 class ResumeDialog(tk.Toplevel):
     """Dialog to ask user if they want to resume from checkpoint."""
     
-    def __init__(self, parent, brain_name: str, save_dir: str, dataset_file: str, has_checkpoint: bool = False, parent_panel=None):
+    def __init__(
+        self, 
+        parent, 
+        brain_name: str, 
+        save_dir: str, 
+        dataset_file: str, 
+        has_checkpoint: bool = False, 
+        parent_panel=None,
+        chunk_size: Optional[int] = None,
+        chunk_tracker_state_path: Optional[str] = None,
+        chunk_size_mismatch_warning: Optional[str] = None,
+    ):
         super().__init__(parent)
         
         self.result: Optional[bool] = None  # None=cancelled, True=resume, False=fresh
         self.resume_info: Optional[Dict[str, Any]] = None
         self.has_checkpoint = has_checkpoint
         self.parent_panel = parent_panel
+        self.chunk_size = chunk_size
+        self.chunk_tracker_state_path = chunk_tracker_state_path
+        self.chunk_size_mismatch_warning = chunk_size_mismatch_warning
         
         # Phase 6.4: Start position controls
         self.start_block_id = tk.IntVar(value=0)
@@ -105,7 +119,12 @@ class ResumeDialog(tk.Toplevel):
         try:
             brain_path = Path(save_dir) / brain_name
             brain_json_path = brain_path / "brain.json"
-            chunk_tracker_path = brain_path / "chunk_tracker_state.json"
+            
+            # Use dataset-specific state path if provided, otherwise fall back to legacy
+            if self.chunk_tracker_state_path:
+                chunk_tracker_path = Path(self.chunk_tracker_state_path)
+            else:
+                chunk_tracker_path = brain_path / "chunk_tracker_state.json"
             
             # Check if checkpoint file exists
             checkpoint_path = brain_path / "actv1_student.safetensors"
@@ -167,13 +186,23 @@ class ResumeDialog(tk.Toplevel):
                         tracker_state = json.load(f)
                     
                     completed_chunks = tracker_state.get("completed_chunks", [])
-                    total_samples = tracker_state.get("total_samples_trained", 0)
+                    started_blocks = tracker_state.get("started_blocks", [])
+                    # Use new field name with backward compat fallback
+                    total_steps = tracker_state.get("total_steps", tracker_state.get("total_true_steps", tracker_state.get("total_samples_trained", 0)))
                     current_epoch = tracker_state.get("current_epoch", 0)
                     total_blocks_in_dataset = tracker_state.get("total_blocks_in_dataset")
                     saved_dataset_name = tracker_state.get("dataset_name")
                     
-                    # Calculate total steps from completed chunks
-                    total_steps = sum(chunk.get("step", 0) for chunk in completed_chunks)
+                    # If total_blocks is unknown, use max block_id from started/completed as minimum
+                    min_blocks_seen = 0
+                    if started_blocks:
+                        min_blocks_seen = max(started_blocks) + 1  # block_id is 0-indexed
+                    if completed_chunks:
+                        max_block_id = max(c.get("block_id", 0) for c in completed_chunks)
+                        min_blocks_seen = max(min_blocks_seen, max_block_id + 1)
+                    
+                    # Calculate total optimizer steps from completed chunks
+                    total_optimizer_steps = sum(chunk.get("optimizer_step", chunk.get("step", 0)) for chunk in completed_chunks)
                     
                     # Get checkpoint size and timestamp
                     checkpoint_size_mb = checkpoint_path.stat().st_size / (1024 * 1024)
@@ -201,7 +230,7 @@ class ResumeDialog(tk.Toplevel):
                         "checkpoint_path": str(checkpoint_path),
                         "checkpoint_size_mb": checkpoint_size_mb,
                         "total_steps": total_steps,
-                        "steps_completed": total_steps,
+                        "total_optimizer_steps": total_optimizer_steps,
                         "stopped_early": False,
                         "saved_dataset": dataset_file,  # Assume current dataset
                         "saved_dataset_name": saved_dataset_name,
@@ -210,9 +239,9 @@ class ResumeDialog(tk.Toplevel):
                         "timestamp": time_str,
                         "config": {},
                         "chunks_trained": len(completed_chunks),
-                        "samples_trained": total_samples,
                         "epoch": current_epoch,
                         "total_blocks": total_blocks_in_dataset,
+                        "min_blocks_seen": min_blocks_seen,  # For display when total is unknown
                         "chunk_size": chunk_size,
                         "chunks_per_block": total_chunks_per_block,
                     }
@@ -548,15 +577,14 @@ class ResumeDialog(tk.Toplevel):
         if "chunks_trained" in self.resume_info:
             info_labels.extend([
                 ("Chunks Trained:", f"{self.resume_info['chunks_trained']} chunks"),
-                ("Samples Trained:", f"{self.resume_info['samples_trained']:,} samples"),
-                ("Training Steps:", f"{self.resume_info['total_steps']:,} steps"),
+                ("Steps Trained:", f"{self.resume_info['total_steps']:,} steps"),
+                ("Optimizer Steps:", f"{self.resume_info.get('total_optimizer_steps', 0):,} steps"),
                 ("Current Epoch:", f"{self.resume_info.get('epoch', 0)}"),
             ])
         else:
             # Legacy format (from brain.json)
             info_labels.extend([
                 ("Training Steps:", f"{self.resume_info['total_steps']:,} steps"),
-                ("Last Session:", f"{self.resume_info['steps_completed']} steps"),
                 ("Status:", "Stopped Early" if self.resume_info['stopped_early'] else "Completed"),
             ])
         
@@ -635,12 +663,42 @@ class ResumeDialog(tk.Toplevel):
         ).pack(side=tk.LEFT, padx=(0, int(10 * spacing)))
         
         total_blocks = self.resume_info.get('total_blocks')
-        blocks_text = f"{total_blocks} blocks" if total_blocks is not None else "Unknown"
+        min_blocks = self.resume_info.get('min_blocks_seen', 0)
+        if total_blocks is not None:
+            blocks_text = f"{total_blocks} blocks"
+        elif min_blocks > 0:
+            blocks_text = f"{min_blocks}+ blocks (detecting...)"
+        else:
+            blocks_text = "Detecting..."
         ttk.Label(
             blocks_frame,
             text=blocks_text,
             font=("TkDefaultFont", 9)
         ).pack(side=tk.LEFT)
+        
+        # Chunks trained
+        chunks_trained = self.resume_info.get('chunks_trained', 0)
+        if chunks_trained > 0:
+            chunks_trained_frame = ttk.Frame(dataset_info_frame)
+            chunks_trained_frame.pack(fill=tk.X, pady=int(5 * spacing))
+            
+            ttk.Label(
+                chunks_trained_frame,
+                text="Chunks Trained:",
+                font=("TkDefaultFont", 9, "bold"),
+                width=15
+            ).pack(side=tk.LEFT, padx=(0, int(10 * spacing)))
+            
+            chunks_per_block = self.resume_info.get('chunks_per_block')
+            if chunks_per_block:
+                chunks_text = f"{chunks_trained} / {chunks_per_block} per block"
+            else:
+                chunks_text = f"{chunks_trained} chunks"
+            ttk.Label(
+                chunks_trained_frame,
+                text=chunks_text,
+                font=("TkDefaultFont", 9)
+            ).pack(side=tk.LEFT)
         
         # Total chunks per block
         if self.resume_info.get('chunks_per_block'):
@@ -821,6 +879,25 @@ class ResumeDialog(tk.Toplevel):
                 font=("TkDefaultFont", 8),
                 foreground="gray"
             ).pack()
+        
+        # Warning if chunk size mismatch (same dataset, different chunk size)
+        if self.chunk_size_mismatch_warning:
+            chunk_warning_frame = ttk.Frame(main_frame)
+            chunk_warning_frame.pack(fill=tk.X, pady=(10, 0))
+            
+            ttk.Label(
+                chunk_warning_frame,
+                text=f"ℹ️  {self.chunk_size_mismatch_warning}",
+                font=("TkDefaultFont", 8),
+                foreground="#4fc3f7"  # Light blue info color
+            ).pack()
+            
+            ttk.Label(
+                chunk_warning_frame,
+                text="Different chunk sizes create separate progress tracking.",
+                font=("TkDefaultFont", 8),
+                foreground="gray"
+            ).pack()
     
     def _resume(self):
         """User chose to resume training."""
@@ -896,7 +973,10 @@ def show_resume_dialog(
     save_dir: str, 
     dataset_file: str,
     has_checkpoint: bool = False,
-    parent_panel = None
+    parent_panel = None,
+    chunk_size: Optional[int] = None,
+    chunk_tracker_state_path: Optional[str] = None,
+    chunk_size_mismatch_warning: Optional[str] = None,
 ) -> Optional[tuple[bool, int, int]]:
     """Show resume/start dialog and return user's choice with start position.
     
@@ -909,6 +989,9 @@ def show_resume_dialog(
         dataset_file: Current dataset file path
         has_checkpoint: Whether a resumable checkpoint exists
         parent_panel: Parent panel to get training configuration from
+        chunk_size: Current chunk size setting
+        chunk_tracker_state_path: Path to dataset-specific state file
+        chunk_size_mismatch_warning: Warning if same dataset has different chunk size
     
     Returns:
         Tuple of (resume_choice, start_block_id, start_chunk_id) where:
@@ -919,7 +1002,12 @@ def show_resume_dialog(
     """
     try:
         logger.debug(f"Creating dialog for brain: {brain_name}, has_checkpoint={has_checkpoint}")
-        dialog = ResumeDialog(parent, brain_name, save_dir, dataset_file, has_checkpoint, parent_panel)
+        dialog = ResumeDialog(
+            parent, brain_name, save_dir, dataset_file, has_checkpoint, parent_panel,
+            chunk_size=chunk_size,
+            chunk_tracker_state_path=chunk_tracker_state_path,
+            chunk_size_mismatch_warning=chunk_size_mismatch_warning,
+        )
         
         logger.debug("Waiting for dialog to close...")
         # Wait for dialog to close

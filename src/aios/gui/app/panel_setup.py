@@ -326,6 +326,9 @@ def initialize_panels(app: Any) -> None:
             post_to_ui=app.post_to_ui,
             app=app,
         )
+        # Link brains panel for post-training refresh (update training steps counter)
+        if hasattr(app, 'brains_panel') and app.brains_panel:
+            app.hrm_training_panel._brains_panel = app.brains_panel
         log_timing("HRM Training panel")
     except Exception as e:
         logger.error(f"Failed to initialize HRM training panel: {e}", exc_info=True)

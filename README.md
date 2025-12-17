@@ -103,7 +103,7 @@ aios
 See [REFERENCES.md](REFERENCES.md) for a complete list of libraries and upstream projects used (PyTorch, Transformers, DeepSpeed, bitsandbytes, FlashAttention, and more) with links and licenses.
 
 ## Acknowledgments
-
+Based off of the work of https://github.com/sapientinc/HRM 
 Thanks to the open‑source ML community and upstream projects that made this possible. See [REFERENCES.md](REFERENCES.md).
 
 ## License
