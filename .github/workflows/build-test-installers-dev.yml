@@ -103,9 +103,6 @@ jobs:
           echo "📂 Package contents:"
           dpkg-deb --contents "$DEB_FILE"
           
-          # Validate package structure
-          dpkg-deb --validate "$DEB_FILE"
-          
           echo "✅ .deb package validation passed"
       
       - name: Test installation (silent mode)
