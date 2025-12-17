@@ -89,22 +89,8 @@ if [[ -z "$ARCH" ]]; then
 fi
 
 if [[ -z "$VERSION" ]]; then
-  VERSION="$(python3 - <<'PY'
-import os
-import pathlib
-
-repo_root = pathlib.Path(os.environ["REPO_ROOT"])
-data = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # Python <3.11
-    import tomli as tomllib
-
-project = tomllib.loads(data)["project"]
-print(project.get("version"))
-PY
-)"
+  # Extract version from pyproject.toml using grep (no Python dependencies needed)
+  VERSION="$(grep -oP '^\s*version\s*=\s*"\K[^"]+' "$REPO_ROOT/pyproject.toml" | head -1)"
 fi
 
 [[ -n "$VERSION" ]] || die "Unable to determine version"
