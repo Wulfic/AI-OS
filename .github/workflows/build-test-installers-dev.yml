@@ -67,7 +67,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.10'
       
       - name: Install build dependencies
         run: |
@@ -113,11 +113,7 @@ jobs:
           
           echo "📦 Installing package: $(basename $DEB_FILE)"
           
-          # Install Python 3.11 (required for ai-os)
-          echo "📥 Installing Python 3.11..."
-          sudo add-apt-repository ppa:deadsnakes/ppa -y
-          sudo apt-get update
-          sudo apt-get install -y python3.11 python3.11-venv
+          # Python 3.10+ is already available on Ubuntu 22.04+
           
           # Install the package
           sudo dpkg -i "$DEB_FILE" || true
@@ -193,7 +189,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.10'
       
       - name: Install Inno Setup
         run: |

@@ -49,6 +49,9 @@ TLDR; Have a fast ass GPU with lots of VRAM if you're impatient.
 ### Installers
 Find the official installers also in the [Releases section](https://github.com/Wulfic/AI-OS/releases).
 See the installers README in the repository for Windows (.exe) and Ubuntu (.deb) info.
+
+**Windows Security Note:** Development builds are unsigned and may trigger Windows SmartScreen ("Windows protected your PC"). This is expected behavior. Click "More info" → "Run anyway" to proceed. Official releases will be code-signed in the future.
+
 If you broke your install or are missing dependencies in terminal use: 
 ```bash
 aios doctor --repair
