@@ -2,17 +2,8 @@ name: Build → Test → Publish
 
 on:
   push:
-    branches:
-      - main  # Only run on main branch pushes
     tags:
-      - 'Official'  # Or when Official release tag is pushed
-    paths:
-      - 'src/**'
-      - 'config/**'
-      - 'installers/**'
-      - 'pyproject.toml'
-      - 'requirements*.txt'
-      - '.github/workflows/build-test-publish.yml'
+      - 'Official'  # Only run when Official release tag is pushed
   workflow_dispatch:  # Manual trigger
     inputs:
       refresh_lock:
