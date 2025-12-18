@@ -139,7 +139,7 @@ class GPUMonitor:
                 "--format=csv,noheader,nounits"
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=10)
             nv_duration = time.perf_counter() - nv_start
             if nv_duration > 1.0:
                 logger.debug(f"nvidia-smi monitor query latency: {nv_duration:.3f}s")

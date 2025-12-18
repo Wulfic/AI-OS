@@ -89,22 +89,8 @@ if [[ -z "$ARCH" ]]; then
 fi
 
 if [[ -z "$VERSION" ]]; then
-  VERSION="$(python3 - <<'PY'
-import os
-import pathlib
-
-repo_root = pathlib.Path(os.environ["REPO_ROOT"])
-data = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # Python <3.11
-    import tomli as tomllib
-
-project = tomllib.loads(data)["project"]
-print(project.get("version"))
-PY
-)"
+  # Extract version from pyproject.toml using grep (no Python dependencies needed)
+  VERSION="$(grep -oP '^\s*version\s*=\s*"\K[^"]+' "$REPO_ROOT/pyproject.toml" | head -1)"
 fi
 
 [[ -n "$VERSION" ]] || die "Unable to determine version"
@@ -287,11 +273,33 @@ set -euo pipefail
 APP_ROOT="/opt/ai-os"
 VENV="$APP_ROOT/venv"
 REQ_FILE="$APP_ROOT/requirements-lock.txt"
+
+printf '[ai-os] Checking Python version...\n'
 PYTHON_BIN="$(command -v python3 || true)"
+
 if [[ -z "$PYTHON_BIN" ]]; then
-  echo "python3 is required to finish installing ai-os." >&2
+  echo "" >&2
+  echo "ERROR: Python 3 is required but not found." >&2
+  echo "Please install python3:" >&2
+  echo "  sudo apt install python3 python3-venv python3-pip" >&2
+  echo "" >&2
   exit 1
 fi
+
+# Check Python version is 3.10 or higher
+PYTHON_VERSION=$($PYTHON_BIN -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+PYTHON_MAJOR=$(echo "$PYTHON_VERSION" | cut -d. -f1)
+PYTHON_MINOR=$(echo "$PYTHON_VERSION" | cut -d. -f2)
+
+if [[ "$PYTHON_MAJOR" -lt 3 ]] || [[ "$PYTHON_MAJOR" -eq 3 && "$PYTHON_MINOR" -lt 10 ]]; then
+  echo "" >&2
+  echo "ERROR: Python $PYTHON_VERSION found, but Python 3.10+ is required." >&2
+  echo "Please upgrade Python or install a newer version." >&2
+  echo "" >&2
+  exit 1
+fi
+
+printf '[ai-os] Using Python %s: %s\n' "$PYTHON_VERSION" "$PYTHON_BIN"
 printf '[ai-os] Preparing runtime environment...\n'
 if [[ ! -d "$VENV" ]]; then
   "$PYTHON_BIN" -m venv "$VENV"
@@ -353,6 +361,8 @@ Installed-Size: $INSTALLED_SIZE
 Homepage: https://github.com/Wulfic/AI-OS
 Description: HRM-sMoE LLM Training Toolkit
  Future-facing architecture for OS-integrated autonomous assistance.
+ .
+ Uses system Python 3.10+ (included in Ubuntu 22.04+)
 EOF
 
 log_info "Building .deb archive"

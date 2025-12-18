@@ -276,6 +276,43 @@ def create_logging_section(panel: "SettingsPanel", container: ttk.Frame) -> None
     )
     level_info_label.pack(anchor="w", pady=(5, 0))
 
+    # Log management row: Clear logs button + folder size
+    log_mgmt_row = ttk.Frame(logging_frame)
+    log_mgmt_row.pack(fill="x", pady=(10, 0))
+
+    clear_logs_btn = ttk.Button(
+        log_mgmt_row,
+        text="Clear Old Logs",
+        command=lambda: panel._clear_old_logs() if hasattr(panel, '_clear_old_logs') else None
+    )
+    clear_logs_btn.pack(side="left")
+
+    add_tooltip(
+        clear_logs_btn,
+        "Clear old log files to free disk space.\n\n"
+        "This will delete rotated/archived log files from previous sessions,\n"
+        "but will NOT delete the current session's log files.\n\n"
+        "Current session logs (aios.log, aios_debug.log) are preserved."
+    )
+
+    # Log folder size indicator
+    panel.log_size_var = safe_variables.StringVar(value="Calculating...")
+    log_size_label = ttk.Label(
+        log_mgmt_row,
+        textvariable=panel.log_size_var,
+        foreground="gray",
+        font=("TkDefaultFont", 9)
+    )
+    log_size_label.pack(side="left", padx=(15, 0))
+
+    add_tooltip(
+        log_size_label,
+        "Total size of all log files in the logs directory.\n"
+        "Includes current and archived log files."
+    )
+
+    # Log size will be calculated when Settings tab is activated
+
 
 def create_help_section(panel: "SettingsPanel", container: ttk.Frame) -> None:
     """Create the help documentation management section.
@@ -285,7 +322,7 @@ def create_help_section(panel: "SettingsPanel", container: ttk.Frame) -> None:
         container: The main container frame
     """
     help_frame = ttk.LabelFrame(container, text="Help Documentation", padding=8)
-    help_frame.pack(fill="both", expand=True, pady=(0, 8))
+    help_frame.pack(fill="x", expand=False, pady=(0, 8))
 
     help_desc_label = ttk.Label(
         help_frame,
@@ -468,6 +505,172 @@ def create_cache_section(panel: "SettingsPanel", container: ttk.Frame) -> None:
     logger.debug("Cache management section created successfully")
 
 
+def create_dataset_storage_section(panel: "SettingsPanel", container: ttk.Frame) -> None:
+    """Create the dataset storage configuration section (Phase 3).
+    
+    Args:
+        panel: The settings panel instance
+        container: The main container frame
+    """
+    logger.debug("Creating dataset storage section")
+    storage_frame = ttk.LabelFrame(container, text="Dataset Storage", padding=8)
+    storage_frame.pack(fill="x", pady=(0, 8))
+
+    storage_desc_label = ttk.Label(
+        storage_frame,
+        text="Configure dataset download and storage limits."
+    )
+    storage_desc_label.pack(anchor="w", pady=(0, 10))
+
+    # Dataset cap configuration row
+    cap_row = ttk.Frame(storage_frame)
+    cap_row.pack(fill="x", pady=(0, 10))
+
+    cap_label = ttk.Label(cap_row, text="Dataset Cap (GB):", width=20, anchor="e")
+    cap_label.pack(side="left", padx=(0, 10))
+
+    panel.dataset_cap_var = safe_variables.StringVar(value="")
+    cap_entry = ttk.Entry(
+        cap_row,
+        textvariable=panel.dataset_cap_var,
+        width=10,
+        font=("TkDefaultFont", 10)
+    )
+    cap_entry.pack(side="left", padx=(0, 10), ipady=3)
+
+    # Usage display
+    panel.dataset_usage_label = ttk.Label(
+        cap_row,
+        text="",
+        font=("TkDefaultFont", 8),
+        foreground="gray"
+    )
+    panel.dataset_usage_label.pack(side="left", padx=(6, 0))
+
+    add_tooltip(
+        cap_entry,
+        "Maximum disk space for dataset downloads (GB).\n\n"
+        "Leave empty for unlimited storage.\n"
+        "Enforced in training_datasets folder.\n\n"
+        "Changes are applied immediately."
+    )
+
+    # Artifacts directory configuration (Phase 3.2)
+    artifacts_row = ttk.Frame(storage_frame)
+    artifacts_row.pack(fill="x", pady=(10, 0))
+
+    artifacts_label = ttk.Label(artifacts_row, text="Artifacts Directory:", width=20, anchor="e")
+    artifacts_label.pack(side="left", padx=(0, 10))
+    
+    # Will be populated with default in _load_artifacts_path
+    panel.artifacts_dir_var = safe_variables.StringVar(value="")
+    artifacts_entry = ttk.Entry(
+        artifacts_row,
+        textvariable=panel.artifacts_dir_var,
+        font=("TkDefaultFont", 10)
+    )
+    artifacts_entry.pack(side="left", fill="x", expand=True, padx=(0, 5), ipady=3)
+    
+    # Bind focus out for validation
+    artifacts_entry.bind("<FocusOut>", lambda _e: panel._validate_artifacts_dir())
+
+    # Buttons row
+    artifacts_btn_row = ttk.Frame(storage_frame)
+    artifacts_btn_row.pack(fill="x", pady=(5, 0))
+
+    # Spacer to align with entry above
+    spacer = ttk.Label(artifacts_btn_row, text="", width=20)
+    spacer.pack(side="left", padx=(0, 10))
+
+    browse_btn = ttk.Button(
+        artifacts_btn_row,
+        text="Browse…",
+        command=panel._browse_artifacts_dir,
+        width=10
+    )
+    browse_btn.pack(side="left", padx=(0, 5))
+
+    reset_btn = ttk.Button(
+        artifacts_btn_row,
+        text="Use Default",
+        command=panel._reset_artifacts_dir,
+        width=12
+    )
+    reset_btn.pack(side="left")
+
+    add_tooltip(
+        artifacts_entry,
+        "Custom location for artifacts and brains.\n\n"
+        "Leave blank to use default location:\n"
+        "ProgramData/AI-OS/artifacts (Windows)\n"
+        "~/.local/share/AI-OS/artifacts (Linux)\n\n"
+        "Changes take effect immediately."
+    )
+
+    add_tooltip(
+        reset_btn,
+        "Revert to the default artifacts path."
+    )
+
+    # Status label for artifacts directory (hidden but kept for compatibility)
+    panel._artifacts_status_var = safe_variables.StringVar(value="")
+    panel._artifacts_status_label = None
+
+    # Download location configuration (Phase 3.3)
+    download_row = ttk.Frame(storage_frame)
+    download_row.pack(fill="x", pady=(10, 0))
+
+    download_label = ttk.Label(download_row, text="Download Location:", width=20, anchor="e")
+    download_label.pack(side="left", padx=(0, 10))
+
+    panel.download_location_var = safe_variables.StringVar(value="training_datasets")
+    download_entry = ttk.Entry(
+        download_row,
+        textvariable=panel.download_location_var,
+        font=("TkDefaultFont", 10)
+    )
+    download_entry.pack(side="left", fill="x", expand=True, padx=(0, 5), ipady=3)
+
+    # Download location buttons row
+    download_btn_row = ttk.Frame(storage_frame)
+    download_btn_row.pack(fill="x", pady=(5, 0))
+
+    # Spacer to align with entry above
+    spacer2 = ttk.Label(download_btn_row, text="", width=20)
+    spacer2.pack(side="left", padx=(0, 10))
+
+    browse_download_btn = ttk.Button(
+        download_btn_row,
+        text="📁 Browse",
+        command=panel._browse_download_location,
+        width=10
+    )
+    browse_download_btn.pack(side="left", padx=(0, 5))
+
+    default_download_btn = ttk.Button(
+        download_btn_row,
+        text="Use Default",
+        command=panel._reset_download_location,
+        width=12
+    )
+    default_download_btn.pack(side="left")
+
+    add_tooltip(
+        download_entry,
+        "Directory where downloaded datasets will be saved.\n\n"
+        "Default: training_datasets (in aios root folder)\n"
+        "Relative paths are relative to the aios root.\n\n"
+        "Changes take effect for new downloads."
+    )
+
+    add_tooltip(
+        default_download_btn,
+        "Reset to default: training_datasets folder in aios root."
+    )
+
+    logger.debug("Dataset storage section created successfully")
+
+
 def create_support_section(panel: "SettingsPanel", container: ttk.Frame) -> None:
     """Create the support section with Ko-Fi button.
     
@@ -484,6 +687,10 @@ def create_support_section(panel: "SettingsPanel", container: ttk.Frame) -> None
         foreground="gray"
     )
     support_label.pack(anchor="w", pady=(0, 10))
+
+    # Button container for Ko-Fi and GitHub buttons
+    button_container = ttk.Frame(support_frame)
+    button_container.pack(anchor="w", fill="x")
 
     # Ko-Fi button
     try:
@@ -504,7 +711,7 @@ def create_support_section(panel: "SettingsPanel", container: ttk.Frame) -> None
             kofi_photo = ImageTk.PhotoImage(kofi_img)
             
             kofi_btn = tk.Button(
-                support_frame,
+                button_container,
                 image=kofi_photo,
                 command=panel._open_kofi_link,
                 cursor="hand2",
@@ -512,7 +719,7 @@ def create_support_section(panel: "SettingsPanel", container: ttk.Frame) -> None
                 highlightthickness=0
             )
             kofi_btn.image = kofi_photo  # type: ignore[attr-defined]
-            kofi_btn.pack(anchor="w")
+            kofi_btn.pack(side="left", padx=(0, 10))
             
             add_tooltip(
                 kofi_btn,
@@ -521,12 +728,15 @@ def create_support_section(panel: "SettingsPanel", container: ttk.Frame) -> None
                 "Click to visit: https://ko-fi.com/wulfic"
             )
         else:
-            _create_text_kofi_button(support_frame, panel._open_kofi_link)  # type: ignore[arg-type]
+            _create_text_kofi_button(button_container, panel._open_kofi_link)  # type: ignore[arg-type]
     except ImportError:
-        _create_text_kofi_button(support_frame, panel._open_kofi_link)  # type: ignore[arg-type]
+        _create_text_kofi_button(button_container, panel._open_kofi_link)  # type: ignore[arg-type]
     except Exception as e:
         logger.error(f"Error loading Ko-fi button: {e}")
-        _create_text_kofi_button(support_frame, panel._open_kofi_link)  # type: ignore[arg-type]
+        _create_text_kofi_button(button_container, panel._open_kofi_link)  # type: ignore[arg-type]
+    
+    # GitHub button (Phase 2.4)
+    _create_github_button(button_container, panel._open_github_link)  # type: ignore[arg-type]
 
 
 def _create_text_kofi_button(parent: ttk.Frame, command: callable) -> None:  # type: ignore[valid-type]
@@ -541,11 +751,33 @@ def _create_text_kofi_button(parent: ttk.Frame, command: callable) -> None:  # t
         text="☕ Support on Ko-fi",
         command=command
     )
-    kofi_text_btn.pack(anchor="w")
+    kofi_text_btn.pack(side="left", padx=(0, 10))
     
     add_tooltip(
         kofi_text_btn,
         "Support AI-OS development on Ko-fi!\n\n"
         "Your support helps keep this project alive and growing.\n"
         "Click to visit: https://ko-fi.com/wulfic"
+    )
+
+
+def _create_github_button(parent: ttk.Frame, command: callable) -> None:  # type: ignore[valid-type]
+    """Create a GitHub button for project repository.
+    
+    Args:
+        parent: The parent frame
+        command: The callback function
+    """
+    github_btn = ttk.Button(
+        parent,
+        text="⭐ GitHub Repository",
+        command=command
+    )
+    github_btn.pack(side="left")
+    
+    add_tooltip(
+        github_btn,
+        "Visit the AI-OS GitHub repository!\n\n"
+        "Star the project, report issues, or contribute.\n"
+        "Click to visit: https://github.com/Wulfic/AI-OS"
     )

@@ -66,6 +66,7 @@ def refresh_brains_data(panel: Any) -> list[str]:
         is_temporary_brain,
         load_training_steps,
         scan_actv1_bundles,
+        detect_orphaned_parallel_checkpoints,
     )
 
     names: list[str] = []
@@ -82,6 +83,28 @@ def refresh_brains_data(panel: Any) -> list[str]:
             for entry, info in actv1_brains.items():
                 if entry not in brains:
                     brains[entry] = info
+            
+            # Auto-detect and merge orphaned parallel checkpoints
+            for entry in list(actv1_brains.keys()):
+                try:
+                    brain_dir = os.path.join(actv1_base, entry)
+                    if detect_orphaned_parallel_checkpoints(brain_dir):
+                        logger.info(f"Detected orphaned parallel checkpoints for {entry}, attempting merge...")
+                        # Import and call merge function
+                        from aios.core.brains.registry_core import BrainRegistry
+                        from aios.core.brains.registry_stats import merge_orphaned_parallel_checkpoints
+                        
+                        # Create temporary registry to call merge function
+                        temp_registry = BrainRegistry()
+                        temp_registry.store_dir = panel._store_dir
+                        
+                        if merge_orphaned_parallel_checkpoints(temp_registry, entry, remove_after_merge=True):
+                            logger.info(f"Successfully merged orphaned checkpoints for {entry}")
+                            # Invalidate cache to reload with correct size
+                            from ...services.brain_registry_service import invalidate_brain_cache
+                            invalidate_brain_cache(panel._store_dir)
+                except Exception as merge_err:
+                    logger.warning(f"Failed to auto-merge checkpoints for {entry}: {merge_err}")
         except Exception:
             pass
 

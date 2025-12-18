@@ -157,15 +157,15 @@ class DebugPanel(ttk.LabelFrame):  # type: ignore[misc]
             self._text.tag_configure("system", foreground="#9CDCFE", font=("Consolas", 9, "normal"))  # Light blue
             self._text.tag_configure("dataset", foreground="#DCDCAA", font=("Consolas", 9, "normal"))  # Yellow
             
-            # Log level tags
-            self._text.tag_configure("level_DEBUG", foreground="#858585")
-            self._text.tag_configure("level_INFO", foreground="#4FC1FF")
-            self._text.tag_configure("level_WARNING", foreground="#FFD700")
+            # Log level tags - all using consistent font size 9 for uniformity
+            self._text.tag_configure("level_DEBUG", foreground="#858585", font=("Consolas", 9))
+            self._text.tag_configure("level_INFO", foreground="#4FC1FF", font=("Consolas", 9))
+            self._text.tag_configure("level_WARNING", foreground="#FFD700", font=("Consolas", 9))
             self._text.tag_configure("level_ERROR", foreground="#F48771", font=("Consolas", 9, "bold"))
             self._text.tag_configure("level_CRITICAL", foreground="#FF0000", font=("Consolas", 9, "bold"), background="#3B1F1F")
             
-            # Timestamp tag
-            self._text.tag_configure("timestamp", foreground="#608B4E", font=("Consolas", 8))  # Dark green
+            # Timestamp tag - using same size 9 font for consistency
+            self._text.tag_configure("timestamp", foreground="#608B4E", font=("Consolas", 9))  # Dark green
             
             # Separator tag
             self._text.tag_configure("separator", foreground="#3E3E3E")

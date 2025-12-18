@@ -381,7 +381,7 @@ def update_training_mode_toggle_state(panel: "ResourcesPanel") -> None:
                     with panel.suspend_auto_apply():
                         panel.training_mode_var.set("parallel")
             elif has_multi_gpu:
-                lock_text = "(Select 2+ GPUs for Parallel)"
+                lock_text = ""  # Message removed per user request (Phase 2.2)
                 tooltip = "Enable Parallel mode by selecting more than one CUDA device."
                 if current_mode != "none":
                     with panel.suspend_auto_apply():

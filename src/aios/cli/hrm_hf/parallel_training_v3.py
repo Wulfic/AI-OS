@@ -429,9 +429,12 @@ def train_gpu_worker(
     # Training state
     model.train()
     total_steps_this_gpu = 0  # Optimizer steps (after gradient accumulation)
-    total_micro_batches_this_gpu = 0  # True training steps (all forward/backward passes)
-    current_block_id = 0
+    total_samples_trained_this_gpu = 0  # Steps = samples/rows trained (for display)
+    current_block_id = config.start_block_id  # Start from specified block
     graceful_stop_pending = False  # Track graceful stop request
+    
+    if config.start_block_id > 0 or config.start_chunk_id > 0:
+        print(f"[GPU {tracker_id}] Starting from Block {config.start_block_id}, Chunk {config.start_chunk_id}")
     
     print(f"[GPU {tracker_id}] Starting training loop...")
     
@@ -479,6 +482,7 @@ def train_gpu_worker(
                 # Update chunk_tracker with total blocks if detected for first time
                 if total_blocks and chunk_tracker.total_blocks_in_dataset is None:
                     chunk_tracker.total_blocks_in_dataset = total_blocks
+                    chunk_tracker.save()  # Persist immediately so resume dialog can see it
                     print(f"[GPU {tracker_id}] Detected {total_blocks} total blocks in dataset")
                     
                     # Log to GUI
@@ -501,7 +505,7 @@ def train_gpu_worker(
                         print(f"[GPU {tracker_id}] Iterate mode enabled, starting new epoch")
                         chunk_tracker.start_new_epoch()
                         block_manager.reset()
-                        current_block_id = 0
+                        current_block_id = config.start_block_id  # Respect start position across epochs
                         continue
                     else:
                         print(f"[GPU {tracker_id}] Iterate mode disabled, stopping after epoch")
@@ -654,9 +658,10 @@ def train_gpu_worker(
                         scaled_loss.backward()
                     
                     micro_batch_count += 1
-                    total_micro_batches_this_gpu += 1  # Track total true steps across all chunks
+                    samples_in_batch = len(batch_lines)
+                    samples_trained += samples_in_batch
+                    total_samples_trained_this_gpu += samples_in_batch  # Track cumulative samples (steps)
                     chunk_losses.append(loss.item())  # Store unscaled loss for logging
-                    samples_trained += len(batch_lines)
                     
                     # Only step optimizer after accumulating gradients
                     is_accumulation_end = (micro_batch_count % grad_accum_steps == 0)
@@ -711,6 +716,17 @@ def train_gpu_worker(
                             print(f"[GPU {tracker_id}] Optimizer Step: {step_in_chunk}/{steps_to_train} | "
                                   f"Block {current_block_id} Chunk {chunk_id} | Loss={avg_loss:.4f}")
 
+                            # Emit real-time step update for GUI (per-GPU, GUI will aggregate)
+                            write_jsonl({
+                                "event": "step",
+                                "gpu_id": tracker_id,
+                                "gpu_session_steps": total_samples_trained_this_gpu,  # This GPU's steps = samples trained
+                                "gpu_optimizer_steps": total_steps_this_gpu,  # This GPU's optimizer steps
+                                "loss": avg_loss,
+                                "block_id": current_block_id,
+                                "chunk_id": chunk_id,
+                            })
+
                             if progress_file:
                                 _write_progress(
                                     step=step_in_chunk,
@@ -719,7 +735,7 @@ def train_gpu_worker(
                                     block_id=current_block_id,
                                     chunk_id=chunk_id,
                                     global_optimizer_steps=total_steps_this_gpu,
-                                    samples_trained=samples_trained,
+                                    samples_trained=total_samples_trained_this_gpu,
                                 )
             
             except Exception as batch_error:
@@ -742,9 +758,8 @@ def train_gpu_worker(
                 block_id=current_block_id,
                 chunk_id=chunk_id,
                 gpu_id=tracker_id,
-                step=total_steps_this_gpu,
-                samples_trained=samples_trained,
-                true_steps=micro_batch_count  # Pass the number of micro-batches processed in this chunk
+                optimizer_step=total_steps_this_gpu,
+                steps=samples_trained  # Steps = samples/rows trained in this chunk
             )
             
             # Log progress stats to GUI
@@ -760,7 +775,7 @@ def train_gpu_worker(
                 "gpu_id": tracker_id,
                 "block_id": current_block_id,
                 "chunk_id": chunk_id,
-                "step": total_steps_this_gpu,
+                "optimizer_step": total_steps_this_gpu,
                 "loss": avg_chunk_loss,
                 "lr": (
                     float(getattr(optimizer, "param_groups", [{}])[0].get("lr"))
@@ -784,8 +799,8 @@ def train_gpu_worker(
             
             print(f"[GPU {tracker_id}] * Completed Block {current_block_id} Chunk {chunk_id}: "
                   f"{step_in_chunk} optimizer steps (limit: {steps_to_train}) | "
-                  f"{micro_batch_count} micro-batches | "
-                  f"GPU Total: {total_steps_this_gpu} opt steps ({total_micro_batches_this_gpu} true steps) | "
+                  f"{samples_trained} samples trained | "
+                  f"GPU Total: {total_steps_this_gpu} opt steps ({total_samples_trained_this_gpu} steps) | "
                   f"Avg Loss: {avg_chunk_loss:.4f}")
 
             if progress_file:
@@ -796,7 +811,7 @@ def train_gpu_worker(
                     block_id=current_block_id,
                     chunk_id=chunk_id,
                     global_optimizer_steps=total_steps_this_gpu,
-                    samples_trained=samples_trained,
+                    samples_trained=total_samples_trained_this_gpu,
                 )
             
             # If immediate stop was triggered during chunk, break outer loop
@@ -979,24 +994,80 @@ def _run_parallel_training_v3_ddp(
         write_jsonl({
             "event": "training_complete",
             "session_steps": final_stats.get('session_steps', 0),
-            "session_true_steps": final_stats.get('session_true_steps', 0),
-            "total_gpu_steps": final_stats['total_gpu_steps'],
-            "total_true_steps": final_stats.get('total_true_steps', 0),
-            "total_samples_trained": final_stats['total_samples_trained'],
+            "total_steps": final_stats.get('total_steps', 0),
+            "total_optimizer_steps": final_stats['total_optimizer_steps'],
             "total_chunks_trained": final_stats['total_chunks_trained'],
             "session_chunks_trained": final_stats.get('session_chunks_trained', 0),
             "blocks_completed": final_stats['blocks_completed'],
             "current_epoch": final_stats['current_epoch'],
         })
 
+        # Update brain.json with training_steps (similar to non-DDP path)
+        save_dir = Path(config.save_dir)
+        brain_json_path = save_dir / "brain.json"
+        session_steps = final_stats.get('session_steps', 0)
+        try:
+            import json as _json
+            import time as _t
+            meta = {}
+            if brain_json_path.exists():
+                with brain_json_path.open("r", encoding="utf-8") as f:
+                    meta = _json.load(f) or {}
+            
+            # Increment training_steps
+            previous_steps = int(meta.get("training_steps", 0))
+            total_steps = previous_steps + int(session_steps)
+            meta["training_steps"] = total_steps
+            
+            # Track dataset history
+            dataset_history = meta.get("dataset_history", [])
+            if config.dataset_file:
+                dataset_name = Path(config.dataset_file).name
+                dataset_path = str(Path(config.dataset_file).resolve()) if not config.dataset_file.startswith("hf://") else config.dataset_file
+                session_record = {
+                    "dataset_name": dataset_name,
+                    "dataset_path": dataset_path,
+                    "steps": int(session_steps),
+                    "timestamp": float(_t.time()),
+                }
+                dataset_history.append(session_record)
+                meta["dataset_history"] = dataset_history
+            
+            # Update last_session metadata
+            meta["last_session"] = {
+                "timestamp": float(_t.time()),
+                "steps_completed": int(session_steps),
+                "total_steps": int(total_steps),
+                "stopped_early": False,
+                "dataset_file": str(config.dataset_file) if config.dataset_file else None,
+                "checkpoint_path": str(final_checkpoint_path),
+            }
+            meta["last_trained"] = float(_t.time())
+            
+            # Write updated brain.json
+            with brain_json_path.open("w", encoding="utf-8") as f:
+                _json.dump(meta, f, indent=2)
+            
+            print(f"[DDP] Updated brain.json: training_steps {previous_steps} -> {total_steps}")
+        except Exception as e:
+            print(f"[DDP] Warning: Failed to update brain.json: {e}")
+        
+        # Truncate metrics.jsonl to keep file size manageable
+        try:
+            log_file_path = Path(config.log_file) if config.log_file else save_dir / "metrics.jsonl"
+            if log_file_path.exists():
+                log_file_path.unlink()
+                print(f"[DDP] Cleared metrics log: {log_file_path.name}")
+        except Exception as e:
+            print(f"[DDP] Warning: Failed to clear metrics log: {e}")
+
         print("\n" + "=" * 60)
         print("TRAINING COMPLETE! (DDP mode)")
         print("=" * 60)
         print(f"World size: {world_size}")
-        print(f"Total optimizer steps: {final_stats['total_gpu_steps']}")
-        print(f"Total true steps: {final_stats.get('total_true_steps', 0)}")
-        print(f"Session true steps: {final_stats.get('session_true_steps', 0)}")
-        print(f"Items trained: {final_stats['total_samples_trained']:,}")
+        print(f"Total optimizer steps: {final_stats['total_optimizer_steps']}")
+        print(f"Session steps: {final_stats.get('session_steps', 0)}")
+        print(f"Total steps: {final_stats.get('total_steps', 0)}")
         print(f"Chunks trained: {final_stats['total_chunks_trained']}")
         print(f"Blocks completed: {final_stats['blocks_completed']}")
         print(f"Current epoch: {final_stats['current_epoch']}")
@@ -1096,7 +1167,18 @@ def run_parallel_training_v3(
     checkpoint_expected = save_dir / "actv1_student.safetensors"
     checkpoint_legacy = save_dir / "final_model.safetensors"
     checkpoint_exists = checkpoint_expected.exists() or checkpoint_legacy.exists()
-    chunk_state_file = save_dir / "chunk_tracker_state.json"
+    
+    # Create dataset-specific state file path
+    from .chunk_tracker import sanitize_dataset_name, get_dataset_state_file
+    dataset_name_sanitized = sanitize_dataset_name(config.dataset_file) if config.dataset_file else "unknown"
+    chunk_size = getattr(config, 'dataset_chunk_size', None)
+    chunk_state_file = get_dataset_state_file(save_dir, dataset_name_sanitized, chunk_size)
+    
+    # Ensure parent directory exists
+    chunk_state_file.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Legacy state file for backward compatibility
+    legacy_state_file = save_dir / "chunk_tracker_state.json"
 
     effective_resume = bool(resume_requested and checkpoint_exists)
     if resume_requested and not checkpoint_exists:
@@ -1222,6 +1304,20 @@ def run_parallel_training_v3(
     if not config.dataset_file:
         raise ValueError("dataset_file is required for parallel training")
     
+    # Validate and preprocess dataset if needed (before initializing BlockManager)
+    if is_primary:
+        from aios.cli.datasets.dataset_validation import validate_dataset_for_training
+        try:
+            validate_dataset_for_training(
+                dataset_file=config.dataset_file,
+                samples_per_block=config.samples_per_block,
+                ascii_only=config.ascii_only,
+            )
+        except ValueError as e:
+            print(f"\n❌ Dataset validation failed: {e}\n")
+            write_jsonl({"started": False, "error": f"dataset_validation_failed: {e}"})
+            raise RuntimeError(f"Dataset validation failed: {e}")
+    
     if is_primary:
         print(f"[INIT] Initializing BlockManager (async)...")
         print(f"   Dataset: {config.dataset_file}")
@@ -1247,6 +1343,12 @@ def run_parallel_training_v3(
         print(f"[OK] BlockManager initialized (ready for lazy loading)")
         print(f"[INFO] Blocks will be loaded on-demand during training\n")
     
+    # Start pre-downloading first 5 blocks in background for HF streaming datasets
+    if config.dataset_file and isinstance(config.dataset_file, str) and config.dataset_file.startswith("hf://"):
+        block_manager.start_predownload(num_blocks=5)
+        if is_primary:
+            print(f"[INFO] Started background pre-download of first 5 blocks\n")
+    
     # Get total blocks if already detected (for local datasets)
     total_blocks_detected = block_manager.get_total_blocks()
     if total_blocks_detected and is_primary:
@@ -1263,7 +1365,25 @@ def run_parallel_training_v3(
         print(f"   State file: {state_file}")
         print(f"   Note: Checkpoint will be saved to: {save_dir / 'actv1_student.safetensors'}")
     
-    chunk_tracker = ChunkTracker(state_file=state_file)
+    # Extract brain_id from metadata for per-brain tracking
+    brain_id = brain_metadata.get("brain_id") if brain_metadata else None
+    # Extract dataset name from config
+    dataset_name = None
+    if config.dataset_file:
+        dataset_name = Path(config.dataset_file).stem if not config.dataset_file.startswith("hf://") else config.dataset_file.replace("hf://", "").replace("/", "_")
+    
+    if is_primary and brain_id:
+        print(f"[INFO] Brain ID: {brain_id}")
+    if is_primary and dataset_name:
+        print(f"[INFO] Dataset: {dataset_name}")
+    
+    chunk_tracker = ChunkTracker(
+        state_file=state_file,
+        brain_id=brain_id,
+        dataset_name=dataset_name,
+        start_block_id=config.start_block_id,
+        start_chunk_id=config.start_chunk_id
+    )
     
     # Set total blocks in ChunkTracker if detected
     if total_blocks_detected:
@@ -1299,7 +1419,7 @@ def run_parallel_training_v3(
         print(f"[RESUME] Resuming from previous state:")
         print(f"   Chunks trained: {stats['total_chunks_trained']}")
         print(f"   Epoch: {stats['current_epoch']}")
-        print(f"   Items trained: {stats['total_samples_trained']:,}")
+        print(f"   Steps trained: {stats['total_steps']:,}")
     
     if is_primary:
         print(f"[OK] ChunkTracker initialized\n")
@@ -1459,10 +1579,8 @@ def run_parallel_training_v3(
     write_jsonl({
         "event": "training_complete",
         "session_steps": final_stats.get('session_steps', 0),
-        "session_true_steps": final_stats.get('session_true_steps', 0),  # Aggregated true steps
-        "total_gpu_steps": final_stats['total_gpu_steps'],
-        "total_true_steps": final_stats.get('total_true_steps', 0),  # All-time aggregated true steps
-        "total_samples_trained": final_stats['total_samples_trained'],
+        "total_steps": final_stats.get('total_steps', 0),
+        "total_optimizer_steps": final_stats['total_optimizer_steps'],
         "total_chunks_trained": final_stats['total_chunks_trained'],
         "session_chunks_trained": final_stats.get('session_chunks_trained', 0),
         "blocks_completed": final_stats['blocks_completed'],
@@ -1470,15 +1588,74 @@ def run_parallel_training_v3(
         "zero_stage": zero_stage,
     })
     
+    # Update brain.json with training_steps (similar to finalization.py)
+    if is_primary:
+        brain_json_path = save_dir / "brain.json"
+        session_steps = final_stats.get('session_steps', 0)
+        try:
+            import json as _json
+            import time as _t
+            meta = {}
+            if brain_json_path.exists():
+                with brain_json_path.open("r", encoding="utf-8") as f:
+                    meta = _json.load(f) or {}
+            
+            # Increment training_steps
+            previous_steps = int(meta.get("training_steps", 0))
+            total_steps = previous_steps + int(session_steps)
+            meta["training_steps"] = total_steps
+            
+            # Track dataset history
+            dataset_history = meta.get("dataset_history", [])
+            if config.dataset_file:
+                dataset_name = Path(config.dataset_file).name
+                dataset_path = str(Path(config.dataset_file).resolve()) if not config.dataset_file.startswith("hf://") else config.dataset_file
+                session_record = {
+                    "dataset_name": dataset_name,
+                    "dataset_path": dataset_path,
+                    "steps": int(session_steps),
+                    "timestamp": float(_t.time()),
+                }
+                dataset_history.append(session_record)
+                meta["dataset_history"] = dataset_history
+            
+            # Update last_session metadata
+            meta["last_session"] = {
+                "timestamp": float(_t.time()),
+                "steps_completed": int(session_steps),
+                "total_steps": int(total_steps),
+                "stopped_early": False,
+                "dataset_file": str(config.dataset_file) if config.dataset_file else None,
+                "checkpoint_path": str(final_checkpoint_path),
+            }
+            meta["last_trained"] = float(_t.time())
+            
+            # Write updated brain.json
+            with brain_json_path.open("w", encoding="utf-8") as f:
+                _json.dump(meta, f, indent=2)
+            
+            print(f"[OK] Updated brain.json: training_steps {previous_steps} -> {total_steps}")
+        except Exception as e:
+            print(f"[WARN] Failed to update brain.json: {e}")
+        
+        # Truncate metrics.jsonl to keep file size manageable
+        # Since training_steps is now persisted in brain.json, we can safely clear this
+        try:
+            log_file_path = Path(config.log_file) if config.log_file else save_dir / "metrics.jsonl"
+            if log_file_path.exists():
+                log_file_path.unlink()
+                print(f"[OK] Cleared metrics log: {log_file_path.name}")
+        except Exception as e:
+            print(f"[WARN] Failed to clear metrics log: {e}")
+    
     if is_primary:
         print("\n" + "="*60)
         print("TRAINING COMPLETE!")
         print("="*60)
         print(f"Final Statistics:")
-        print(f"   Total optimizer steps (all GPUs): {final_stats['total_gpu_steps']}")
-        print(f"   Total true steps (all GPUs): {final_stats.get('total_true_steps', 0)}")
-        print(f"   Session true steps: {final_stats.get('session_true_steps', 0)}")
-        print(f"   Items trained: {final_stats['total_samples_trained']:,}")
+        print(f"   Total optimizer steps (all GPUs): {final_stats['total_optimizer_steps']}")
+        print(f"   Session steps: {final_stats.get('session_steps', 0)}")
+        print(f"   Total steps: {final_stats.get('total_steps', 0)}")
         print(f"   Chunks trained: {final_stats['total_chunks_trained']}")
         print(f"   Blocks completed: {final_stats['blocks_completed']}")
         print(f"   Current epoch: {final_stats['current_epoch']}")

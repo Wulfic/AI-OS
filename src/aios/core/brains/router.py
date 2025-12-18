@@ -148,14 +148,13 @@ class Router:
                 return res
             except Exception as e:
                 logger.error(
-                    "[Router] Master brain '%s' failed during run and will be skipped: %s",
+                    "[Router] Master brain '%s' failed during run: %s",
                     master_name,
                     e,
                 )
-                try:
-                    self.registry.brains.pop(master_name, None)
-                except Exception:
-                    pass
+                # DO NOT automatically unload master brains on error - they should stay loaded
+                # unless explicitly unloaded by the user. Errors can be transient and should
+                # not cause the brain to be removed from memory.
                 master_errors.append(f"{master_name}: {e}")
                 # Try next master (if any)
                 continue

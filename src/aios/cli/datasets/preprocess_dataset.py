@@ -73,33 +73,79 @@ def preprocess_dataset(
     print(f"📦 Preprocessing dataset: {dataset_path.name}")
     print(f"   Block size: {samples_per_block:,} samples")
     
-    # Step 1: Move raw files to raw/ subdirectory if not already there
-    raw_dir = dataset_path / "raw"
-    if not raw_dir.exists():
-        print("   Moving raw files to raw/ subdirectory...")
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Move all text files and dataset files to raw/
-        moved_count = 0
-        for item in dataset_path.iterdir():
-            if item.name == "raw":
-                continue
-            if item.is_file() or (item.is_dir() and item.name in ["data", ".arrow"]):
+    # Step 0: Check if dataset already has block structure (partial preprocessing)
+    existing_blocks = list(dataset_path.glob("block_*"))
+    if existing_blocks:
+        print(f"   ⚠️  Found {len(existing_blocks)} existing blocks - dataset appears partially preprocessed")
+        print(f"   Skipping preprocessing")
+        # Count existing blocks and return
+        total_blocks = len(existing_blocks)
+        # Try to get total samples from existing metadata
+        if info_file.exists():
+            try:
+                with open(info_file, "r", encoding="utf-8") as f:
+                    existing_info = json.load(f)
+                total_samples = existing_info.get("total_samples", 0)
+                return (total_samples, samples_per_block, total_blocks)
+            except Exception:
+                pass
+        return (0, samples_per_block, total_blocks)
+    
+    # Step 1: Detect dataset type and decide how to handle it
+    has_hf_structure = (
+        (dataset_path / "dataset_info.json").exists() or
+        (dataset_path / "data").is_dir() or
+        len(list(dataset_path.glob("*.arrow"))) > 0
+    )
+    
+    if has_hf_structure:
+        print(f"   ✓ Detected HuggingFace dataset structure")
+        print(f"   Note: HF datasets will be read directly (not moved to preserve structure)")
+        # Read directly from dataset_path, don't move files
+        source_dir = dataset_path
+    else:
+        # For non-HF datasets, use raw/ subdirectory structure
+        raw_dir = dataset_path / "raw"
+        if not raw_dir.exists():
+            print("   Moving raw files to raw/ subdirectory...")
+            raw_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Move all text files and dataset files to raw/
+            moved_count = 0
+            for item in dataset_path.iterdir():
+                if item.name == "raw":
+                    continue
+                # Don't move block directories if they exist
+                if item.is_dir() and item.name.startswith("block_"):
+                    continue
                 try:
                     shutil.move(str(item), str(raw_dir / item.name))
                     moved_count += 1
                 except Exception as e:
                     print(f"   Warning: Could not move {item.name}: {e}")
+            
+            if moved_count > 0:
+                print(f"   ✓ Moved {moved_count} items to raw/")
+        else:
+            print(f"   ✓ Raw directory already exists, using existing structure")
         
-        if moved_count > 0:
-            print(f"   ✓ Moved {moved_count} items to raw/")
+        source_dir = raw_dir
     
-    # Step 2: Read all text samples from raw directory
-    print("   Reading samples from raw files...")
-    samples = _read_all_samples(raw_dir, ascii_only)
+    # Step 2: Read all text samples from source directory
+    print("   Reading samples from dataset...")
+    samples = _read_all_samples(source_dir, ascii_only)
     
     if not samples:
-        raise ValueError(f"No text samples found in {raw_dir}")
+        # Provide detailed error message
+        source_contents = list(source_dir.iterdir()) if source_dir.exists() else []
+        error_msg = f"No text samples found in {source_dir}\n"
+        error_msg += f"   Directory contents ({len(source_contents)} items):\n"
+        for item in source_contents[:10]:  # Show first 10 items
+            item_type = "DIR" if item.is_dir() else "FILE"
+            error_msg += f"     [{item_type}] {item.name}\n"
+        if len(source_contents) > 10:
+            error_msg += f"     ... and {len(source_contents) - 10} more items\n"
+        raise ValueError(error_msg)
     
     total_samples = len(samples)
     total_blocks = (total_samples + samples_per_block - 1) // samples_per_block
@@ -132,7 +178,8 @@ def preprocess_dataset(
         "total_blocks": total_blocks,
         "ascii_only": ascii_only,
         "preprocessed_by": "AI-OS dataset preprocessor",
-        "structure": "block_N/samples.txt format"
+        "structure": "block_N/samples.txt format",
+        "source_type": "huggingface" if has_hf_structure else "text_files"
     }
     
     with open(info_file, "w", encoding="utf-8") as f:
@@ -156,14 +203,22 @@ def _read_all_samples(directory: Path, ascii_only: bool) -> List[str]:
     samples = []
     
     # Try loading as HuggingFace dataset first
-    if _is_hf_dataset(directory):
+    is_hf = _is_hf_dataset(directory)
+    print(f"   HuggingFace dataset check: {is_hf} (dataset_info: {(directory / 'dataset_info.json').exists()}, "
+          f"data dir: {(directory / 'data').is_dir()}, .arrow files: {len(list(directory.glob('*.arrow')))})")
+    
+    if is_hf:
+        print(f"   ✓ Detected HuggingFace dataset structure in {directory.name}")
         try:
             from datasets import load_from_disk
+            print(f"   Loading HuggingFace dataset from: {directory}")
             dataset = load_from_disk(str(directory))
             
             # Find text column
-            text_columns = ['text', 'content', 'sentence', 'document', 'article', 'body', 'input', 'output']
+            text_columns = ['text', 'content', 'sentence', 'document', 'article', 'body', 'input', 'output', 'story']
             found_column = None
+            
+            print(f"   Dataset columns: {dataset.column_names}")
             
             for col in text_columns:
                 if col in dataset.column_names:
@@ -172,24 +227,34 @@ def _read_all_samples(directory: Path, ascii_only: bool) -> List[str]:
             
             if not found_column and dataset.column_names:
                 found_column = dataset.column_names[0]
+                print(f"   No known text column found, using first column: {found_column}")
             
             if found_column:
-                print(f"   Loading HuggingFace dataset (column: {found_column})...")
-                for item in dataset:
+                print(f"   Extracting text from column '{found_column}' ({len(dataset)} samples)...")
+                for idx, item in enumerate(dataset):
                     text = str(item.get(found_column, "")).strip()
                     if text:
                         if not ascii_only or _is_ascii(text):
                             samples.append(text)
+                    
+                    # Progress indicator for large datasets
+                    if (idx + 1) % 10000 == 0:
+                        print(f"   Processed {idx + 1:,} samples, extracted {len(samples):,} valid texts...")
                 
+                print(f"   ✓ Extracted {len(samples):,} samples from HuggingFace dataset")
                 return samples
-        except ImportError:
-            print("   Warning: datasets library not available, falling back to file reading")
+        except ImportError as e:
+            print(f"   ⚠️  datasets library not available: {e}")
+            print(f"   Falling back to file reading...")
         except Exception as e:
-            print(f"   Warning: Could not load as HF dataset: {e}")
+            import traceback
+            print(f"   ⚠️  Could not load as HF dataset: {e}")
+            print(f"   Traceback: {traceback.format_exc()}")
+            print(f"   Falling back to file reading...")
     
     # Fallback: Read text files
     print("   Reading text files...")
-    from .constants import TEXT_EXTS
+    from aios.data.datasets.constants import TEXT_EXTS
     
     file_count = 0
     for filepath in directory.rglob("*"):

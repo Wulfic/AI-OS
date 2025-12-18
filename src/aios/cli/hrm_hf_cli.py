@@ -214,6 +214,9 @@ def train_actv1(
     linear_dataset: bool = typer.Option(True, "--linear-dataset/--no-linear-dataset", help="Process dataset linearly (sequential order) without shuffling. Enables position tracking for pause/resume. Default: linear mode"),
     dataset_start_offset: int = typer.Option(0, "--dataset-start-offset", help="Starting sample index for resuming linear dataset training (use with --linear-dataset). Default: 0"),
     force_train: bool = typer.Option(False, "--force-train/--no-force-train", help="Ignore chunk-tracker resume-skip and train even if the current chunk is marked already trained. Useful for diagnostics."),
+    # Phase 6.4: Training Resume Start Position Selector
+    start_block_id: int = typer.Option(0, "--start-block-id", help="Starting block ID for training (lower bound). System will not claim chunks earlier than this block. Use for controlled partial re-training or targeted continuation. Default: 0 (start from beginning)"),
+    start_chunk_id: int = typer.Option(0, "--start-chunk-id", help="Starting chunk ID within the starting block (lower bound). Combined with --start-block-id, provides fine-grained control over training start position. Default: 0 (first chunk in block)"),
     adaptive_lr_config: Optional[str] = typer.Option(
         None,
         "--adaptive-lr-config",
@@ -334,6 +337,8 @@ def train_actv1(
         linear_dataset=linear_dataset,
         dataset_start_offset=dataset_start_offset,
         force_train=force_train,
+        start_block_id=start_block_id,
+        start_chunk_id=start_chunk_id,
         adaptive_lr_config=adaptive_lr_config,
         adaptive_lr_debug_level=adaptive_lr_debug_level,
         adaptive_lr_emit_window_summary=adaptive_lr_emit_window_summary,

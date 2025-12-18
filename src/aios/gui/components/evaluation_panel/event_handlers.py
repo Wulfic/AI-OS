@@ -399,7 +399,7 @@ def _resolve_brain_path(brain_name: str, project_root: str | Path | None) -> Pat
             model_type,
             env_overrides,
         )
-        panel._harness.run_evaluation_async(
+        panel._get_harness().run_evaluation_async(
             tasks=tasks,
             callback=on_complete,
             env_overrides=env_overrides,
@@ -658,9 +658,9 @@ def on_stop_evaluation(panel: "EvaluationPanel") -> None:
         panel._active_eval_runner = None
     else:
         try:
-            panel._harness.cancel()
+            panel._get_harness().cancel()
         except Exception as exc:
             logger.debug("Failed to cancel evaluation harness: %s", exc, exc_info=True)
-        panel._harness.wait_for_completion(timeout=10.0)
+        panel._get_harness().wait_for_completion(timeout=10.0)
 
     # UI will be finalised by on_evaluation_complete if it runs later

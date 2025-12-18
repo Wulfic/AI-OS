@@ -28,6 +28,8 @@ installers/
 
 ### Windows Installation
 
+**⚠️ Windows SmartScreen Warning**: Unsigned installers will trigger Windows Defender SmartScreen with "Windows protected your PC". This is expected for development builds. Click **"More info"** → **"Run anyway"** to proceed. Official signed releases coming soon.
+
 #### PowerShell Script (Recommended)
 ```powershell
 # From repository root - run as Administrator

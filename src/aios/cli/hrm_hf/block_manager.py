@@ -125,7 +125,80 @@ class BlockManager:
         logger.debug("Detecting total blocks at initialization")
         self._detect_total_blocks_at_init()
         
+        # Pre-download state
+        self._predownload_thread: Optional[threading.Thread] = None
+        self._predownload_blocks: int = 5  # Number of blocks to pre-download
+        
         logger.info(f"BlockManager initialized successfully{f' ({self.total_blocks_detected} blocks detected)' if self.total_blocks_detected else ''}")
+    
+    def start_predownload(self, num_blocks: int = 5) -> None:
+        """Start background pre-download of first N blocks for HuggingFace streaming datasets.
+        
+        This downloads blocks in the background to reduce wait time when training reaches them.
+        Only applicable to HF streaming datasets (hf://...).
+        
+        Args:
+            num_blocks: Number of blocks to pre-download (default: 5)
+        """
+        # Only pre-download for HF streaming datasets
+        if not (isinstance(self.dataset_path, str) and self.dataset_path.startswith("hf://")):
+            logger.debug("Skipping pre-download: not an HF streaming dataset")
+            return
+        
+        self._predownload_blocks = num_blocks
+        
+        # Don't start if already running
+        if self._predownload_thread and self._predownload_thread.is_alive():
+            logger.debug("Pre-download already in progress")
+            return
+        
+        def _predownload_worker():
+            """Background worker that pre-downloads first N blocks."""
+            logger.info(f"Starting pre-download of first {num_blocks} blocks in background...")
+            
+            for block_id in range(num_blocks):
+                try:
+                    # Check if already cached
+                    hf_path = self.dataset_path[5:]  # Remove 'hf://' prefix
+                    parts = hf_path.split(":")
+                    dataset_path = parts[0]
+                    config = parts[1] if len(parts) > 1 else None
+                    split = parts[2] if len(parts) > 2 else "train"
+                    
+                    # Check cache first
+                    cached = self._cache.get_cached_chunk(
+                        dataset_path=dataset_path,
+                        config=config,
+                        split=split,
+                        chunk_index=block_id,
+                        max_age_hours=168.0,  # 7 days
+                        max_lines=self.samples_per_block
+                    )
+                    
+                    if cached:
+                        logger.debug(f"Pre-download: Block {block_id} already cached ({len(cached)} samples)")
+                        continue
+                    
+                    # Load block (this will cache it)
+                    logger.info(f"Pre-downloading Block {block_id} ({block_id + 1}/{num_blocks})...")
+                    block = self._load_hf_block(block_id)
+                    
+                    if block is None:
+                        logger.info(f"Pre-download stopped: dataset exhausted at block {block_id}")
+                        break
+                    
+                    logger.info(f"Pre-downloaded Block {block_id}: {len(block.samples)} samples")
+                    
+                except Exception as e:
+                    logger.warning(f"Pre-download failed for block {block_id}: {e}")
+                    continue
+            
+            logger.info(f"Pre-download complete")
+        
+        # Start background thread
+        self._predownload_thread = threading.Thread(target=_predownload_worker, daemon=True, name="BlockPredownload")
+        self._predownload_thread.start()
+        logger.debug("Pre-download thread started")
     
     def get_chunk(self, block_id: int, chunk_id: int, chunk_size: int) -> Optional[List[str]]:
         """Get a specific chunk from a block, loading only that chunk into memory.
@@ -551,27 +624,90 @@ class BlockManager:
             from pathlib import Path
             dataset_path = Path(self.dataset_path)
             
+            print(f"[BlockManager] _load_local_block: block_id={block_id}, dataset_path={dataset_path}")
+            print(f"[BlockManager] dataset_path.is_dir()={dataset_path.is_dir()}")
+            
             # Check if this is a directory with pre-processed block structure
             if dataset_path.is_dir():
-                block_dir = dataset_path / f"block_{block_id}"
-                samples_file = block_dir / "samples.txt"
+                # Try multiple block naming conventions and locations
+                # Blocks can be in root directory or in a 'blocks' subdirectory
+                block_formats = [
+                    # In 'blocks' subdirectory (most common for preprocessed datasets)
+                    (dataset_path / "blocks" / f"block_{block_id:05d}.jsonl", "jsonl"),  # blocks/block_00017.jsonl
+                    (dataset_path / "blocks" / f"block_{block_id}.jsonl", "jsonl"),       # blocks/block_17.jsonl
+                    # In root directory
+                    (dataset_path / f"block_{block_id:05d}.jsonl", "jsonl"),  # block_00017.jsonl
+                    (dataset_path / f"block_{block_id}.jsonl", "jsonl"),       # block_17.jsonl
+                    (dataset_path / f"block_{block_id}" / "samples.txt", "txt"),  # block_17/samples.txt
+                ]
                 
-                if block_dir.is_dir() and samples_file.exists():
-                    # Load from pre-processed block directory
-                    print(f"[BlockManager] Loading Block {block_id} from pre-processed directory: {block_dir}")
+                samples_file = None
+                file_format = None
+                for path, fmt in block_formats:
+                    print(f"[BlockManager] Checking for preprocessed block: {path}")
+                    try:
+                        exists = path.exists()
+                        print(f"[BlockManager]   -> exists={exists}")
+                        if exists:
+                            samples_file = path
+                            file_format = fmt
+                            print(f"[BlockManager] ✓ Found preprocessed block at: {path}")
+                            break
+                    except Exception as e:
+                        print(f"[BlockManager]   -> Error checking path: {e}")
+                else:
+                    print(f"[BlockManager] No preprocessed block files found for block {block_id}")
+                
+                if samples_file and samples_file.exists():
+                    # Load from pre-processed block file
+                    print(f"[BlockManager] Loading Block {block_id} from pre-processed file: {samples_file}")
                     
                     samples = []
-                    with open(samples_file, 'r', encoding='utf-8', errors='ignore') as f:
-                        for line in f:
-                            stripped = line.strip()
-                            if not stripped:
-                                continue
-                            
-                            # Apply ASCII filter if needed
-                            if self.ascii_only and not self._is_ascii(stripped):
-                                continue
-                            
-                            samples.append(stripped)
+                    
+                    if file_format == "jsonl":
+                        # Parse JSONL format
+                        import json
+                        with open(samples_file, 'r', encoding='utf-8', errors='ignore') as f:
+                            for line in f:
+                                stripped = line.strip()
+                                if not stripped:
+                                    continue
+                                
+                                try:
+                                    item = json.loads(stripped)
+                                    # Extract text from common JSON fields
+                                    text = None
+                                    if isinstance(item, dict):
+                                        for key in ['text', 'content', 'sentence', 'document', 'article', 'body']:
+                                            if key in item:
+                                                text = item[key]
+                                                break
+                                    elif isinstance(item, str):
+                                        text = item
+                                    
+                                    if text and text.strip():
+                                        # Apply ASCII filter if needed
+                                        if self.ascii_only and not self._is_ascii(text):
+                                            continue
+                                        samples.append(text.strip())
+                                except json.JSONDecodeError:
+                                    # Try as plain text fallback
+                                    if stripped:
+                                        if not self.ascii_only or self._is_ascii(stripped):
+                                            samples.append(stripped)
+                    else:
+                        # Parse plain text format
+                        with open(samples_file, 'r', encoding='utf-8', errors='ignore') as f:
+                            for line in f:
+                                stripped = line.strip()
+                                if not stripped:
+                                    continue
+                                
+                                # Apply ASCII filter if needed
+                                if self.ascii_only and not self._is_ascii(stripped):
+                                    continue
+                                
+                                samples.append(stripped)
                     
                     # Store samples for chunk loading
                     # For block-structured datasets, store in a block-specific cache
@@ -579,9 +715,19 @@ class BlockManager:
                         self._block_samples_cache = {}
                     self._block_samples_cache[block_id] = samples
                     
-                    # Check if this is the last block (next block doesn't exist)
-                    next_block_dir = dataset_path / f"block_{block_id + 1}"
-                    is_last = not (next_block_dir.is_dir() and (next_block_dir / "samples.txt").exists())
+                    # Check if this is the last block (check multiple formats for next block)
+                    is_last = True
+                    next_block_paths = [
+                        dataset_path / "blocks" / f"block_{block_id + 1:05d}.jsonl",
+                        dataset_path / "blocks" / f"block_{block_id + 1}.jsonl",
+                        dataset_path / f"block_{block_id + 1:05d}.jsonl",
+                        dataset_path / f"block_{block_id + 1}.jsonl",
+                        dataset_path / f"block_{block_id + 1}" / "samples.txt",
+                    ]
+                    for next_path in next_block_paths:
+                        if next_path.exists():
+                            is_last = False
+                            break
                     
                     # Create metadata block
                     block = DataBlock(
@@ -600,15 +746,27 @@ class BlockManager:
                     return block
             
             # Fall back to traditional loading for single files or non-block-structured directories
-            max_lines = self.samples_per_block
+            # First, check if we know the total sample count from metadata
+            total_samples_from_metadata = self._get_total_samples_from_metadata()
             
-            # Load all lines on first block, then slice appropriately
-            # This is simpler for local files since they're typically smaller
-            if block_id == 0 or len(self.blocks) == 0:
-                # Load initial samples
+            # Check if we have cached samples, if not we need to load them
+            all_samples = getattr(self, '_all_local_samples', [])
+            
+            if len(all_samples) == 0:
+                # Load initial samples (either first time or starting from non-zero block)
+                if total_samples_from_metadata and total_samples_from_metadata > 1000000:
+                    # For large datasets with known size, load only what we need for current block
+                    # Don't load all samples into memory
+                    print(f"[BlockManager] Large dataset detected ({total_samples_from_metadata:,} samples), loading blocks on demand")
+                    # Just load the current block's worth
+                    max_lines = self.samples_per_block
+                else:
+                    # For smaller datasets, load multiple blocks
+                    max_lines = self.samples_per_block * 10
+                
                 all_samples = self.read_fn(
                     self.dataset_path,
-                    max_lines=max_lines * 10,  # Load more to have multiple blocks
+                    max_lines=max_lines,
                     cycle=0
                 )
                 
@@ -619,16 +777,19 @@ class BlockManager:
                 # Cache total size for future blocks
                 self._all_local_samples = all_samples
                 
-                # Calculate total blocks now that we know sample count
-                if len(all_samples) > 0:
+                # Calculate total blocks - prefer metadata if available
+                if total_samples_from_metadata:
+                    total_blocks = (total_samples_from_metadata + self.samples_per_block - 1) // self.samples_per_block
+                    with self.lock:
+                        if self.total_blocks_detected is None:
+                            self.total_blocks_detected = total_blocks
+                    print(f"[BlockManager] Detected {total_blocks} blocks from metadata ({total_samples_from_metadata:,} total samples)")
+                elif len(all_samples) > 0:
                     total_blocks = (len(all_samples) + self.samples_per_block - 1) // self.samples_per_block
                     with self.lock:
                         if self.total_blocks_detected is None:
                             self.total_blocks_detected = total_blocks
-                    print(f"[BlockManager] Detected {total_blocks} blocks from local file ({len(all_samples):,} samples)")
-            else:
-                # Use cached samples
-                all_samples = getattr(self, '_all_local_samples', [])
+                    print(f"[BlockManager] Detected {total_blocks} blocks from loaded samples ({len(all_samples):,} samples)")
             
             # Calculate block boundaries
             start_idx = block_id * self.samples_per_block
@@ -831,6 +992,54 @@ class BlockManager:
         except Exception as e:
             print(f"[BlockManager] Warning: Error counting blocks in {directory}: {e}")
             return None
+    
+    def _get_total_samples_from_metadata(self) -> Optional[int]:
+        """Try to get total sample count from dataset metadata files.
+        
+        Returns:
+            Total sample count if found in metadata, None otherwise
+        """
+        try:
+            from pathlib import Path
+            dataset_path = Path(self.dataset_path)
+            
+            # Try block_manifest.json first (most reliable for preprocessed datasets)
+            manifest_path = dataset_path / "block_manifest.json"
+            if manifest_path.exists():
+                import json
+                with open(manifest_path, 'r', encoding='utf-8') as f:
+                    manifest = json.load(f)
+                total_samples = manifest.get("total_samples")
+                if total_samples:
+                    print(f"[BlockManager] Found total_samples from block_manifest.json: {total_samples:,}")
+                    return total_samples
+            
+            # Try dataset_info.json (preprocessed format)
+            info_path = dataset_path / "dataset_info.json"
+            if info_path.exists():
+                import json
+                with open(info_path, 'r', encoding='utf-8') as f:
+                    info = json.load(f)
+                
+                # Check for our preprocessed format
+                total_samples = info.get("total_samples")
+                if total_samples:
+                    print(f"[BlockManager] Found total_samples from dataset_info.json: {total_samples:,}")
+                    return total_samples
+                
+                # Check for HF format (splits)
+                if "splits" in info:
+                    splits = info.get("splits", {})
+                    for split_name, split_info in splits.items():
+                        if isinstance(split_info, dict):
+                            num_examples = split_info.get("num_examples") or split_info.get("num_rows")
+                            if num_examples:
+                                print(f"[BlockManager] Found {num_examples:,} samples from HF dataset_info.json split '{split_name}'")
+                                return num_examples
+        except Exception as e:
+            print(f"[BlockManager] Could not read metadata: {e}")
+        
+        return None
     
     @staticmethod
     def _is_ascii(s: str) -> bool:

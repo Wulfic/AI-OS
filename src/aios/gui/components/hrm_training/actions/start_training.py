@@ -187,8 +187,19 @@ def _auto_detect_gpus_if_needed(panel: Any) -> None:
 
 
 def _check_resumable_checkpoint(panel: Any, config: Any) -> None:
-    """Check for resumable checkpoint and show resume dialog if found."""
-    panel._log("[hrm] === CHECKPOINT CHECK START ===")
+    """Always show resume/start dialog to allow start position selection.
+    
+    Phase 6.4: Training Resume Start Position Selector
+    This dialog now always appears to let users choose:
+    - Start new run or resume from checkpoint
+    - Which block and chunk to start training from
+    
+    Checkpoints are now dataset-specific:
+    - Each dataset has its own progress tracking
+    - Chunk size variations are tracked separately
+    - Warnings for chunk size mismatches
+    """
+    panel._log("[hrm] === CHECKPOINT/START POSITION CHECK START ===")
     
     if not (config.brain_name and config.dataset_file):
         panel._log("[hrm] No brain_name or dataset_file - skipping checkpoint check")
@@ -196,13 +207,51 @@ def _check_resumable_checkpoint(panel: Any, config: Any) -> None:
 
     from pathlib import Path
     import json
+    from aios.cli.hrm_hf.chunk_tracker import sanitize_dataset_name, get_dataset_state_file, find_dataset_state_files
 
     # Check if checkpoint exists
     brain_path = Path(config.bundle_dir) / config.brain_name
     brain_json_path = brain_path / "brain.json"
     checkpoint_path = brain_path / "actv1_student.safetensors"
     legacy_checkpoint_path = brain_path / "final_model.safetensors"
-    chunk_tracker_state_path = brain_path / "chunk_tracker_state.json"
+    
+    # Get dataset-specific state file path
+    dataset_name = sanitize_dataset_name(config.dataset_file)
+    chunk_size = getattr(config, 'dataset_chunk_size', None)
+    
+    # Look for dataset-specific state file first
+    chunk_tracker_state_path = get_dataset_state_file(brain_path, dataset_name, chunk_size)
+    
+    # Also check for same dataset with different chunk sizes
+    existing_states = find_dataset_state_files(brain_path, dataset_name)
+    chunk_size_mismatch_warning = None
+    
+    if existing_states and not chunk_tracker_state_path.exists():
+        # We have state files for this dataset but not with this chunk size
+        for state_path, state_chunk_size in existing_states:
+            if state_chunk_size and state_chunk_size != chunk_size:
+                chunk_size_mismatch_warning = f"A checkpoint exists for this dataset with chunk size {state_chunk_size} (current: {chunk_size})"
+                panel._log(f"[hrm] WARNING: {chunk_size_mismatch_warning}")
+                break
+    
+    # Fallback: check legacy single state file for backward compatibility
+    legacy_state_path = brain_path / "chunk_tracker_state.json"
+    using_legacy_state = False
+    if not chunk_tracker_state_path.exists() and legacy_state_path.exists():
+        # Check if legacy state matches current dataset
+        try:
+            with legacy_state_path.open("r", encoding="utf-8") as f:
+                legacy_state = json.load(f)
+            legacy_dataset = legacy_state.get("dataset_name", "")
+            if legacy_dataset == dataset_name:
+                # Legacy state matches, migrate to new location
+                panel._log(f"[hrm] Found matching legacy state, will use for resume")
+                chunk_tracker_state_path = legacy_state_path
+                using_legacy_state = True
+            else:
+                panel._log(f"[hrm] Legacy state is for different dataset ({legacy_dataset}), ignoring")
+        except Exception as e:
+            panel._log(f"[hrm] Error reading legacy state: {e}")
     
     # Use new checkpoint path if it exists, otherwise fall back to legacy
     if not checkpoint_path.exists() and legacy_checkpoint_path.exists():
@@ -210,6 +259,8 @@ def _check_resumable_checkpoint(panel: Any, config: Any) -> None:
         panel._log(f"[hrm] Using legacy checkpoint path: {legacy_checkpoint_path}")
     
     panel._log(f"[hrm] Brain path: {brain_path}")
+    panel._log(f"[hrm] Dataset name (sanitized): {dataset_name}")
+    panel._log(f"[hrm] Chunk size: {chunk_size}")
     panel._log(f"[hrm] Looking for brain.json at: {brain_json_path}")
     panel._log(f"[hrm] Looking for checkpoint at: {checkpoint_path}")
     panel._log(f"[hrm] Looking for chunk tracker state at: {chunk_tracker_state_path}")
@@ -229,11 +280,12 @@ def _check_resumable_checkpoint(panel: Any, config: Any) -> None:
             # Check if there are completed chunks (meaning training started)
             completed_chunks = tracker_state.get("completed_chunks", [])
             current_epoch = tracker_state.get("current_epoch", 0)
-            total_samples = tracker_state.get("total_samples_trained", 0)
+            # Use new field name with backward compat fallback
+            total_steps = tracker_state.get("total_steps", tracker_state.get("total_true_steps", tracker_state.get("total_samples_trained", 0)))
             
-            panel._log(f"[hrm] ChunkTracker: epoch={current_epoch}, samples={total_samples}, chunks={len(completed_chunks)}")
+            panel._log(f"[hrm] ChunkTracker: epoch={current_epoch}, steps={total_steps}, chunks={len(completed_chunks)}")
             
-            if len(completed_chunks) > 0 or total_samples > 0:
+            if len(completed_chunks) > 0 or total_steps > 0:
                 # Training has started and made progress
                 if checkpoint_path.exists():
                     should_prompt_resume = True
@@ -256,6 +308,7 @@ def _check_resumable_checkpoint(panel: Any, config: Any) -> None:
             panel._log(f"[hrm] Traceback: {traceback.format_exc()}")
     
     # Also check brain.json with last_session data (legacy/fallback)
+    # Only use if dataset matches or if no dataset info is available
     if not should_prompt_resume and brain_json_path.exists():
         panel._log(f"[hrm] brain.json exists - checking legacy last_session...")
         try:
@@ -267,11 +320,29 @@ def _check_resumable_checkpoint(panel: Any, config: Any) -> None:
             panel._log(f"[hrm] last_session is dict: {isinstance(last_session, dict)}")
             
             if last_session and isinstance(last_session, dict):
-                # We have session data - now check if checkpoint exists
-                if checkpoint_path.exists():
-                    # Both session data and checkpoint exist - can resume
+                # Check if last_session dataset matches current dataset
+                saved_dataset_file = last_session.get("dataset_file")
+                dataset_matches = False
+                
+                if saved_dataset_file:
+                    # Compare dataset names (not full paths)
+                    saved_name = sanitize_dataset_name(saved_dataset_file)
+                    current_name = dataset_name  # Already sanitized above
+                    dataset_matches = (saved_name == current_name)
+                    panel._log(f"[hrm] Last session dataset: {saved_name}, current: {current_name}, match: {dataset_matches}")
+                else:
+                    panel._log(f"[hrm] No dataset info in last_session - skipping legacy resume")
+                
+                if dataset_matches and checkpoint_path.exists():
+                    # Both session data and checkpoint exist, and dataset matches - can resume
                     should_prompt_resume = True
-                    panel._log(f"[hrm] [OK] Valid last_session + checkpoint found - WILL SHOW RESUME DIALOG")
+                    panel._log(f"[hrm] [OK] Valid last_session + checkpoint found + dataset matches - WILL SHOW RESUME DIALOG")
+                elif checkpoint_path.exists() and not saved_dataset_file:
+                    # Legacy checkpoint without dataset tracking - let resume dialog handle mismatch detection
+                    should_prompt_resume = True
+                    panel._log(f"[hrm] [OK] Legacy checkpoint (no dataset info) - showing dialog")
+                elif not dataset_matches:
+                    panel._log(f"[hrm] [X] Last session was for different dataset - not prompting resume")
                 else:
                     # Session data exists but checkpoint is missing/corrupted
                     panel._log(f"[hrm] [WARN] Valid last_session found but checkpoint missing")
@@ -289,10 +360,57 @@ def _check_resumable_checkpoint(panel: Any, config: Any) -> None:
 
     panel._log(f"[hrm] should_prompt_resume = {should_prompt_resume}")
 
-    if should_prompt_resume:
-        # Show resume dialog
+    # Check if we're in shuffle mode (linear_dataset disabled)
+    linear_mode = True
+    if hasattr(panel, 'linear_dataset_var'):
+        try:
+            linear_mode = bool(panel.linear_dataset_var.get())
+        except Exception:
+            pass
+    
+    # In shuffle mode, automatically randomize start position without showing dialog
+    if not linear_mode:
         panel._log(f"[hrm] ==========================================")
-        panel._log(f"[hrm] SHOWING RESUME DIALOG NOW")
+        panel._log(f"[hrm] SHUFFLE MODE: Randomizing start position")
+        panel._log(f"[hrm] ==========================================")
+        
+        import random
+        
+        # Get total blocks and chunks from preprocessing info or defaults
+        total_blocks = 22  # Default from preprocessing message
+        chunks_per_block = 25  # Default from preprocessing message
+        
+        # Try to get actual values from preprocessing or manifest
+        try:
+            from pathlib import Path
+            dataset_path = Path(config.dataset_file)
+            if dataset_path.is_dir():
+                manifest_path = dataset_path / "block_manifest.json"
+                if manifest_path.exists():
+                    import json
+                    with open(manifest_path, 'r') as f:
+                        manifest = json.load(f)
+                        total_blocks = manifest.get('total_blocks', total_blocks)
+        except Exception as e:
+            panel._log(f"[hrm] Could not read manifest, using defaults: {e}")
+        
+        # Randomize start position
+        start_block_id = random.randint(0, max(0, total_blocks - 1))
+        start_chunk_id = random.randint(0, max(0, chunks_per_block - 1))
+        
+        panel._log(f"[hrm] Randomly selected: Block {start_block_id}, Chunk {start_chunk_id}")
+        panel._log(f"[hrm] (from {total_blocks} blocks, {chunks_per_block} chunks per block)")
+        
+        resume_choice = False
+        
+        # Apply start position to config
+        config.start_block_id = start_block_id
+        config.start_chunk_id = start_chunk_id
+        
+    else:
+        # Linear mode: Show dialog for start position selection
+        panel._log(f"[hrm] ==========================================")
+        panel._log(f"[hrm] SHOWING START/RESUME DIALOG (Linear mode)")
         panel._log(f"[hrm] Brain: {config.brain_name}")
         panel._log(f"[hrm] ==========================================")
         try:
@@ -308,103 +426,162 @@ def _check_resumable_checkpoint(panel: Any, config: Any) -> None:
 
             panel._log(f"[hrm] Calling show_resume_dialog()...")
             
-            resume_choice = show_resume_dialog(
+            # Dialog now returns a tuple: (resume_choice, start_block_id, start_chunk_id)
+            dialog_result = show_resume_dialog(
                 parent_window,
                 config.brain_name,
                 config.bundle_dir,
-                config.dataset_file
+                config.dataset_file,
+                has_checkpoint=should_prompt_resume,
+                parent_panel=panel,
+                chunk_size=chunk_size,
+                chunk_tracker_state_path=str(chunk_tracker_state_path) if chunk_tracker_state_path.exists() else None,
+                chunk_size_mismatch_warning=chunk_size_mismatch_warning,
             )
 
-            panel._log(f"[hrm] Dialog returned: {resume_choice}")
+            panel._log(f"[hrm] Dialog returned: {dialog_result}")
             panel._log(f"[hrm] ==========================================")
-
-            if resume_choice is None:
+            
+            if dialog_result is None:
                 # User cancelled
                 panel._log("[hrm] [X] User CANCELLED - aborting training")
                 raise SystemExit("User cancelled")
-            elif resume_choice:
-                # User chose to resume
-                config.resume = True
-                config._user_explicitly_chose_resume = True
-                panel._log("[hrm] [OK] User chose to RESUME from checkpoint")
+            
+            # Unpack result
+            if isinstance(dialog_result, tuple) and len(dialog_result) == 3:
+                resume_choice, start_block_id, start_chunk_id = dialog_result
             else:
-                # User chose fresh start
-                config.resume = False
-                config._user_explicitly_chose_fresh = True
-                panel._log("[hrm] [OK] User chose to START FRESH")
-                # CRITICAL: Clear checkpoint path for fresh start
-                config.student_init = None
-                
-                # Delete existing checkpoint files to prevent auto-detection
-                try:
-                    from pathlib import Path
-                    import os
-                    import json
-                    
-                    if config.brain_name and config.bundle_dir:
-                        brain_path = Path(config.bundle_dir) / config.brain_name
-                        checkpoint_files = [
-                            brain_path / "actv1_student.safetensors",
-                            brain_path / "actv1_student.pt",
-                            brain_path / "actv1_student.safetensors.prev",
-                            brain_path / "actv1_student.pt.prev",
-                            brain_path / "chunk_tracker_state.json",  # Clear ChunkTracker state too
-                        ]
-                        
-                        deleted_files = []
-                        for checkpoint_file in checkpoint_files:
-                            if checkpoint_file.exists():
-                                try:
-                                    os.remove(checkpoint_file)
-                                    deleted_files.append(checkpoint_file.name)
-                                except Exception as e:
-                                    panel._log(f"[hrm] Warning: Could not delete {checkpoint_file.name}: {e}")
-                        
-                        # CRITICAL: Clear last_session from brain.json to prevent resume detection
-                        brain_json_path = brain_path / "brain.json"
-                        if brain_json_path.exists():
-                            try:
-                                with open(brain_json_path, 'r') as f:
-                                    brain_data = json.load(f)
-                                
-                                # Remove resume-related fields
-                                if "last_session" in brain_data:
-                                    del brain_data["last_session"]
-                                    deleted_files.append("brain.json:last_session")
-                                
-                                # Reset training counters
-                                brain_data["training_steps"] = 0
-                                if "last_trained" in brain_data:
-                                    del brain_data["last_trained"]
-                                
-                                # Write back to file
-                                with open(brain_json_path, 'w') as f:
-                                    json.dump(brain_data, f, indent=2)
-                                
-                                panel._log(f"[hrm] Cleared resume metadata from brain.json")
-                            except Exception as e:
-                                panel._log(f"[hrm] Warning: Could not clean brain.json: {e}")
-                        
-                        if deleted_files:
-                            panel._log(f"[hrm] Deleted old checkpoints: {', '.join(deleted_files)}")
-                except Exception as e:
-                    panel._log(f"[hrm] Warning: Could not clean up old checkpoints: {e}")
-        except SystemExit:
-            raise  # Re-raise to abort training
+                # Backward compatibility: old dialog returns just boolean
+                resume_choice = dialog_result
+                start_block_id, start_chunk_id = 0, 0
+            
+            # Apply start position to config
+            config.start_block_id = start_block_id
+            config.start_chunk_id = start_chunk_id
+            panel._log(f"[hrm] Start position: Block {start_block_id}, Chunk {start_chunk_id}")
+        
         except Exception as e:
+            panel._log(f"[hrm] [ERROR] Failed to show dialog: {e}")
             import traceback
-            panel._log(f"[hrm] ERROR: Resume dialog failed")
-            panel._log(f"[hrm] Error: {e}")
             panel._log(f"[hrm] Traceback: {traceback.format_exc()}")
-            panel._log(f"[hrm] Continuing with default (no resume)")
-            # Continue with default (no resume)
-            config.resume = False
-    else:
-        # No existing checkpoint - fresh start
-        config.resume = False
-        panel._log(f"[hrm] No checkpoint to resume from - starting fresh")
+            raise
     
-    panel._log("[hrm] === CHECKPOINT CHECK END ===")
+    # Emit telemetry event for start position (applies to both shuffle and linear modes)
+    try:
+        import json
+        from pathlib import Path
+        from datetime import datetime
+        diagnostics_dir = Path("artifacts/diagnostics")
+        diagnostics_dir.mkdir(parents=True, exist_ok=True)
+        event_file = diagnostics_dir / "analytics_events.jsonl"
+        
+        event = {
+            "event": "training_start_position_selected",
+            "timestamp": datetime.now().isoformat(),
+            "brain_name": config.brain_name,
+            "dataset": config.dataset_file,
+            "start_block_id": config.start_block_id,
+            "start_chunk_id": config.start_chunk_id,
+            "resume": resume_choice,
+            "force_train": getattr(config, "force_train", False),
+            "shuffle_mode": not linear_mode,
+        }
+        
+        with event_file.open("a") as f:
+            f.write(json.dumps(event) + "\n")
+            
+        panel._log(f"[hrm] Telemetry: training_start_position_selected event emitted")
+    except Exception as e:
+        panel._log(f"[hrm] Warning: Could not emit telemetry event: {e}")
+    
+    # Handle resume choice (applies to both shuffle and linear modes)
+    try:
+        if resume_choice:
+            # User chose to resume
+            config.resume = True
+            config._user_explicitly_chose_resume = True
+            panel._log("[hrm] [OK] User chose to RESUME from checkpoint")
+        else:
+            # User chose fresh start
+            config.resume = False
+            config._user_explicitly_chose_fresh = True
+            panel._log("[hrm] [OK] User chose to START FRESH")
+            # CRITICAL: Clear checkpoint path for fresh start
+            config.student_init = None
+            
+            # Delete existing checkpoint files to prevent auto-detection
+            try:
+                from pathlib import Path
+                import os
+                import json
+                
+                if config.brain_name and config.bundle_dir:
+                    brain_path = Path(config.bundle_dir) / config.brain_name
+                    
+                    # Get dataset-specific state file to delete
+                    dataset_state_file = get_dataset_state_file(brain_path, dataset_name, chunk_size)
+                    
+                    checkpoint_files = [
+                        brain_path / "actv1_student.safetensors",
+                        brain_path / "actv1_student.pt",
+                        brain_path / "actv1_student.safetensors.prev",
+                        brain_path / "actv1_student.pt.prev",
+                        brain_path / "chunk_tracker_state.json",  # Clear legacy state too
+                        dataset_state_file,  # Clear dataset-specific state
+                    ]
+                    
+                    deleted_files = []
+                    for checkpoint_file in checkpoint_files:
+                        if checkpoint_file.exists():
+                            try:
+                                os.remove(checkpoint_file)
+                                deleted_files.append(checkpoint_file.name)
+                            except Exception as e:
+                                panel._log(f"[hrm] Warning: Could not delete {checkpoint_file.name}: {e}")
+                    
+                    # CRITICAL: Clear last_session from brain.json to prevent resume detection
+                    # NOTE: Do NOT reset training_steps - it should accumulate across ALL runs
+                    brain_json_path = brain_path / "brain.json"
+                    if brain_json_path.exists():
+                        try:
+                            with open(brain_json_path, 'r') as f:
+                                brain_data = json.load(f)
+                            
+                            # Remove resume-related fields (but keep training_steps!)
+                            if "last_session" in brain_data:
+                                del brain_data["last_session"]
+                                deleted_files.append("brain.json:last_session")
+                            
+                            # DO NOT reset training_steps - it accumulates across all training sessions
+                            # The dataset_history and training_steps provide the cumulative record
+                            # training_steps is only incremented at end of training runs
+                            
+                            if "last_trained" in brain_data:
+                                del brain_data["last_trained"]
+                            
+                            # Write back to file
+                            with open(brain_json_path, 'w') as f:
+                                json.dump(brain_data, f, indent=2)
+                            
+                            panel._log(f"[hrm] Cleared resume metadata from brain.json (preserved training_steps)")
+                        except Exception as e:
+                            panel._log(f"[hrm] Warning: Could not clean brain.json: {e}")
+                    
+                    if deleted_files:
+                        panel._log(f"[hrm] Deleted old checkpoints: {', '.join(deleted_files)}")
+            except Exception as e:
+                panel._log(f"[hrm] Warning: Could not clean up old checkpoints: {e}")
+    except SystemExit:
+        raise  # Re-raise to abort training
+    except Exception as e:
+        import traceback
+        panel._log(f"[hrm] ERROR: Resume/start dialog failed")
+        panel._log(f"[hrm] Error: {e}")
+        panel._log(f"[hrm] Traceback: {traceback.format_exc()}")
+        panel._log(f"[hrm] Aborting training due to dialog error")
+        raise SystemExit("Dialog error")
+    
+    panel._log("[hrm] === CHECKPOINT/START POSITION CHECK END ===")
 
 
 def _auto_resume_for_iterate_mode(panel: Any, config: Any) -> None:

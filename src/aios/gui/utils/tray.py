@@ -125,48 +125,56 @@ class TrayManager:
             return False
         
         try:
-            # Load icon image
-            icon_image = Image.open(str(self.icon_path))  # type: ignore[union-attr]
+            # Load icon image in background thread to avoid blocking
+            def _load_and_create():
+                try:
+                    icon_image = Image.open(str(self.icon_path))  # type: ignore[union-attr]
+                    
+                    # Create menu
+                    menu = pystray.Menu(  # type: ignore[union-attr]
+                        pystray.MenuItem(  # type: ignore[union-attr]
+                            "Show/Hide",
+                            self._on_toggle_window,
+                            default=True,
+                            visible=True
+                        ),
+                        pystray.MenuItem(  # type: ignore[union-attr]
+                            "Settings",
+                            self._on_settings_click,
+                            visible=bool(self.on_settings)
+                        ),
+                        pystray.Menu.SEPARATOR,  # type: ignore[union-attr]
+                        pystray.MenuItem(  # type: ignore[union-attr]
+                            "Exit",
+                            self._on_exit_click
+                        )
+                    )
+                    
+                    # Create tray icon
+                    self._tray_icon = pystray.Icon(  # type: ignore[union-attr]
+                        self.app_name,
+                        icon_image,
+                        self.app_name,
+                        menu
+                    )
+                    
+                    # Run the tray icon (this blocks within this thread)
+                    logger.debug("Starting system tray")
+                    self._tray_icon.run()  # type: ignore[union-attr]
+                except Exception as e:
+                    logger.error(f"Tray thread error: {e}", exc_info=True)
             
-            # Create menu
-            menu = pystray.Menu(  # type: ignore[union-attr]
-                pystray.MenuItem(  # type: ignore[union-attr]
-                    "Show/Hide",
-                    self._on_toggle_window,
-                    default=True,
-                    visible=True
-                ),
-                pystray.MenuItem(  # type: ignore[union-attr]
-                    "Settings",
-                    self._on_settings_click,
-                    visible=bool(self.on_settings)
-                ),
-                pystray.Menu.SEPARATOR,  # type: ignore[union-attr]
-                pystray.MenuItem(  # type: ignore[union-attr]
-                    "Exit",
-                    self._on_exit_click
-                )
-            )
-            
-            # Create tray icon
-            self._tray_icon = pystray.Icon(  # type: ignore[union-attr]
-                self.app_name,
-                icon_image,
-                self.app_name,
-                menu
-            )
-            
-            # Start tray in separate thread (run() blocks)
+            # Start tray loading and running in a daemon thread
             logger.debug("Starting system tray thread")
             self._tray_thread = threading.Thread(
-                target=self._tray_icon.run,  # type: ignore[union-attr]
+                target=_load_and_create,
                 daemon=True,
                 name="TrayThread"
             )
             self._tray_thread.start()
             logger.debug("System tray thread started")
             
-            logger.info("System tray icon created successfully")
+            logger.info("System tray icon creation initiated")
             return True
             
         except Exception as e:

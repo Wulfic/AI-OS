@@ -476,6 +476,20 @@ def train_actv1_impl(
     def should_stop() -> bool:
         return _should_stop_helper(config.stop_file)
     
+    # Validate and preprocess dataset if needed (before loading training data)
+    if config.dataset_file:
+        from aios.cli.datasets.dataset_validation import validate_dataset_for_training
+        try:
+            validate_dataset_for_training(
+                dataset_file=config.dataset_file,
+                samples_per_block=config.samples_per_block,
+                ascii_only=config.ascii_only,
+            )
+        except ValueError as e:
+            print(f"\n❌ Dataset validation failed: {e}\n")
+            write_jsonl({"started": False, "error": f"dataset_validation_failed: {e}"})
+            raise typer.Exit(code=1)
+    
     # Load training data (use resume_cycle to load correct chunk when resuming)
     lines = _get_training_lines(
         dataset_file=config.dataset_file,
@@ -895,11 +909,26 @@ def train_actv1_impl(
                     except Exception:
                         pass
 
-                tracker_obj = _ChunkTracker(state_file=tracker_state_file)
+                # Extract brain_id from metadata for per-brain tracking
+                brain_id = brain_metadata.get("brain_id") if brain_metadata else None
+                # Extract dataset name from config
+                dataset_name = None
+                if config.dataset_file:
+                    dataset_name = Path(config.dataset_file).stem if not config.dataset_file.startswith("hf://") else config.dataset_file.replace("hf://", "").replace("/", "_")
+                
+                tracker_obj = _ChunkTracker(
+                    state_file=tracker_state_file,
+                    brain_id=brain_id,
+                    dataset_name=dataset_name,
+                    start_block_id=config.start_block_id,
+                    start_chunk_id=config.start_chunk_id
+                )
                 if (not is_distributed) or (rank_id == 0):
                     write_jsonl({
                         "chunk_tracker": "enabled",
                         "state_file": str(tracker_state_file),
+                        "brain_id": brain_id,
+                        "dataset_name": dataset_name,
                         "mode": "DDP" if is_distributed else "single-GPU",
                         "world_size": world_sz if is_distributed else 1,
                     })
@@ -960,11 +989,26 @@ def train_actv1_impl(
                     except Exception:
                         pass
 
-                tracker_obj = _ChunkTracker(state_file=tracker_state_file)
+                # Extract brain_id from metadata for per-brain tracking
+                brain_id = brain_metadata.get("brain_id") if brain_metadata else None
+                # Extract dataset name from config
+                dataset_name = None
+                if config.dataset_file:
+                    dataset_name = Path(config.dataset_file).stem if not config.dataset_file.startswith("hf://") else config.dataset_file.replace("hf://", "").replace("/", "_")
+                
+                tracker_obj = _ChunkTracker(
+                    state_file=tracker_state_file,
+                    brain_id=brain_id,
+                    dataset_name=dataset_name,
+                    start_block_id=config.start_block_id,
+                    start_chunk_id=config.start_chunk_id
+                )
                 if (not is_distributed) or (rank_id == 0):
                     write_jsonl({
                         "chunk_tracker": "enabled",
                         "state_file": str(tracker_state_file),
+                        "brain_id": brain_id,
+                        "dataset_name": dataset_name,
                     })
             except Exception as _e:
                 if (not is_distributed) or (rank_id == 0):

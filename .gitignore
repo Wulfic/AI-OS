@@ -1,3 +1,6 @@
+# External Projects
+EXTERNAL_PROJECTS/
+
 # Local artifacts/logs (kept if explicitly added)
 aios.log
 artifacts/*.out.log
@@ -95,6 +98,7 @@ installers/_builds/ubuntu/snap/
 
 # Local training outputs (ignored)
 training_data/
+training_datasets/
 **/metrics.jsonl
 
 # Live training tensor artifacts (do not commit)
@@ -158,3 +162,4 @@ installers/dependencies/winget/ui_xaml_x64.appx
 installers/dependencies/winget/vclibs_x64.appx
 installers/dependencies/winget/windowsappruntime_x64.exe
 installers/dependencies/winget/winget.msixbundle
+artifacts/diagnostics/analytics_events.jsonl

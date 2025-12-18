@@ -14,6 +14,7 @@ from typing import Any
 from .brain_scanner import scan_existing_brains
 from .brain_loader import load_brain_to_panel, load_brain_from_file
 from .create_dialog import show_create_dialog
+from aios.gui.utils.theme_utils import apply_theme_to_toplevel
 
 
 def show_selection_dialog(panel: Any) -> None:
@@ -34,6 +35,10 @@ def show_selection_dialog(panel: Any) -> None:
         top = tk.Toplevel(panel)
         top.title("Select HRM Student")
         top.grab_set()
+        
+        # Apply theme styling to match the current theme
+        apply_theme_to_toplevel(top)
+        
         frm = ttk.Frame(top)
         frm.pack(fill="both", expand=True, padx=10, pady=10)
         

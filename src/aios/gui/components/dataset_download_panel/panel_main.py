@@ -82,6 +82,12 @@ class DatasetDownloadPanel:
         self.output_text = None
         build_ui(self)
         
+        # Create download_location variable (UI is in Settings panel but we need the variable for sync)
+        from ...utils import safe_variables
+        if not hasattr(self, 'download_location'):
+            self.download_location = safe_variables.StringVar(value="training_datasets")
+            logger.debug("Created download_location variable with default value")
+        
         # Make the original log callback write to our output widget
         self.log = self._log_to_output
         
@@ -149,12 +155,13 @@ class DatasetDownloadPanel:
                             logger.debug("Failed to apply cached results payload", exc_info=True)
 
                     def _build_payload() -> None:
+                        """Build payload in background thread (no Tkinter calls allowed)."""
                         payload = build_display_payload(cached_results)
-                        if self.parent.winfo_exists():
-                            try:
-                                self.parent.after(0, lambda p=payload: _apply_payload(p))
-                            except Exception:
-                                logger.debug("Failed to schedule cached payload render", exc_info=True)
+                        # Schedule the Tkinter update on main thread
+                        try:
+                            self.parent.after(0, lambda p=payload: _apply_payload(p))
+                        except Exception:
+                            logger.debug("Failed to schedule cached payload render", exc_info=True)
 
                     try:
                         future = submit_background("dataset-cache-render", _build_payload, pool=self._worker_pool)
@@ -162,9 +169,9 @@ class DatasetDownloadPanel:
                     except RuntimeError:
                         logger.debug("Worker pool unavailable for cache render; falling back to sync payload build")
                         payload = build_display_payload(cached_results)
-                        if self.parent.winfo_exists():
+                        try:
                             self.parent.after(0, lambda p=payload: _apply_payload(p))
-                        else:
+                        except Exception:
                             logger.debug("Parent widget unavailable; skipping cached render")
                     return
 
@@ -212,26 +219,16 @@ class DatasetDownloadPanel:
             )
             return
         
-        # Confirm download
+        # Get dataset info for logging
         dataset_name = dataset.get("full_name", dataset.get("name", "Unknown"))
         size_mb = dataset.get('size_gb', 0) * 1024
-        size_info = f" (~{dataset.get('size_gb', 0):.1f} GB)" if dataset.get('size_gb', 0) > 0 else ""
         
         logger.info(f"Starting download: dataset={dataset_name}, size={size_mb:.1f}MB")
         
-        msg = f"Download '{dataset_name}'{size_info}?\n\n"
-        if dataset.get("gated", False):
-            msg += "⚠️ This is a gated dataset. You may need to accept terms on HuggingFace.\n\n"
-        if dataset.get("private", False):
-            msg += "⚠️ This is a private dataset. You need appropriate access.\n\n"
+        # Capture download location in main thread (tkinter vars can't be accessed from background)
+        download_location = self.download_location.get()
         
-        msg += "The dataset will be streamed with a default limit of 100,000 samples."
-        
-        if not messagebox.askyesno("Confirm Download", msg):
-            logger.info("Download cancelled by user")
-            return
-        
-        # Start download
+        # Start download (validation and confirmation happen in download_dataset)
         self.cancel_download = False
         self.cancel_btn.config(state="normal")
         self.status_label.config(text=f"Downloading {dataset_name}...")
@@ -243,6 +240,7 @@ class DatasetDownloadPanel:
                 download_dataset,
                 self,
                 dataset,
+                download_location,  # Pass pre-captured location
                 pool=self._worker_pool,
             )
             self._register_background_future(job)
@@ -522,6 +520,15 @@ class DatasetDownloadPanel:
             self._background_jobs.add(future)
 
         def _cleanup(done_future: Future) -> None:
+            # Log any exceptions from the background task
+            try:
+                exc = done_future.exception()
+                if exc:
+                    logger.error(f"Background task failed with exception: {exc}", exc_info=exc)
+                    self.log(f"❌ Background task error: {exc}")
+            except Exception as e:
+                logger.debug(f"Could not retrieve exception from future: {e}")
+            
             with self._background_lock:
                 self._background_jobs.discard(done_future)
 

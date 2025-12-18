@@ -125,11 +125,16 @@ def build_model_info_section(
         status_parts.append("Regular")
     lines.append(f"Status:            {' | '.join(status_parts)}")
     
-    # Timestamps
+    # Timestamps and ID
     created_at = brain_metadata.get("created_at")
     if created_at:
         created_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(created_at))
         lines.append(f"Created:           {created_str}")
+    
+    # Phase 6.3: Display Brain ID (YYYYMMDDHHMMSS format)
+    brain_id = brain_metadata.get("brain_id")
+    if brain_id:
+        lines.append(f"Brain ID:          {brain_id}")
     
     last_used = brain_stats.get("last_used")
     if last_used:

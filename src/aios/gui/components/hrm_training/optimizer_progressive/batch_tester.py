@@ -149,6 +149,8 @@ def test_single_batch(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding='utf-8',
+            errors='replace',
             timeout=config.max_timeout
         )
     except subprocess.TimeoutExpired:

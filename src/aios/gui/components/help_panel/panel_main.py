@@ -165,8 +165,7 @@ class HelpPanel(ttk.LabelFrame):  # type: ignore[misc]
         self.back_btn.pack(side="left", padx=(6, 0))
         self.forward_btn = ttk.Button(top, text="Forward →", command=self._nav_forward)
         self.forward_btn.pack(side="left", padx=(6, 0))
-        self.open_btn = ttk.Button(top, text="Open Externally", command=self._on_open_external)
-        self.open_btn.pack(side="left", padx=(6, 0))
+        # Removed: Open Externally button (Phase 2.3)
         self.clear_btn = ttk.Button(top, text="Clear", command=self._on_clear)
         self.clear_btn.pack(side="left", padx=(6, 0))
 
@@ -248,7 +247,7 @@ class HelpPanel(ttk.LabelFrame):  # type: ignore[misc]
         try:
             self._results_menu = tk.Menu(self.results, tearoff=0)
             self._results_menu.add_command(label="Open", command=lambda: self._on_select(None))
-            self._results_menu.add_command(label="Open Externally", command=self._on_open_external)
+            # Removed: Open Externally menu option (Phase 2.3)
             
             def _popup_menu(event: Any) -> None:
                 try:

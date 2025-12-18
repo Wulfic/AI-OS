@@ -100,19 +100,17 @@ class StreamingTextDataset:
         # Get indices
         indices = list(range(self.num_samples))
         
-        # Shuffle if requested (with epoch-based seed for reproducible variety)
+        # Shuffle if requested (truly random when shuffle is enabled)
         if self.shuffle:
             import random
-            # Use internal epoch counter + content hash as seed to ensure:
-            # 1. Different shuffle each time __iter__ is called (auto-increments)
-            # 2. Reproducible for same epoch + same content (debugging)
-            # Use first few lines as content fingerprint instead of object id
-            content_hash = hash(tuple(self.lines[:min(10, len(self.lines))]))
-            seed = hash((content_hash, self._internal_epoch, len(self.lines))) % (2**32)
-            rng = random.Random(seed)
+            # Use truly random shuffling for better generalization
+            # No fixed seed - each iteration gets a completely random order
+            # This ensures maximum randomness and prevents the model from
+            # learning any patterns related to data ordering
+            rng = random.Random()  # Uses system time as seed for true randomness
             rng.shuffle(indices)
             
-            # Auto-increment internal epoch for next iteration
+            # Auto-increment internal epoch for next iteration (for tracking)
             self._internal_epoch += 1
         
         # For linear progression, adjust indices to start from current position

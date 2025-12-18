@@ -744,6 +744,10 @@ end;
 
 procedure CurPageChanged(CurPageID: Integer);
 begin
+	{ Skip page change handling in silent mode }
+	if WizardSilent then
+		Exit;
+		
 	if (LicensePage <> nil) and (CurPageID = LicensePage.ID) then
 		UpdateNextButtonState
 	else if (ConfigPage <> nil) and (CurPageID = ConfigPage.ID) then
@@ -755,6 +759,10 @@ end;
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
 	Result := True;
+	{ Skip validation checks when running in silent mode }
+	if WizardSilent then
+		Exit;
+		
 	if (LicensePage <> nil) and (CurPageID = LicensePage.ID) then
 	begin
 		if not LicenseAcceptCheck.Checked then
@@ -1058,6 +1066,13 @@ procedure InitializeWizard;
 var
 	LicensePath: string;
 begin
+	{ Skip wizard page creation in silent mode - pages won't be displayed anyway }
+	if WizardSilent then
+	begin
+		PreflightOk := True; { Allow installation to proceed without preflight in silent mode }
+		Exit;
+	end;
+	
 	{ --- Page 1: License --- }
 	LicensePage :=
 		CreateCustomPage(

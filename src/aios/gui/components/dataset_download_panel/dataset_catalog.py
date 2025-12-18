@@ -38,9 +38,9 @@ AVAILABLE_DATASETS: List[Dict[str, Any]] = [
         "split": "train",
         "category": "English",
         "size_gb": 7.0,
-        "description": "News articles from Common Crawl (100k sample)",
+        "description": "News articles from Common Crawl",
         "streaming": True,
-        "max_samples": 100000,
+        "max_samples": 0,  # 0 = unlimited (download entire dataset)
         "verified": True,
     },
     {
@@ -122,9 +122,9 @@ AVAILABLE_DATASETS: List[Dict[str, Any]] = [
         "split": "train",
         "category": "Programming",
         "size_gb": 50.0,
-        "description": "Cleaned Python code (500k sample)",
+        "description": "Cleaned Python code",
         "streaming": True,
-        "max_samples": 500000,
+        "max_samples": 0,  # 0 = unlimited (download entire dataset)
         "verified": True,
     },
     
@@ -138,7 +138,7 @@ AVAILABLE_DATASETS: List[Dict[str, Any]] = [
         "size_gb": 60.0,
         "description": "Python code from GitHub (requires 🔐 HF auth)",
         "streaming": True,
-        "max_samples": 500000,
+        "max_samples": 0,  # 0 = unlimited (download entire dataset)
         "verified": True,
         "requires_auth": True,
     },
@@ -151,7 +151,7 @@ AVAILABLE_DATASETS: List[Dict[str, Any]] = [
         "size_gb": 45.0,
         "description": "JavaScript code from GitHub (requires 🔐 HF auth)",
         "streaming": True,
-        "max_samples": 400000,
+        "max_samples": 0,  # 0 = unlimited (download entire dataset)
         "verified": True,
         "requires_auth": True,
     },
@@ -164,7 +164,7 @@ AVAILABLE_DATASETS: List[Dict[str, Any]] = [
         "size_gb": 40.0,
         "description": "Java code from GitHub (requires 🔐 HF auth)",
         "streaming": True,
-        "max_samples": 300000,
+        "max_samples": 0,  # 0 = unlimited (download entire dataset)
         "verified": True,
         "requires_auth": True,
     },

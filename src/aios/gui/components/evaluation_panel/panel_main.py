@@ -7,14 +7,17 @@ import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import ttk, messagebox, filedialog
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, TYPE_CHECKING
 
 # Import safe variable wrappers
 from ...utils import safe_variables
 
-from aios.core.evaluation import EvaluationResult, HarnessWrapper, EvaluationHistory
+# Lazy imports to avoid loading torch on startup
+if TYPE_CHECKING:
+    from aios.core.evaluation import EvaluationResult, HarnessWrapper, EvaluationHistory
+    from aios.gui.dialogs import EvaluationResultsDialog
 from aios.gui.services import DeviceSelectionResult
-from aios.gui.dialogs import EvaluationResultsDialog
+# Note: EvaluationResultsDialog imported lazily via TYPE_CHECKING to avoid torch import during startup
 
 from . import ui_builders, event_handlers, tree_management, history_management, export_utils
 from .benchmark_data import BENCHMARKS
@@ -91,17 +94,15 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         step2 = time.time()
         logger.debug(f"Evaluation panel basic setup took {step2 - step1:.3f}s")
         
-        # Initialize HarnessWrapper
-        logger.debug("Initializing evaluation harness wrapper")
-        self._harness = HarnessWrapper(
-            log_callback=self._log_threadsafe,
-            progress_callback=self._on_progress_update_threadsafe,
-        )
-        self._current_result: Optional[EvaluationResult] = None
+        # Defer HarnessWrapper initialization until first use to avoid blocking UI thread
+        # with torch import during startup (lazy initialization pattern)
+        logger.debug("Evaluation harness will be initialized on first use")
+        self._harness = None  # Will be created lazily via _get_harness()
+        self._current_result = None
         
         # History will be initialized asynchronously during startup
         # and set via _set_history() on main thread
-        self._history: Optional[EvaluationHistory] = None
+        self._history = None
         self._history_db_path = str(self._resolve_history_db_path())
         logger.debug(f"Evaluation history database: {self._history_db_path}")
 
@@ -302,6 +303,18 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         except Exception as exc:
             logger.error(f"[Evaluation] Failed to refresh recent results after history load: {exc}", exc_info=True)
 
+    def _get_harness(self):
+        """Lazy initialization of HarnessWrapper to avoid blocking UI thread during startup."""
+        if self._harness is None:
+            logger.debug("First-time initialization of evaluation harness (loading torch...)")
+            from aios.core.evaluation import HarnessWrapper
+            self._harness = HarnessWrapper(
+                log_callback=self._log_threadsafe,
+                progress_callback=self._on_progress_update_threadsafe,
+            )
+            logger.debug("Evaluation harness initialized successfully")
+        return self._harness
+
     def _log_threadsafe(self, msg: str) -> None:
         """Thread-safe wrapper for logging (calls _append_out on GUI thread)."""
         try:
@@ -383,6 +396,9 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
             return
         
         try:
+            # Import dialog lazily to avoid loading torch during startup
+            from aios.gui.dialogs import EvaluationResultsDialog
+            
             # Open results dialog
             model_name = self.model_name_var.get() or "Unknown Model"
             dialog = EvaluationResultsDialog(self, self._current_result, model_name)
@@ -607,7 +623,8 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
         # Stop any running evaluation
         harness_running = False
         try:
-            if hasattr(self, "_harness") and self._harness:
+            # Only check harness if it was initialized
+            if self._harness is not None:
                 harness_running = self._harness.is_running()
         except Exception:
             harness_running = False
@@ -617,11 +634,11 @@ class EvaluationPanel(ttk.LabelFrame):  # type: ignore[misc]
             try:
                 if self._is_running:
                     event_handlers.on_stop_evaluation(self)
-                elif harness_running and hasattr(self, "_harness") and self._harness:
+                elif harness_running and self._harness is not None:
                     self._log("[eval] Stopping evaluation during shutdown...")
                     self._harness.cancel()
                 try:
-                    if hasattr(self, "_harness") and self._harness:
+                    if self._harness is not None:
                         self._harness.wait_for_completion(timeout=10.0)
                 except Exception:
                     logger.debug("Error waiting for evaluation thread during cleanup", exc_info=True)

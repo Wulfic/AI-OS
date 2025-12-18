@@ -39,8 +39,11 @@ def discover_actv1_bundles(registry: "BrainRegistry") -> Dict[str, int]:
                 if os.path.exists(pt):
                     sz = int(os.path.getsize(pt))
                 else:
+                    # Fallback: sum all files but EXCLUDE parallel_checkpoints and other temp dirs
                     total = 0
-                    for r, _d, files in os.walk(p):
+                    for r, dirs, files in os.walk(p):
+                        # Modify dirs in-place to skip temp/checkpoint directories
+                        dirs[:] = [d for d in dirs if d not in ('parallel_checkpoints', 'checkpoints', 'temp', 'tmp', '.git', '__pycache__') and not d.startswith('_')]
                         for f in files:
                             try:
                                 total += int(os.path.getsize(os.path.join(r, f)))
@@ -169,3 +172,97 @@ def compute_registry_stats(registry: "BrainRegistry") -> Dict[str, Any]:
         total_used = sum(max(0, int(b.size_bytes())) for b in registry.brains.values())
     
     return {"used_bytes": int(total_used), "brains": entries}
+
+
+def merge_orphaned_parallel_checkpoints(registry: "BrainRegistry", brain_name: str, remove_after_merge: bool = True) -> bool:
+    """Merge orphaned parallel GPU checkpoints into a single actv1_student.safetensors file.
+    
+    This is useful when parallel training completed but didn't create the final merged checkpoint.
+    The parallel checkpoints should be in the parallel_checkpoints subdirectory.
+    
+    Args:
+        registry: BrainRegistry instance
+        brain_name: Brain name to merge checkpoints for
+        remove_after_merge: If True, remove parallel checkpoints after successful merge
+        
+    Returns:
+        True if merge successful, False otherwise
+    """
+    try:
+        if not registry.store_dir:
+            return False
+        
+        brain_dir = os.path.join(registry.store_dir, "actv1", brain_name)
+        if not os.path.isdir(brain_dir):
+            return False
+        
+        # Check if actv1_student.safetensors already exists
+        final_checkpoint = os.path.join(brain_dir, "actv1_student.safetensors")
+        if os.path.exists(final_checkpoint):
+            return False  # Already exists, no merge needed
+        
+        # Look for parallel checkpoints
+        parallel_dir = os.path.join(brain_dir, "parallel_checkpoints")
+        if not os.path.isdir(parallel_dir):
+            return False
+        
+        # Find all GPU checkpoint files
+        import glob
+        checkpoint_files = sorted(glob.glob(os.path.join(parallel_dir, "gpu*_final.safetensors")))
+        if not checkpoint_files:
+            checkpoint_files = sorted(glob.glob(os.path.join(parallel_dir, "gpu*.safetensors")))
+        
+        if len(checkpoint_files) < 1:
+            return False  # No checkpoints to merge
+        
+        # If only one checkpoint, just copy it
+        if len(checkpoint_files) == 1:
+            import shutil
+            shutil.copy2(checkpoint_files[0], final_checkpoint)
+            if remove_after_merge:
+                try:
+                    os.remove(checkpoint_files[0])
+                except Exception:
+                    pass
+            return True
+        
+        # Merge multiple checkpoints by averaging weights
+        try:
+            from safetensors.torch import load_file as load_safetensors, save_file as save_safetensors
+            import torch
+            
+            # Load all checkpoints
+            state_dicts = []
+            for cp in checkpoint_files:
+                try:
+                    sd = load_safetensors(cp, device='cpu')
+                    state_dicts.append(sd)
+                except Exception:
+                    pass
+            
+            if not state_dicts:
+                return False
+            
+            # Average weights across all checkpoints
+            merged_state = {}
+            for key in state_dicts[0].keys():
+                tensors = [sd[key].float() for sd in state_dicts]
+                stacked = torch.stack(tensors)
+                merged_state[key] = stacked.mean(dim=0)
+            
+            # Save merged checkpoint
+            save_safetensors(merged_state, final_checkpoint)
+            
+            # Cleanup parallel checkpoints if requested
+            if remove_after_merge:
+                for cp in checkpoint_files:
+                    try:
+                        os.remove(cp)
+                    except Exception:
+                        pass
+            
+            return True
+        except Exception:
+            return False
+    except Exception:
+        return False

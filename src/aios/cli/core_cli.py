@@ -151,32 +151,48 @@ def gui(
     if not os.environ.get("HF_HOME"):
         # Use same logic as aios.py for consistency
         config_file = Path.home() / ".config" / "aios" / "hf_cache_path.txt"
+        _configured_path = None
         if config_file.exists():
             try:
-                _hf_cache_dir = Path(config_file.read_text().strip())
-            except Exception:
+                _configured_path = Path(config_file.read_text().strip())
+                _hf_cache_dir = _configured_path
+            except Exception as e:
+                safe_print(f"Warning: Failed to read HF cache config: {e}")
                 _hf_cache_dir = None
         else:
             _hf_cache_dir = None
         
         if not _hf_cache_dir or not (_hf_cache_dir.exists() or _hf_cache_dir.parent.exists()):
-            # Smart default: find non-C data drive
-            for drive in ["D", "E", "F", "Z"]:
-                try:
-                    drive_path = Path(f"{drive}:/")
-                    if drive_path.exists():
-                        _hf_cache_dir = drive_path / "AI-OS-Data" / "hf_cache"
-                        break
-                except Exception:
-                    continue
-            else:
-                _hf_cache_dir = Path.cwd() / "training_datasets" / "hf_cache"
+            # Default to install root location
+            _hf_cache_dir = Path.cwd() / "training_datasets" / "hf_cache"
+            _configured_path = None  # Clear since we're using default
         
+        # Try to create the directory
         try:
             _hf_cache_dir.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            _hf_cache_dir = Path.cwd() / "training_datasets" / "hf_cache"
-            _hf_cache_dir.mkdir(parents=True, exist_ok=True)
+            safe_print(f"Using HF cache: {_hf_cache_dir}")
+        except Exception as e:
+            # Only fall back if we weren't using a user-configured path
+            if _configured_path:
+                # User explicitly configured a path that failed - warn them loudly
+                safe_print(f"ERROR: Cannot access configured HF cache: {_configured_path}")
+                safe_print(f"Error: {e}")
+                safe_print(f"Check if drive is mounted and path is writable: {config_file}")
+                # Don't fall back silently - let it fail visibly
+                raise RuntimeError(
+                    f"Cannot access configured HF cache at {_configured_path}. "
+                    f"Check if drive is mounted and path is writable. Config: {config_file}"
+                ) from e
+            else:
+                # Default path failed, try one more fallback
+                safe_print(f"Warning: Failed to create HF cache at {_hf_cache_dir}: {e}")
+                _hf_cache_dir = Path.cwd() / "training_datasets" / "hf_cache"
+                try:
+                    _hf_cache_dir.mkdir(parents=True, exist_ok=True)
+                    safe_print(f"Using fallback HF cache: {_hf_cache_dir}")
+                except Exception as e2:
+                    safe_print(f"ERROR: Cannot create HF cache: {e2}")
+                    raise
         
         os.environ["HF_HOME"] = str(_hf_cache_dir.resolve())
         os.environ["HF_DATASETS_CACHE"] = str((_hf_cache_dir / "datasets").resolve())

@@ -10,6 +10,9 @@ from tkinter import ttk, scrolledtext, filedialog
 # Import safe variable wrappers
 from ...utils import safe_variables
 
+# Import progress formatting
+from .download_progress import SpeedUnit
+
 # Import tooltip helper
 try:
     from ..tooltips import add_tooltip
@@ -59,13 +62,14 @@ def build_ui(panel):
     actions_frame = _build_action_buttons(panel, panel.content_frame)
     actions_frame.grid(row=current_row, column=0, sticky="ew", pady=(0, 4))
 
-    current_row += 1
-    location_frame = _build_location_frame(panel, panel.content_frame)
-    location_frame.grid(row=current_row, column=0, sticky="ew", pady=(0, 5))
+    # Location UI moved to Settings tab (Phase 3.3)
+    # current_row += 1
+    # location_frame = _build_location_frame(panel, panel.content_frame)
+    # location_frame.grid(row=current_row, column=0, sticky="ew", pady=(0, 5))
 
     current_row += 1
-    panel.status_label = ttk.Label(panel.content_frame, text="Ready", font=("", 9, "italic"))
-    panel.status_label.grid(row=current_row, column=0, sticky="w", pady=(2, 0))
+    progress_frame = _build_progress_frame(panel, panel.content_frame)
+    progress_frame.grid(row=current_row, column=0, sticky="ew", pady=(2, 0))
 
     # Build output text area unless the panel is configured to use the shared output
     if not getattr(panel, "_use_shared_output", False):
@@ -111,6 +115,24 @@ def _build_control_bar(panel, parent):
     return control_frame
 
 
+def _on_modality_changed(panel):
+    """Handle modality dropdown selection change."""
+    modality = panel.modality_var.get()
+    
+    # Show warning for non-text modalities since only text is supported during training
+    if modality != "Text" and modality != "All":
+        from tkinter import messagebox
+        messagebox.showwarning(
+            "Modality Warning",
+            f"Note: Only 'Text' datasets are currently supported for model training.\n\n"
+            f"You selected '{modality}' which may not be usable for training.\n"
+            f"You can still browse and download these datasets for inspection."
+        )
+    
+    # Trigger a new search with the updated modality filter
+    panel._do_search()
+
+
 def _build_search_frame(panel, parent):
     """Build the search frame with query and filters."""
     panel.search_frame = ttk.LabelFrame(parent, text="🔍 Search HuggingFace Datasets", padding=5)
@@ -122,10 +144,28 @@ def _build_search_frame(panel, parent):
     ttk.Label(search_controls, text="Search:").pack(side="left", padx=(0, 5))
     
     panel.search_var = safe_variables.StringVar()
-    search_entry = ttk.Entry(search_controls, textvariable=panel.search_var, width=35)
+    search_entry = ttk.Entry(search_controls, textvariable=panel.search_var, width=30)
     add_tooltip(search_entry, "Search HuggingFace datasets by name, topic, or task")
-    search_entry.pack(side="left", padx=(0, 10))
+    search_entry.pack(side="left", padx=(0, 8))
     search_entry.bind("<Return>", lambda e: panel._do_search())
+    
+    # Modality filter dropdown
+    ttk.Label(search_controls, text="Type:").pack(side="left", padx=(0, 5))
+    
+    # Define modalities based on HuggingFace Hub modality options
+    # Text is default since only text is currently supported during training
+    panel.modality_var = safe_variables.StringVar(value="Text")
+    panel._modality_options = ["All", "Text", "Audio", "Document", "Geospatial", "Image", "Tabular", "Time-series", "Video", "3D"]
+    modality_combo = ttk.Combobox(
+        search_controls,
+        textvariable=panel.modality_var,
+        values=panel._modality_options,
+        state="readonly",
+        width=10
+    )
+    add_tooltip(modality_combo, "Filter by data type. Text is default (only text is supported for training)")
+    modality_combo.pack(side="left", padx=(0, 8))
+    modality_combo.bind("<<ComboboxSelected>>", lambda e: _on_modality_changed(panel))
     
     # Max size filter field
     ttk.Label(search_controls, text="Max Size:").pack(side="left", padx=(0, 5))
@@ -228,7 +268,7 @@ def _build_action_buttons(panel, parent):
         command=panel._download_selected,
         width=20
     )
-    add_tooltip(download_btn, "Download selected dataset with streaming (default 100k samples)")
+    add_tooltip(download_btn, "Download selected dataset with streaming (downloads entire dataset)")
     download_btn.pack(side="left", padx=(0, 5))
     
     favorite_btn = ttk.Button(
@@ -260,6 +300,139 @@ def _build_action_buttons(panel, parent):
     panel.cancel_btn.pack(side="right")
 
     return actions_frame
+
+
+def _build_progress_frame(panel, parent):
+    """Build the download progress frame with status, percentage, speed, and unit toggle."""
+    progress_frame = ttk.Frame(parent)
+    
+    # Left side: Status label and progress info
+    left_frame = ttk.Frame(progress_frame)
+    left_frame.pack(side="left", fill="x", expand=True)
+    
+    # Status label (e.g., "Ready" or "Downloading dataset...")
+    panel.status_label = ttk.Label(left_frame, text="Ready", font=("", 9, "italic"))
+    panel.status_label.pack(side="left")
+    
+    # Progress separator (hidden when not downloading)
+    panel.progress_separator = ttk.Label(left_frame, text=" | ", font=("", 9))
+    panel.progress_separator.pack(side="left")
+    panel.progress_separator.pack_forget()  # Hidden initially
+    
+    # Progress percentage label
+    panel.progress_pct_label = ttk.Label(left_frame, text="0%", font=("", 9, "bold"))
+    panel.progress_pct_label.pack(side="left")
+    panel.progress_pct_label.pack_forget()  # Hidden initially
+    
+    # Speed label
+    panel.speed_label = ttk.Label(left_frame, text="", font=("", 9))
+    panel.speed_label.pack(side="left", padx=(8, 0))
+    panel.speed_label.pack_forget()  # Hidden initially
+    
+    # ETA label
+    panel.eta_label = ttk.Label(left_frame, text="", font=("", 9, "italic"), foreground="gray")
+    panel.eta_label.pack(side="left", padx=(8, 0))
+    panel.eta_label.pack_forget()  # Hidden initially
+    
+    # Right side: Speed unit toggle
+    right_frame = ttk.Frame(progress_frame)
+    right_frame.pack(side="right")
+    
+    # Speed unit toggle button
+    panel.speed_unit = SpeedUnit.BYTES  # Default to MB/s (more intuitive for downloads)
+    panel.speed_unit_btn = ttk.Button(
+        right_frame,
+        text="MB/s",
+        command=lambda: _toggle_speed_unit(panel),
+        width=6
+    )
+    add_tooltip(panel.speed_unit_btn, "Toggle speed display between MB/s (Megabytes) and Mbps (Megabits)")
+    panel.speed_unit_btn.pack(side="right")
+    
+    return progress_frame
+
+
+def _toggle_speed_unit(panel):
+    """Toggle between bits and bytes speed display."""
+    if panel.speed_unit == SpeedUnit.BYTES:
+        panel.speed_unit = SpeedUnit.BITS
+        panel.speed_unit_btn.config(text="Mbps")
+    else:
+        panel.speed_unit = SpeedUnit.BYTES
+        panel.speed_unit_btn.config(text="MB/s")
+    
+    # Update display if currently showing speed
+    if hasattr(panel, '_current_download_stats') and panel._current_download_stats:
+        _update_progress_display(panel, panel._current_download_stats)
+
+
+def _update_progress_display(panel, stats):
+    """Update the progress display with current stats."""
+    from .download_progress import format_speed, format_eta, format_size
+    
+    # Store for unit toggle updates
+    panel._current_download_stats = stats
+    
+    # Show progress elements if hidden
+    try:
+        if not panel.progress_separator.winfo_ismapped():
+            panel.progress_separator.pack(side="left")
+        if not panel.progress_pct_label.winfo_ismapped():
+            panel.progress_pct_label.pack(side="left")
+        if not panel.speed_label.winfo_ismapped():
+            panel.speed_label.pack(side="left", padx=(8, 0))
+        if not panel.eta_label.winfo_ismapped():
+            panel.eta_label.pack(side="left", padx=(8, 0))
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).debug(f"Progress display pack error: {e}")
+    
+    # Update percentage (prefer blocks for accuracy)
+    try:
+        if stats.total_blocks > 0 and stats.blocks_completed >= 0:
+            pct = (stats.blocks_completed / stats.total_blocks) * 100
+            # Clamp to 100% to prevent showing >100%
+            pct = min(pct, 100.0)
+            panel.progress_pct_label.config(text=f"{pct:.1f}%")
+        elif stats.total_bytes > 0:
+            pct = (stats.bytes_downloaded / stats.total_bytes) * 100
+            pct = min(pct, 100.0)
+            panel.progress_pct_label.config(text=f"{pct:.1f}%")
+        elif stats.total_samples > 0 and stats.samples_downloaded > 0:
+            pct = (stats.samples_downloaded / stats.total_samples) * 100
+            pct = min(pct, 100.0)
+            panel.progress_pct_label.config(text=f"{pct:.1f}%")
+        else:
+            # Unknown total - show downloaded amount
+            panel.progress_pct_label.config(text=format_size(stats.bytes_downloaded))
+        
+        # Update speed
+        if stats.speed_bytes_per_sec > 0:
+            speed_str = format_speed(stats.speed_bytes_per_sec, panel.speed_unit)
+            panel.speed_label.config(text=f"⚡ {speed_str}")
+        else:
+            panel.speed_label.config(text="⚡ calculating...")
+        
+        # Update ETA
+        if stats.eta_seconds > 0:
+            panel.eta_label.config(text=f"ETA: {format_eta(stats.eta_seconds)}")
+        else:
+            panel.eta_label.config(text="")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).debug(f"Progress display update error: {e}")
+
+
+def hide_progress_display(panel):
+    """Hide the progress display elements."""
+    try:
+        panel.progress_separator.pack_forget()
+        panel.progress_pct_label.pack_forget()
+        panel.speed_label.pack_forget()
+        panel.eta_label.pack_forget()
+        panel._current_download_stats = None
+    except Exception:
+        pass
 
 
 def _build_location_frame(panel, parent):

@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=AI-OS
-Comment=Launch the AI-OS graphical interface
-Exec=ai-os.aios-gui
-Icon=${SNAP}/meta/gui/ai-os.png
-Terminal=false
-Categories=Utility;Development;
-StartupNotify=true

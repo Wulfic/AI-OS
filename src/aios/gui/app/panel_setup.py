@@ -89,14 +89,21 @@ def initialize_panels(app: Any) -> None:
     last_time = start_time
     
     def update_loading(text: str) -> None:
-        """Update loading screen if available with minimal UI blocking."""
-        logger.debug(f"Panel loading: {text}")
+        """Update loading screen if available with zero UI blocking."""
+        # Don't even log at debug level during rapid updates - logging can block
         try:
             if hasattr(app, '_loading_canvas') and app._loading_canvas:
                 if hasattr(app._loading_canvas, '_status_text_id'):
-                    app._loading_canvas.itemconfig(app._loading_canvas._status_text_id, text=text)
-                    # Use after_idle instead of update_idletasks to prevent blocking
-                    app.root.after_idle(lambda: None)
+                    # Schedule the update asynchronously - don't block at all
+                    def _do_update():
+                        try:
+                            if hasattr(app, '_loading_canvas') and app._loading_canvas:
+                                if hasattr(app._loading_canvas, '_status_text_id'):
+                                    app._loading_canvas.itemconfig(app._loading_canvas._status_text_id, text=text)
+                        except Exception:
+                            pass
+                    # Use after(1) instead of after_idle - executes faster without blocking
+                    app.root.after(1, _do_update)
         except Exception:
             pass
     
@@ -237,6 +244,7 @@ def initialize_panels(app: Any) -> None:
             help_panel=None,  # Will be set after help_panel is created
             debug_panel=app.debug_panel if hasattr(app, 'debug_panel') else None,  # Connect to debug panel
             worker_pool=app._worker_pool,
+            app=app,  # Pass app reference for CLI access (Phase 3.1)
         )
         log_timing("Settings panel")
     except Exception as e:
@@ -316,7 +324,11 @@ def initialize_panels(app: Any) -> None:
             worker_pool=app._worker_pool,
             resources_panel=app.resources_panel,
             post_to_ui=app.post_to_ui,
+            app=app,
         )
+        # Link brains panel for post-training refresh (update training steps counter)
+        if hasattr(app, 'brains_panel') and app.brains_panel:
+            app.hrm_training_panel._brains_panel = app.brains_panel
         log_timing("HRM Training panel")
     except Exception as e:
         logger.error(f"Failed to initialize HRM training panel: {e}", exc_info=True)
@@ -902,6 +914,8 @@ def _initialize_resources_panel(app: Any, save_state_cb: Callable[[], None] | No
                     check=False,
                     capture_output=True,
                     text=True,
+                    encoding='utf-8',
+                    errors='replace',
                     timeout=2.0,
                     env=env,
                 )
@@ -979,10 +993,9 @@ def _initialize_resources_panel(app: Any, save_state_cb: Callable[[], None] | No
     def _apply_caps(dataset_cap_gb, model_cap_gb, per_brain_cap_gb) -> dict:
         out = {}
         try:
-            args = ["datasets-config-caps"]
+            # Use the correct CLI command: datasets-set-cap
             if dataset_cap_gb is not None and dataset_cap_gb > 0:
-                args += ["--cap_gb", str(dataset_cap_gb)]
-            if len(args) > 1:
+                args = ["datasets-set-cap", str(dataset_cap_gb)]
                 raw = app._run_cli(args)
                 out["datasets"] = app._parse_cli_dict(raw)
         except Exception:
@@ -1446,6 +1459,21 @@ def _apply_loaded_panel_data(app: Any) -> None:
             finally:
                 if hasattr(app.settings_panel, '_pending_config'):
                     delattr(app.settings_panel, '_pending_config')
+        
+        # Load deferred settings that require CLI calls (Phase 3.1/3.2 - dataset cap, artifacts path)
+        # These are run after mainloop starts to avoid blocking UI during initialization
+        if hasattr(app, 'settings_panel') and app.settings_panel:
+            try:
+                if hasattr(app.settings_panel, 'load_settings_deferred'):
+                    # Schedule deferred loading for after current UI updates complete
+                    def _load_deferred():
+                        try:
+                            app.settings_panel.load_settings_deferred()
+                        except Exception as e:
+                            logger.warning(f"Deferred settings load failed: {e}", exc_info=True)
+                    app.root.after(100, _load_deferred)
+            except Exception as e:
+                logger.debug(f"Could not schedule deferred settings load: {e}")
         _log_duration("settings panel apply", section_start)
 
         section_start = time.perf_counter()
@@ -1549,6 +1577,33 @@ def _apply_loaded_panel_data(app: Any) -> None:
             with suppress(AttributeError):
                 delattr(app.hrm_training_panel, '_data_loaded')
         _log_duration("hrm training panel apply", section_start)
+
+        section_start = time.perf_counter()
+        # Sync download location from settings to dataset_download_panel (Phase 3.3)
+        if (hasattr(app, 'settings_panel') and hasattr(app.settings_panel, 'download_location_var') and
+            hasattr(app, 'dataset_download_panel') and hasattr(app.dataset_download_panel, 'download_location')):
+            try:
+                # Set up two-way sync between panels
+                settings_var = app.settings_panel.download_location_var
+                download_var = app.dataset_download_panel.download_location
+                
+                # Initial sync: settings -> download panel
+                download_var.set(settings_var.get())
+                
+                # Trace changes in both directions
+                def _sync_to_download(*args):
+                    download_var.set(settings_var.get())
+                
+                def _sync_to_settings(*args):
+                    settings_var.set(download_var.get())
+                
+                settings_var.trace_add("write", _sync_to_download)
+                download_var.trace_add("write", _sync_to_settings)
+                
+                logger.debug("Download location synced between Settings and Dataset Download panels")
+            except Exception as sync_err:
+                logger.warning(f"Failed to sync download location: {sync_err}")
+        _log_duration("download location sync", section_start)
     except Exception as e:
         logger.warning(f"Error applying UI updates: {e}")
     finally:

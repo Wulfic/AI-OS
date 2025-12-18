@@ -75,13 +75,13 @@ def show(config: Optional[str] = typer.Option(None, "--config", help="Unused, fo
             pass
     else:
         print("\n⚠️  No cache location configured.")
-        print("Default logic will be used (checks D:, E:, F:, Z: drives first)")
+        print("Default location will be used (install root/training_datasets/hf_cache)")
     
     print("\n" + "=" * 60)
     print("\nTo change the cache location, use:")
     print("  aios hf-cache set <path>")
     print("\nExample:")
-    print("  aios hf-cache set D:/AI-OS-Data/hf_cache")
+    print("  aios hf-cache set Z:/training_datasets/.hf_cache")
     print("=" * 60 + "\n")
 
 

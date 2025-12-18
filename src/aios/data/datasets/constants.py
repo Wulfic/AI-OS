@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 # Supported text file extensions
-TEXT_EXTS = {".txt", ".csv", ".tsv", ".jsonl"}
+TEXT_EXTS = {".txt", ".csv", ".tsv", ".jsonl", ".json"}
 
 # Supported archive formats
 ARCHIVE_EXTS = {

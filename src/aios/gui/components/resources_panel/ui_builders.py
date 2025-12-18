@@ -152,22 +152,7 @@ def build_limits_ui(panel: "ResourcesPanel") -> None:
     except Exception:
         pass
     
-    # Add Storage Caps inline on the same row
-    ttk.Label(r, text="Dataset cap (GB):").pack(side="left", padx=(24, 4))
-    dataset_cap_entry = ttk.Entry(r, width=8, textvariable=panel.dataset_cap_var)
-    dataset_cap_entry.pack(side="left")
-    panel.dataset_cap_entry = dataset_cap_entry
-    
-    # Add usage display label inline
-    panel.dataset_usage_label = ttk.Label(r, text="", font=("TkDefaultFont", 8), foreground="gray")
-    panel.dataset_usage_label.pack(side="left", padx=(6, 0))
-    
-    # Add tooltip
-    try:
-        from ..tooltips import add_tooltip
-        add_tooltip(dataset_cap_entry, "Maximum disk space for dataset downloads (GB). Empty = unlimited. Enforced in training_datasets folder.")
-    except Exception:
-        pass
+    # Note: Dataset cap moved to Settings tab (Phase 3.1)
     
     # Store references for dynamic updates
     panel._training_mode_toggle_widgets = {
@@ -400,7 +385,10 @@ def build_status_ui(panel: "ResourcesPanel") -> None:
 
 
 def build_storage_caps_ui(panel: "ResourcesPanel") -> Any:
-    """Build storage caps section (now integrated into limits row).
+    """Build storage caps section - DEPRECATED (Phase 3.2).
+    
+    Storage paths moved to Settings tab.
+    This function kept for compatibility but does nothing.
     
     Args:
         panel: ResourcesPanel instance
@@ -408,45 +396,9 @@ def build_storage_caps_ui(panel: "ResourcesPanel") -> Any:
     Returns:
         None
     """
-    try:
-        frame = ttk.LabelFrame(panel, text="Storage Paths")
-        frame.pack(fill="x", padx=8, pady=(8, 0))
-        ttk.Label(frame, text="Artifacts directory:").grid(row=0, column=0, sticky="w")
-        entry = ttk.Entry(frame, textvariable=panel.artifacts_dir_var, width=60)
-        entry.grid(row=0, column=1, sticky="ew", padx=(6, 4))
-        entry.bind("<FocusOut>", lambda _e: panel._validate_artifacts_dir())
-
-        browse_btn = ttk.Button(frame, text="Browse…", command=panel._browse_artifacts_dir)
-        browse_btn.grid(row=0, column=2, padx=(4, 0))
-
-        reset_btn = ttk.Button(frame, text="Use Default", command=panel._reset_artifacts_dir)
-        reset_btn.grid(row=0, column=3, padx=(4, 0))
-
-        frame.columnconfigure(1, weight=1)
-
-        status = ttk.Label(
-            frame,
-            textvariable=panel._artifacts_status_var,
-            font=("TkDefaultFont", 8),
-            foreground="gray",
-        )
-        status.grid(row=1, column=0, columnspan=4, sticky="w", pady=(4, 0))
-        panel._artifacts_status_label = status
-
-        try:
-            from ..tooltips import add_tooltip
-
-            add_tooltip(
-                entry,
-                "Optional custom location for artifacts and brains. Leave blank to use ProgramData/AI-OS/artifacts.",
-            )
-            add_tooltip(reset_btn, "Revert to the default ProgramData path.")
-        except Exception:
-            pass
-
-        panel._validate_artifacts_dir(apply_override=False)
-    except Exception as exc:
-        logger.error(f"Failed to build storage caps UI: {exc}", exc_info=True)
+    # Storage Paths UI moved to Settings tab (Phase 3.2)
+    # Function kept for compatibility
+    pass
 
 
 def build_apply_button_ui(panel: "ResourcesPanel") -> None:
