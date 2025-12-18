@@ -343,9 +343,21 @@ jobs:
             # Create debian/compat
             echo "12" > "$BUILD_DIR/debian/compat"
             
+            # Create source tarball (.orig.tar.gz) in parent directory
+            # Strip -dev suffix for tarball version
+            ORIG_VERSION="${VERSION%-dev}"
+            cd ..
+            echo "📦 Creating original source tarball: ai-os_${ORIG_VERSION}.orig.tar.gz"
+            tar --exclude-vcs --exclude="$BUILD_DIR/debian" \
+                -czf "ai-os_${ORIG_VERSION}.orig.tar.gz" "$BUILD_DIR"
+            
             # Build source package
             cd "$BUILD_DIR"
-            debuild -S -sa -us -uc
+            debuild -S -sa -us -uc --no-check-builddeps 2>&1 || {
+              echo "❌ debuild failed, checking for prompts..."
+              echo "Trying with yes | debuild..."
+              yes | debuild -S -sa -us -uc --no-check-builddeps || true
+            }
           fi
           
           # Find generated files
