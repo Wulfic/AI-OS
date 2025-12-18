@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Import centralized config loader
 try:
-    from ...config_loader import get_config_path, load_config as load_full_config, save_config as save_full_config
+    from ...config_loader import get_config_path, get_writable_config_path, load_config as load_full_config, save_config as save_full_config
 except ImportError:
     # Fallback for older code structure
     def get_config_path() -> Path:
@@ -31,6 +31,17 @@ except ImportError:
             return user_config
         return Path.cwd() / "config" / "default.yaml"
     
+    def get_writable_config_path() -> Path:
+        """Get a writable config path, falling back to user config if system path is not writable."""
+        import os
+        config_path = get_config_path()
+        if config_path.exists() and os.access(config_path, os.W_OK):
+            return config_path
+        if not config_path.exists() and config_path.parent.exists() and os.access(config_path.parent, os.W_OK):
+            return config_path
+        # Fall back to user config directory
+        return Path.home() / ".config" / "aios" / "config.yaml"
+    
     def load_full_config() -> dict:
         """Fallback config loader."""
         try:
@@ -43,9 +54,9 @@ except ImportError:
         return {}
     
     def save_full_config(config: dict) -> bool:
-        """Fallback config saver."""
+        """Fallback config saver with writable path support."""
         try:
-            config_path = get_config_path()
+            config_path = get_writable_config_path()
             config_path.parent.mkdir(parents=True, exist_ok=True)
             with open(config_path, 'w', encoding='utf-8') as f:
                 yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)

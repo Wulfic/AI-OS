@@ -165,7 +165,9 @@ class CrawlPanel(ttk.LabelFrame):  # type: ignore[misc]
         def _bg():
             cmd = [sys.executable, "-u", "-m", "aios.cli.aios", *args]
             try:
-                proc = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, bufsize=1)
+                # On Windows, use CREATE_NO_WINDOW to prevent CMD popups
+                creationflags = _sp.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+                proc = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, bufsize=1, creationflags=creationflags)
                 # expose proc for cancellation
                 def _enable_stop():
                     try:

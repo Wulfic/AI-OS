@@ -336,7 +336,10 @@ class DatasetBuilderPanel(ttk.LabelFrame):  # type: ignore[misc]
         cmd = [get_preferred_python_executable(), "-u", "-m", "aios.cli.aios", *args]
         self._update_out("Building dataset: aios " + " ".join(args) + "\n")
         try:
-            proc = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, bufsize=1)
+            # On Windows, use CREATE_NO_WINDOW to prevent CMD popups
+            import sys as _sys
+            creationflags = _sp.CREATE_NO_WINDOW if _sys.platform == "win32" else 0
+            proc = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, bufsize=1, creationflags=creationflags)
             self._proc = proc
             self.btn_build.configure(state="disabled")
             self.progress.configure(maximum=100.0, value=0.0)

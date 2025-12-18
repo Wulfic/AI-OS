@@ -38,6 +38,7 @@ class ProcessManager:
         # Start the process in a new process group
         try:
             if os.name == 'nt':  # Windows
+                # Use CREATE_NEW_PROCESS_GROUP for process control and CREATE_NO_WINDOW to prevent CMD popups
                 process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
@@ -45,7 +46,7 @@ class ProcessManager:
                     text=True,
                     cwd=cwd,
                     env=env,
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
                 )
             else:  # Unix-like
                 process = subprocess.Popen(

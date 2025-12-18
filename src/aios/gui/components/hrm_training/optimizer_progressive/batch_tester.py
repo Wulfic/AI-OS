@@ -143,6 +143,8 @@ def test_single_batch(
     # Run training
     start_time = time.perf_counter()
     try:
+        # On Windows, use CREATE_NO_WINDOW to prevent CMD popups during optimization
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
         process = subprocess.run(
             cmd,
             env=env,
@@ -151,7 +153,8 @@ def test_single_batch(
             text=True,
             encoding='utf-8',
             errors='replace',
-            timeout=config.max_timeout
+            timeout=config.max_timeout,
+            creationflags=creationflags
         )
     except subprocess.TimeoutExpired:
         # Timeout - kill it

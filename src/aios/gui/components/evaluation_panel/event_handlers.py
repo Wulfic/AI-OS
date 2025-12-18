@@ -43,6 +43,18 @@ def browse_output_directory(panel: "EvaluationPanel") -> None:
         panel.output_path_var.set(path)
 
 
+def _resolve_brain_path(brain_name: str, project_root: str | Path | None) -> Path:
+    """Resolve the on-disk path for an ACTv1 brain bundle."""
+    if system_paths is not None:
+        try:
+            return system_paths.get_brain_family_dir("actv1") / brain_name
+        except Exception:
+            logger.debug("Failed to resolve ProgramData brain path", exc_info=True)
+
+    base = Path(project_root) if project_root else Path.cwd()
+    return base / "artifacts" / "brains" / "actv1" / brain_name
+
+
 def start_evaluation(panel: "EvaluationPanel") -> None:
     """Start evaluation.
     
@@ -330,18 +342,6 @@ def start_evaluation(panel: "EvaluationPanel") -> None:
             # Assume it's a HuggingFace model identifier
             panel._log(f"[eval] Treating as HuggingFace model identifier: {model}")
             model_type = "hf"
-
-
-def _resolve_brain_path(brain_name: str, project_root: str | Path | None) -> Path:
-    """Resolve the on-disk path for an ACTv1 brain bundle."""
-    if system_paths is not None:
-        try:
-            return system_paths.get_brain_family_dir("actv1") / brain_name
-        except Exception:
-            logger.debug("Failed to resolve ProgramData brain path", exc_info=True)
-
-    base = Path(project_root) if project_root else Path.cwd()
-    return base / "artifacts" / "brains" / "actv1" / brain_name
 
     model_kwargs = {
         "model_name": model,

@@ -909,6 +909,9 @@ def _initialize_resources_panel(app: Any, save_state_cb: Callable[[], None] | No
                 for key in ("CUDA_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES"):
                     env.pop(key, None)
 
+                # On Windows, use CREATE_NO_WINDOW to prevent CMD popups
+                import sys as _sys
+                creationflags = subprocess.CREATE_NO_WINDOW if _sys.platform == "win32" else 0
                 result = subprocess.run(
                     cmd,
                     check=False,
@@ -918,6 +921,7 @@ def _initialize_resources_panel(app: Any, save_state_cb: Callable[[], None] | No
                     errors='replace',
                     timeout=2.0,
                     env=env,
+                    creationflags=creationflags,
                 )
                 if result.stdout:
                     for line in result.stdout.strip().splitlines():

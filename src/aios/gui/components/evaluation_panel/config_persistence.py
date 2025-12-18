@@ -53,6 +53,48 @@ def get_config_path() -> Path:
     return Path.cwd() / "config" / "default.yaml"
 
 
+def get_writable_config_path() -> Path:
+    """Get a writable config path, falling back to user config if system path is not writable.
+    
+    Returns:
+        Path to a writable config file location
+    """
+    import os
+    
+    # Check environment variable first
+    env_path = os.environ.get("AIOS_CONFIG")
+    if env_path:
+        p = Path(env_path)
+        # Check if parent exists and is writable, or if file exists and is writable
+        if p.exists() and os.access(p, os.W_OK):
+            return p
+        if not p.exists() and p.parent.exists() and os.access(p.parent, os.W_OK):
+            return p
+    
+    # Try current working directory config
+    cwd_config = Path.cwd() / "config" / "default.yaml"
+    if cwd_config.exists() and os.access(cwd_config, os.W_OK):
+        return cwd_config
+    if not cwd_config.exists() and cwd_config.parent.exists() and os.access(cwd_config.parent, os.W_OK):
+        return cwd_config
+    
+    # Try repo config relative to this file
+    try:
+        module_path = Path(__file__).resolve()
+        repo_root = module_path.parents[5]
+        repo_config = repo_root / "config" / "default.yaml"
+        if repo_config.exists() and os.access(repo_config, os.W_OK):
+            return repo_config
+        if not repo_config.exists() and repo_config.parent.exists() and os.access(repo_config.parent, os.W_OK):
+            return repo_config
+    except Exception:
+        pass
+    
+    # Fall back to user config directory (always writable by user)
+    user_config = Path.home() / ".config" / "aios" / "config.yaml"
+    return user_config
+
+
 def load_evaluation_from_config() -> dict[str, Any]:
     """Load evaluation settings from config/default.yaml.
     
@@ -104,18 +146,33 @@ def save_evaluation_to_config(evaluation_values: dict[str, Any]) -> bool:
         True if saved successfully, False otherwise
     """
     try:
-        config_path = get_config_path()
+        # Use writable config path to avoid permission errors on system installs
+        config_path = get_writable_config_path()
         logger.info(f"Saving evaluation config to {config_path}")
         logger.debug(f"Evaluation values: {evaluation_values}")
         
         # Ensure config directory exists
         config_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # Load existing config
+        # Load existing config (try to read from original location first for merging)
         config: dict[str, Any] = {}
-        if config_path.exists():
-            with open(config_path, 'r', encoding='utf-8') as f:
-                config = yaml.safe_load(f) or {}
+        read_path = get_config_path()
+        if read_path.exists():
+            try:
+                with open(read_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+            except Exception:
+                pass
+        # Also try writable path if different and exists
+        if config_path != read_path and config_path.exists():
+            try:
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    user_config = yaml.safe_load(f) or {}
+                    # Merge user config over base config
+                    if isinstance(user_config, dict):
+                        config.update(user_config)
+            except Exception:
+                pass
         
         if not isinstance(config, dict):
             config = {}

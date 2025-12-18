@@ -269,7 +269,7 @@ def _detect_hf_streaming_size(hf_uri: str, ascii_only: bool) -> Tuple[Optional[i
 
 def _detect_text_directory_size(p: Path, ascii_only: bool) -> Tuple[Optional[int], Optional[int], Optional[int]]:
     """Count lines across all text files in directory."""
-    from .constants import TEXT_EXTS
+    from aios.data.datasets.constants import TEXT_EXTS
     
     try:
         total_lines = 0

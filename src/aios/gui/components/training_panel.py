@@ -542,7 +542,10 @@ class TrainingPanel:
         logger.debug(f"Launching parallel training with command: {' '.join(args)}")
         cmd = [get_preferred_python_executable(), "-u", "-m", "aios.cli.aios", *args]
         try:
-            self._proc = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, bufsize=1)
+            # On Windows, use CREATE_NO_WINDOW to prevent CMD popups during training
+            import sys as _sys
+            creationflags = _sp.CREATE_NO_WINDOW if _sys.platform == "win32" else 0
+            self._proc = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, bufsize=1, creationflags=creationflags)
             logger.info(f"Parallel training process started (PID: {self._proc.pid})")
         except Exception as e:
             error_context = "Failed to start parallel training process"
