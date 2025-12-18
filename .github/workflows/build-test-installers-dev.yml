@@ -343,10 +343,12 @@ jobs:
             # Create debian/compat
             echo "12" > "$BUILD_DIR/debian/compat"
             
-            # Create source tarball (.orig.tar.gz) in parent directory
+            # Move back to workspace root
+            cd ..
+            
+            # Create source tarball (.orig.tar.gz)
             # Strip -dev suffix for tarball version
             ORIG_VERSION="${VERSION%-dev}"
-            cd ..
             echo "📦 Creating original source tarball: ai-os_${ORIG_VERSION}.orig.tar.gz"
             tar --exclude-vcs --exclude="$BUILD_DIR/debian" \
                 -czf "ai-os_${ORIG_VERSION}.orig.tar.gz" "$BUILD_DIR"
