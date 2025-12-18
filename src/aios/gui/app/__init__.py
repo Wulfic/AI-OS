@@ -436,41 +436,74 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
         if getattr(self, "_start_minimized", False):
             return
 
-        try:
-            self.root.state("zoomed")
-        except Exception:
-            pass
-
-        try:
-            self.root.attributes("-zoomed", True)
-        except Exception:
-            pass
+        # Platform-specific maximization strategies
+        import sys
+        
+        if sys.platform.startswith("win"):
+            # Windows: Use zoomed state for proper window maximize
+            try:
+                self.root.state("zoomed")
+            except Exception:
+                pass
+        elif sys.platform.startswith("linux"):
+            # Linux: Avoid fullscreen-like behavior that removes decorations
+            # Instead, set geometry to leave room for taskbar/panel and window decorations
+            try:
+                self.root.update_idletasks()
+                screen_w = self.root.winfo_screenwidth()
+                screen_h = self.root.winfo_screenheight()
+                
+                # Leave space for typical Ubuntu panel (28px top) and decorations
+                # This ensures window decorations (close/minimize/maximize) remain visible
+                window_w = screen_w - 4  # Small margin to avoid borderless fullscreen
+                window_h = screen_h - 60  # Space for panel and decorations
+                pos_x = 0
+                pos_y = 28  # Typical Ubuntu top panel height
+                
+                geometry = f"{window_w}x{window_h}+{pos_x}+{pos_y}"
+                self.root.geometry(geometry)
+                
+                # Ensure the window is not in a fullscreen-like state
+                try:
+                    self.root.attributes("-fullscreen", False)
+                except Exception:
+                    pass
+            except Exception:
+                logger.debug("Failed to set Linux window geometry", exc_info=True)
+        else:
+            # macOS and other platforms: Use zoomed attribute
+            try:
+                self.root.attributes("-zoomed", True)
+            except Exception:
+                pass
 
         try:
             self.root.update_idletasks()
         except Exception:
             pass
 
-        try:
-            screen_w = self.root.winfo_screenwidth()
-            screen_h = self.root.winfo_screenheight()
+        # Fallback geometry adjustment for Windows and other platforms
+        if not sys.platform.startswith("linux"):
+            try:
+                screen_w = self.root.winfo_screenwidth()
+                screen_h = self.root.winfo_screenheight()
 
-            current_w = self.root.winfo_width()
-            current_h = self.root.winfo_height()
-
-            if current_w <= 1 or current_h <= 1:
-                self.root.update_idletasks()
                 current_w = self.root.winfo_width()
                 current_h = self.root.winfo_height()
 
-            slack_w = max(48, int(screen_w * 0.05))
-            slack_h = max(48, int(screen_h * 0.05))
+                if current_w <= 1 or current_h <= 1:
+                    self.root.update_idletasks()
+                    current_w = self.root.winfo_width()
+                    current_h = self.root.winfo_height()
 
-            if current_w < (screen_w - slack_w) or current_h < (screen_h - slack_h):
-                geometry = f"{screen_w}x{screen_h}+0+0"
-                self.root.geometry(geometry)
-        except Exception:
-            pass
+                slack_w = max(48, int(screen_w * 0.05))
+                slack_h = max(48, int(screen_h * 0.05))
+
+                if current_w < (screen_w - slack_w) or current_h < (screen_h - slack_h):
+                    geometry = f"{screen_w}x{screen_h}+0+0"
+                    self.root.geometry(geometry)
+            except Exception:
+                pass
 
         max_attempts = 2
         if attempt < max_attempts:
