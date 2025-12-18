@@ -425,13 +425,35 @@ jobs:
           
           CHANGES_FILE="${{ steps.build_source.outputs.changes_file }}"
           
-          if [ -n "$GPG_PASSPHRASE" ]; then
-            echo "$GPG_PASSPHRASE" | debsign -p"gpg --batch --yes --quiet --passphrase-fd 0" "$CHANGES_FILE" 2>&1 | grep -v "gpg:\|Good signature" || true
-          else
-            debsign "$CHANGES_FILE" 2>&1 | grep -v "gpg:\|Good signature" || true
+          echo "📝 Changes file to sign: $CHANGES_FILE"
+          
+          # Verify file exists
+          if [ ! -f "$CHANGES_FILE" ]; then
+            echo "❌ Changes file not found at: $CHANGES_FILE"
+            exit 1
           fi
           
-          echo "✅ Package signed successfully"
+          # List GPG keys
+          echo "🔑 Available GPG keys:"
+          gpg --list-secret-keys
+          
+          # Sign with debsign
+          if [ -n "$GPG_PASSPHRASE" ]; then
+            echo "🔐 Signing with passphrase..."
+            echo "$GPG_PASSPHRASE" | debsign -p"gpg --batch --yes --passphrase-fd 0" "$CHANGES_FILE"
+          else
+            echo "🔐 Signing without passphrase..."
+            debsign "$CHANGES_FILE"
+          fi
+          
+          # Verify signature
+          echo "🔍 Verifying signature..."
+          gpg --verify "$CHANGES_FILE" 2>&1 || {
+            echo "❌ Signature verification failed"
+            exit 1
+          }
+          
+          echo "✅ Package signed and verified successfully"
       
       - name: Validate package with lintian
         run: |
