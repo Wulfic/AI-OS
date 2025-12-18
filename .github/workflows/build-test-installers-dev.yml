@@ -266,8 +266,8 @@ jobs:
       - name: Build source package for PPA
         id: build_source
         env:
-          DEBEMAIL: "support@ai-os.invalid"
-          DEBFULLNAME: "AI-OS Dev Team"
+          DEBEMAIL: ${{ secrets.LAUNCHPAD_GPG_EMAIL }}
+          DEBFULLNAME: "wulfic"
         run: |
           echo "📦 Building source package for PPA..."
           
@@ -310,7 +310,7 @@ jobs:
               'Source: ai-os' \
               'Section: devel' \
               'Priority: optional' \
-              'Maintainer: AI-OS Dev Team <support@ai-os.invalid>' \
+              'Maintainer: wulfic <${{ secrets.LAUNCHPAD_GPG_EMAIL }}>' \
               'Build-Depends: debhelper-compat (= 12), dh-python, python3-all (>= 3.10), python3-setuptools' \
               'Standards-Version: 4.5.1' \
               'Homepage: https://github.com/Wulfic/AI-OS' \
@@ -332,7 +332,7 @@ jobs:
               "  * Development build $VERSION" \
               '  * See GitHub commits for changes' \
               '' \
-              " -- AI-OS Dev Team <support@ai-os.invalid>  $(date -R)" \
+              " -- wulfic <${{ secrets.LAUNCHPAD_GPG_EMAIL }}>  $(date -R)" \
               > "$BUILD_DIR/debian/changelog"
             
             # Create debian/rules
