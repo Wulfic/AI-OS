@@ -464,7 +464,11 @@ class SettingsPanel:
         logger.info(f"Download location reset to default: {default_path}")
 
     def _update_hf_home_for_download_location(self, download_path: str) -> None:
-        """Update HF_HOME environment variable and config to match download location."""
+        """Update HF_HOME and HF_XET_CACHE environment variables to match download location.
+        
+        Sets both HF_HOME (for huggingface_hub) and HF_XET_CACHE (for xet-core) to ensure
+        all caching happens in the user-specified download location.
+        """
         try:
             from pathlib import Path
             import os
@@ -475,9 +479,26 @@ class SettingsPanel:
                 path = Path.cwd() / download_path
             
             hf_cache_path = path / ".hf_cache"
+            xet_cache_path = hf_cache_path / "xet"
             
-            # Update environment variable for current session
+            # Ensure directories exist with proper permissions
+            try:
+                hf_cache_path.mkdir(parents=True, exist_ok=True)
+                xet_cache_path.mkdir(parents=True, exist_ok=True)
+            except PermissionError:
+                logger.warning(
+                    f"Cannot create cache directories in {hf_cache_path}, "
+                    f"falling back to user home directory"
+                )
+                # Fallback to user home directory
+                hf_cache_path = Path.home() / ".cache" / "huggingface"
+                xet_cache_path = hf_cache_path / "xet"
+                hf_cache_path.mkdir(parents=True, exist_ok=True)
+                xet_cache_path.mkdir(parents=True, exist_ok=True)
+            
+            # Update environment variables for current session
             os.environ["HF_HOME"] = str(hf_cache_path.resolve())
+            os.environ["HF_XET_CACHE"] = str(xet_cache_path.resolve())
             
             # Save to config file for future sessions
             config_file = Path.home() / ".config" / "aios" / "hf_cache_path.txt"
@@ -485,6 +506,9 @@ class SettingsPanel:
             config_file.write_text(str(hf_cache_path.resolve()))
             
             logger.info(f"Updated HF_HOME to: {hf_cache_path.resolve()}")
+            logger.info(f"Updated HF_XET_CACHE to: {xet_cache_path.resolve()}")
+        except Exception as e:
+            logger.error(f"Error updating HF_HOME: {e}", exc_info=True)
         except Exception as e:
             logger.error(f"Error updating HF_HOME: {e}", exc_info=True)
     

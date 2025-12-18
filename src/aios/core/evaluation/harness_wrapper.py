@@ -231,6 +231,26 @@ cli_evaluate()
             env.setdefault('LM_EVAL_CACHE_PATH', str(cache_root))
             env.setdefault('LM_HARNESS_CACHE_PATH', str(cache_root))
             
+            # Set up HF_XET_CACHE to a writable location to avoid permission errors
+            # xet-core (used by huggingface_hub) needs a writable cache directory
+            if 'HF_HOME' in env:
+                hf_home = Path(env['HF_HOME'])
+                xet_cache = hf_home / "xet"
+            else:
+                # Default to user's cache directory
+                xet_cache = Path.home() / ".cache" / "huggingface" / "xet"
+            try:
+                xet_cache.mkdir(parents=True, exist_ok=True)
+                env.setdefault('HF_XET_CACHE', str(xet_cache.resolve()))
+            except PermissionError:
+                # Fallback to home directory
+                fallback_xet = Path.home() / ".cache" / "huggingface" / "xet"
+                fallback_xet.mkdir(parents=True, exist_ok=True)
+                env['HF_XET_CACHE'] = str(fallback_xet.resolve())
+                self.log_callback(f"[eval] Using fallback XET cache: {fallback_xet}")
+            except Exception as e:
+                self.log_callback(f"[eval] Warning: Could not set up XET cache: {e}")
+            
             # Run subprocess with explicit UTF-8 encoding
             self._process = subprocess.Popen(
                 cmd,

@@ -85,6 +85,25 @@ def setup_hf_cache_env():
     os.environ["HF_DATASETS_CACHE"] = str((_hf_cache_base / "datasets").resolve())
     os.environ["HF_HUB_CACHE"] = str((_hf_cache_base / "hub").resolve())
     os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+    
+    # Set HF_XET_CACHE to avoid permission errors with xet-core library
+    # xet-core is used by huggingface_hub for fast downloads but has strict cache requirements
+    _xet_cache = _hf_cache_base / "xet"
+    try:
+        _xet_cache.mkdir(parents=True, exist_ok=True)
+        os.environ["HF_XET_CACHE"] = str(_xet_cache.resolve())
+        logger.debug(f"Set HF_XET_CACHE to: {_xet_cache}")
+    except PermissionError:
+        # Fall back to user home directory if download location not writable
+        _xet_fallback = Path.home() / ".cache" / "huggingface" / "xet"
+        try:
+            _xet_fallback.mkdir(parents=True, exist_ok=True)
+            os.environ["HF_XET_CACHE"] = str(_xet_fallback.resolve())
+            logger.warning(f"Using fallback XET cache at: {_xet_fallback}")
+        except Exception as e3:
+            logger.warning(f"Could not set up XET cache: {e3}")
+    except Exception as e2:
+        logger.warning(f"Could not create XET cache at {_xet_cache}: {e2}")
 
 
 # Run setup on import

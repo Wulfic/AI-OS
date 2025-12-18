@@ -64,6 +64,7 @@ def _ensure_brains_directory_initialized(store_dir: str) -> None:
     
     On fresh install, the installer should create these files, but we
     defensively create them here if missing to handle edge cases.
+    Also validates existing files and repairs empty/corrupted ones.
     """
     store_path = Path(store_dir)
     try:
@@ -73,15 +74,40 @@ def _ensure_brains_directory_initialized(store_dir: str) -> None:
         logger.warning("Could not create brains directory at %s: %s", store_path, e)
         return  # Can't create directory, skip initialization
     
-    # Create empty masters.json and pinned.json if they don't exist
+    # Create or repair masters.json and pinned.json
     for filename in ("masters.json", "pinned.json"):
         filepath = store_path / filename
+        needs_repair = False
+        
         if not filepath.exists():
+            needs_repair = True
+            logger.debug("File %s does not exist, will create", filepath)
+        else:
+            # Check if file is empty or corrupted
+            try:
+                content = filepath.read_text(encoding="utf-8").strip()
+                if not content:
+                    needs_repair = True
+                    logger.warning("File %s is empty, will repair", filepath)
+                else:
+                    import json
+                    try:
+                        data = json.loads(content)
+                        if not isinstance(data, list):
+                            needs_repair = True
+                            logger.warning("File %s contains non-list data, will repair", filepath)
+                    except json.JSONDecodeError:
+                        needs_repair = True
+                        logger.warning("File %s contains invalid JSON, will repair", filepath)
+            except Exception as e:
+                logger.warning("Could not validate %s: %s", filepath, e)
+        
+        if needs_repair:
             try:
                 filepath.write_text("[]", encoding="utf-8")
-                logger.info("Created missing brains registry file: %s", filepath)
+                logger.info("Created/repaired brains registry file: %s", filepath)
             except Exception as e:
-                logger.warning("Could not create %s: %s", filepath, e)
+                logger.warning("Could not create/repair %s: %s", filepath, e)
 
 
 def _normalize_store_dir(store_dir: str | None) -> str:
