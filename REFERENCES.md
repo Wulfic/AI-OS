@@ -140,6 +140,7 @@ Special thanks to:
 - **Hugging Face** for the transformers ecosystem and model hub
 - **Microsoft DeepSpeed** team for training optimizations
 - The **EleutherAI** team for the evaluation harness
+- The  **Sapient** team for their pioneering work on hierarchical reasoning.
 - All contributors to the open-source ML community
 
 ---
