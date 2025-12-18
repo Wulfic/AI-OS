@@ -28,7 +28,7 @@ class Orchestrator:
         limits, used = compute_limits_and_usage(self.config)
         budgets = SafetyBudget(limits=limits, usage=used)
         return {
-            "version": "1.3.42",
+            "version": "1.3.51",
             "autonomy": self.config.get("autonomy", {}).get("mode", "autonomous_on"),
             "risk_tier": self.config.get("risk_tier", "conservative"),
             "budgets": budgets.summary(),
