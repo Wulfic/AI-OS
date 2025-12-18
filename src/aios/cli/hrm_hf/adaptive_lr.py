@@ -165,9 +165,9 @@ class AdaptiveLRConfig:
     lr_min: float
     lr_max: float
 
-    window_size: int = 50
-    patience: int = 20
-    cooldown_steps: int = 20
+    window_size: int = 16
+    patience: int = 10
+    cooldown_steps: int = 10
 
     increase_threshold: float = 0.02
     plateau_threshold: float = 0.001
@@ -436,6 +436,46 @@ class AdaptiveLRScheduler:
         self.steps_since_adjustment += 1
         self.loss_window.append(loss_f)
 
+        # --- Emergency Spike Detection (per-step, before window fills) ---
+        # If we have at least 4 samples, check if current loss is dramatically
+        # higher than recent average. This catches catastrophic spikes immediately.
+        if len(self.loss_window) >= 4:
+            recent = list(self.loss_window)[-4:-1]  # last 3 before current
+            recent_avg = sum(recent) / len(recent)
+            emergency_threshold = 1.5  # 50% spike = emergency
+            if recent_avg > 0 and loss_f > recent_avg * emergency_threshold:
+                # Emergency brake: immediate LR reduction
+                old_lr = float(self.current_lr)
+                emergency_factor = 0.5  # halve LR on emergency
+                new_lr = max(float(self.config.lr_min), old_lr * emergency_factor)
+                if new_lr < old_lr:
+                    self._set_lr(new_lr)
+                    self.steps_since_adjustment = 0
+                    self.adjustments_made += 1
+                    self.lr_history.append((self.total_observations, new_lr, "emergency_spike"))
+                    spike_pct = ((loss_f - recent_avg) / recent_avg * 100.0)
+                    print(
+                        f"[AdaptiveLR] EMERGENCY step={int(self.total_observations)} "
+                        f"loss={loss_f:.4f} vs recent_avg={recent_avg:.4f} (+{spike_pct:.1f}%) "
+                        f"lr {old_lr:.6g}->{new_lr:.6g} (-50%)",
+                        flush=True,
+                    )
+                    try:
+                        self.log_fn({
+                            "event": "adaptive_lr_emergency",
+                            "step": int(self.total_observations),
+                            "loss": loss_f,
+                            "recent_avg": recent_avg,
+                            "spike_pct": spike_pct,
+                            "old_lr": old_lr,
+                            "new_lr": new_lr,
+                        })
+                    except Exception:
+                        pass
+                    # Clear window to start fresh after emergency
+                    self.loss_window.clear()
+                    return self.current_lr
+
         if len(self.loss_window) < int(self.config.window_size):
             return self.current_lr
 
@@ -476,6 +516,24 @@ class AdaptiveLRScheduler:
         debug_level = int(getattr(cfg, "debug_level", 0) or 0)
         emit = bool(getattr(cfg, "emit_window_summary", False)) or debug_level >= 2
         every = int(getattr(cfg, "window_summary_every", 1) or 1)
+
+        # ALWAYS print window check status to stdout for visibility
+        try:
+            prev_avg = float(metrics.previous_avg) if metrics.previous_avg else 0.0
+            change_from_prev = ""
+            if prev_avg > 0:
+                delta_pct = ((metrics.current_avg - prev_avg) / prev_avg) * 100.0
+                change_from_prev = f" delta={delta_pct:+.2f}%"
+            print(
+                f"[AdaptiveLR] window={int(self.window_index)} step={int(self.total_observations)} "
+                f"decision={decision.value} lr={float(self.current_lr):.6g} "
+                f"loss_avg={float(metrics.current_avg):.4f}{change_from_prev} "
+                f"cv={float(metrics.cv):.3f} trend={float(metrics.trend):.4f}",
+                flush=True,
+            )
+        except Exception:
+            pass
+
         if not emit:
             return
         if every > 1 and (int(self.window_index) % every) != 0:
@@ -655,6 +713,17 @@ class AdaptiveLRScheduler:
             )
         except Exception:
             logger.debug("adaptive lr log_fn failed", exc_info=True)
+
+        # Ensure users see LR changes even when only watching stdout.
+        try:
+            change_pct = ((new_lr - old_lr) / old_lr * 100.0) if old_lr > 0 else 0.0
+            print(
+                f"[AdaptiveLR] step={int(self.total_observations)} window={int(self.window_index)} "
+                f"decision={decision.value} lr {old_lr:.6g}->{new_lr:.6g} ({change_pct:+.2f}%) reason={reason}",
+                flush=True,
+            )
+        except Exception:
+            pass
 
         if int(getattr(self.config, "debug_level", 0) or 0) >= 1:
             logger.info(

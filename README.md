@@ -1,8 +1,8 @@
-# AI-OS v1.2.17
+# AI-OS v1.3.37
 
 [![CI](https://github.com/Wulfic/AI-OS/actions/workflows/ci.yml/badge.svg)](https://github.com/Wulfic/AI-OS/actions/workflows/ci.yml)
 [![Link Check](https://github.com/Wulfic/AI-OS/actions/workflows/link-check.yml/badge.svg)](https://github.com/Wulfic/AI-OS/actions/workflows/link-check.yml)
-[![Version](https://img.shields.io/badge/version-1.2.17-blue.svg)](https://github.com/Wulfic/AI-OS/releases/tag/Official)
+[![Version](https://img.shields.io/badge/version-1.3.37-blue.svg)](https://github.com/Wulfic/AI-OS/releases/tag/Official)
 [![License](https://img.shields.io/badge/license-ANSL--v1.0-blue.svg)](LICENSE)
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/S6S31MS4TK)
 
@@ -19,7 +19,7 @@ License: AI-OS Non‑Selling Attribution License (ANSL) v1.0. You may use, copy,
 - Bleeding edge technologies, pushing the boundaries of consumer hardware.
 - Tons more features! Check out the Planned_Features section
 
-Key features in v1.2.17:
+Key features in v1.3.37:
 - Windows and Ubuntu Support!
 - Long-context training strategies and memory optimizations 
 - Multi‑GPU training (DDP/Parallel/Sharding)
@@ -35,7 +35,7 @@ The Optional model that ships alongside this program was trained on 2x RTX 2080t
 TLDR; Have a fast ass GPU with lots of VRAM if you're impatient.
 
 ## Minimum Recommended Specs!
-- GPU: 6GB VRAM **NOTE** (Nvidia:Full Support|AMD:PARTIALLY TESTED|INTEL(ARC):UNTESTED|CPU:Partial Support)
+- GPU: 6GB VRAM **NOTE** (Nvidia:Full Support|AMD:PARTIAL Support|INTEL:UNTESTED|CPU:Full Support)
 - System Memory: 16GB
 - CPU: 4 Core
 
@@ -49,9 +49,6 @@ TLDR; Have a fast ass GPU with lots of VRAM if you're impatient.
 ### Installers
 Find the official installers also in the [Releases section](https://github.com/Wulfic/AI-OS/releases).
 See the installers README in the repository for Windows (.exe) and Ubuntu (.deb) info.
-
-**Windows Security Note:** Development builds are unsigned and may trigger Windows SmartScreen ("Windows protected your PC"). This is expected behavior. Click "More info" → "Run anyway" to proceed. Official releases will be code-signed in the future.
-
 If you broke your install or are missing dependencies in terminal use: 
 ```bash
 aios doctor --repair
@@ -106,7 +103,7 @@ aios
 See [REFERENCES.md](REFERENCES.md) for a complete list of libraries and upstream projects used (PyTorch, Transformers, DeepSpeed, bitsandbytes, FlashAttention, and more) with links and licenses.
 
 ## Acknowledgments
-Based off of the work of https://github.com/sapientinc/HRM 
+
 Thanks to the open‑source ML community and upstream projects that made this possible. See [REFERENCES.md](REFERENCES.md).
 
 ## License
