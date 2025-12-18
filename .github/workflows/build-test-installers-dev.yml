@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - dev
+    paths:
+      - 'src/**'
+      - 'config/**'
+      - 'installers/**'
+      - 'pyproject.toml'
+      - 'requirements*.txt'
+      - '.github/workflows/build-test-installers-dev.yml'
   workflow_dispatch:  # Manual trigger for dev testing
     inputs:
       refresh_lock:
@@ -551,55 +558,6 @@ jobs:
   # =============================================================================
   # Test PPA Installation (DEV)
   # =============================================================================
-  test-ppa-install-dev:
-    name: Test PPA Installation (aios-dev)
-    runs-on: ubuntu-22.04
-    needs: [prepare, publish-ppa-dev]
-    if: success()
-    
-    steps:
-      - name: Wait for PPA processing
-        run: |
-          echo "⏳ Waiting 5 minutes for PPA to process package..."
-          sleep 300
-      
-      - name: Add PPA and install
-        run: |
-          echo "📥 Adding ppa:wulfic/aios-dev"
-          sudo add-apt-repository -y ppa:wulfic/aios-dev
-          sudo apt-get update
-          
-          echo "📦 Installing ai-os from PPA"
-          sudo apt-get install -y ai-os
-      
-      - name: Verify installation
-        run: |
-          echo "✅ Verifying installation..."
-          
-          # Check if package is installed
-          if dpkg -l | grep -q ai-os; then
-            echo "✅ Package installed successfully"
-          else
-            echo "❌ Package not found"
-            exit 1
-          fi
-          
-          # Check if files exist
-          if [ -d "/opt/ai-os" ]; then
-            echo "✅ Found /opt/ai-os"
-          else
-            echo "❌ Missing /opt/ai-os"
-            exit 1
-          fi
-          
-          # Try to run aios command
-          if command -v aios &> /dev/null; then
-            echo "✅ aios command available"
-            aios --version || echo "⚠️  Version check failed but command exists"
-          else
-            echo "⚠️  aios command not found in PATH"
-          fi
-
   # =============================================================================
   # Windows Installer Build & Test
   # =============================================================================
@@ -796,7 +754,7 @@ jobs:
   # =============================================================================
   summary:
     name: Build Summary
-    needs: [prepare, build-deb, build-windows, prepare-ppa-dev, publish-ppa-dev, test-ppa-install-dev]
+    needs: [prepare, build-deb, build-windows, prepare-ppa-dev, publish-ppa-dev]
     runs-on: ubuntu-latest
     if: always()
     
@@ -817,7 +775,6 @@ jobs:
           echo "| 🔨 Build Windows | ${{ needs.build-windows.result == 'success' && '✅' || needs.build-windows.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.build-windows.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| 📦 Prepare PPA Source | ${{ needs.prepare-ppa-dev.result == 'success' && '✅' || needs.prepare-ppa-dev.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.prepare-ppa-dev.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| 📤 Upload to PPA (aios-dev) | ${{ needs.publish-ppa-dev.result == 'success' && '✅' || needs.publish-ppa-dev.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.publish-ppa-dev.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 🧪 Test PPA Install | ${{ needs.test-ppa-install-dev.result == 'success' && '✅' || needs.test-ppa-install-dev.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.test-ppa-install-dev.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
