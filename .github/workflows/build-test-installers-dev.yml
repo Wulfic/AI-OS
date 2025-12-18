@@ -272,25 +272,13 @@ jobs:
           echo "📦 Building source package for PPA..."
           
           VERSION="${{ needs.prepare.outputs.version }}"
-          BUILD_DIR="build_ppa"
+          ORIG_VERSION="${VERSION%-dev}"
+          PACKAGE_NAME="ai-os"
+          BUILD_DIR="${PACKAGE_NAME}-${ORIG_VERSION}"
           
-          mkdir -p "$BUILD_DIR"
-          cd "$BUILD_DIR"
-          
-          # Copy source files excluding build artifacts
-          rsync -av ../ ./ \
-            --exclude=".git" \
-            --exclude="build" \
-            --exclude="dist" \
-            --exclude="*.egg-info" \
-            --exclude="__pycache__" \
-            --exclude=".venv" \
-            --exclude="artifacts" \
-            --exclude="build_ppa" \
-            --exclude="installers/_builds" \
-            --exclude="installers/releases"
-          
-          cd ..
+          echo "Version: $VERSION"
+          echo "Original version: $ORIG_VERSION"
+          echo "Build directory: $BUILD_DIR"
           
           # Check if custom source package script exists
           if [ -f "installers/_builds/ubuntu/create_source_package.sh" ]; then
@@ -299,6 +287,24 @@ jobs:
           else
             echo "⚠️  Source package script not found, creating basic structure..."
             
+            # Create properly named build directory
+            mkdir -p "$BUILD_DIR"
+            
+            # Copy source files excluding build artifacts
+            echo "📁 Copying source files..."
+            rsync -av ./ "$BUILD_DIR/" \
+              --exclude=".git" \
+              --exclude="build" \
+              --exclude="dist" \
+              --exclude="*.egg-info" \
+              --exclude="__pycache__" \
+              --exclude=".venv" \
+              --exclude="artifacts" \
+              --exclude="${PACKAGE_NAME}-*" \
+              --exclude="installers/_builds" \
+              --exclude="installers/releases"
+            
+            # Create debian directory
             mkdir -p "$BUILD_DIR/debian"
             
             # Create debian/control
@@ -343,23 +349,28 @@ jobs:
             # Create debian/compat
             echo "12" > "$BUILD_DIR/debian/compat"
             
-            # Move back to workspace root
-            cd ..
-            
             # Create source tarball (.orig.tar.gz)
-            # Strip -dev suffix for tarball version
-            ORIG_VERSION="${VERSION%-dev}"
-            echo "📦 Creating original source tarball: ai-os_${ORIG_VERSION}.orig.tar.gz"
+            echo "📦 Creating original source tarball: ${PACKAGE_NAME}_${ORIG_VERSION}.orig.tar.gz"
             tar --exclude-vcs --exclude="$BUILD_DIR/debian" \
-                -czf "ai-os_${ORIG_VERSION}.orig.tar.gz" "$BUILD_DIR"
+                -czf "${PACKAGE_NAME}_${ORIG_VERSION}.orig.tar.gz" "$BUILD_DIR"
+            
+            # Verify tarball was created
+            if [ ! -f "${PACKAGE_NAME}_${ORIG_VERSION}.orig.tar.gz" ]; then
+              echo "❌ Failed to create tarball"
+              ls -la
+              exit 1
+            fi
+            
+            echo "✅ Tarball created: $(ls -lh ${PACKAGE_NAME}_${ORIG_VERSION}.orig.tar.gz)"
             
             # Build source package
+            echo "🔨 Building source package..."
             cd "$BUILD_DIR"
             debuild -S -sa -us -uc --no-check-builddeps 2>&1 || {
-              echo "❌ debuild failed, checking for prompts..."
-              echo "Trying with yes | debuild..."
-              yes | debuild -S -sa -us -uc --no-check-builddeps || true
+              echo "❌ debuild failed"
+              exit 1
             }
+            cd ..
           fi
           
           # Find generated files
