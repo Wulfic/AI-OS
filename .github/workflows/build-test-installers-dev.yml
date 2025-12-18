@@ -272,12 +272,10 @@ jobs:
           echo "📦 Building source package for PPA..."
           
           VERSION="${{ needs.prepare.outputs.version }}"
-          ORIG_VERSION="${VERSION%-dev}"
           PACKAGE_NAME="ai-os"
-          BUILD_DIR="${PACKAGE_NAME}-${ORIG_VERSION}"
+          BUILD_DIR="${PACKAGE_NAME}-${VERSION}"
           
           echo "Version: $VERSION"
-          echo "Original version: $ORIG_VERSION"
           echo "Build directory: $BUILD_DIR"
           
           # Check if custom source package script exists
@@ -350,18 +348,19 @@ jobs:
             echo "12" > "$BUILD_DIR/debian/compat"
             
             # Create source tarball (.orig.tar.gz)
-            echo "📦 Creating original source tarball: ${PACKAGE_NAME}_${ORIG_VERSION}.orig.tar.gz"
+            # Use full version including -dev suffix
+            echo "📦 Creating original source tarball: ${PACKAGE_NAME}_${VERSION}.orig.tar.gz"
             tar --exclude-vcs --exclude="$BUILD_DIR/debian" \
-                -czf "${PACKAGE_NAME}_${ORIG_VERSION}.orig.tar.gz" "$BUILD_DIR"
+                -czf "${PACKAGE_NAME}_${VERSION}.orig.tar.gz" "$BUILD_DIR"
             
             # Verify tarball was created
-            if [ ! -f "${PACKAGE_NAME}_${ORIG_VERSION}.orig.tar.gz" ]; then
+            if [ ! -f "${PACKAGE_NAME}_${VERSION}.orig.tar.gz" ]; then
               echo "❌ Failed to create tarball"
               ls -la
               exit 1
             fi
             
-            echo "✅ Tarball created: $(ls -lh ${PACKAGE_NAME}_${ORIG_VERSION}.orig.tar.gz)"
+            echo "✅ Tarball created: $(ls -lh ${PACKAGE_NAME}_${VERSION}.orig.tar.gz)"
             
             # Build source package
             echo "🔨 Building source package..."
