@@ -340,12 +340,24 @@ jobs:
               '#!/usr/bin/make -f' \
               '' \
               '%:' \
-              '	dh $@ --with python3 --buildsystem=pybuild' \
+              '	dh $@' \
+              '' \
+              'override_dh_auto_clean:' \
+              '	# Skip Python build cleanup' \
+              '' \
+              'override_dh_auto_build:' \
+              '	# Skip Python build' \
+              '' \
+              'override_dh_auto_install:' \
+              '	# Skip Python install' \
               > "$BUILD_DIR/debian/rules"
             chmod +x "$BUILD_DIR/debian/rules"
             
-            # Create debian/compat
-            echo "12" > "$BUILD_DIR/debian/compat"
+            # Create debian/source/format
+            mkdir -p "$BUILD_DIR/debian/source"
+            echo "3.0 (quilt)" > "$BUILD_DIR/debian/source/format"
+            
+            # Note: No debian/compat file needed - using debhelper-compat in Build-Depends
             
             # Create source tarball (.orig.tar.gz)
             # Use full version including -dev suffix
@@ -365,21 +377,40 @@ jobs:
             # Build source package
             echo "🔨 Building source package..."
             cd "$BUILD_DIR"
-            debuild -S -sa -us -uc --no-check-builddeps 2>&1 || {
+            
+            # Run debuild with full output on error
+            if ! debuild -S -sa -us -uc --no-check-builddeps 2>&1; then
               echo "❌ debuild failed"
+              echo ""
+              echo "📂 Directory contents:"
+              ls -la
+              echo ""
+              echo "📂 debian/ contents:"
+              ls -la debian/ || true
               exit 1
-            }
+            fi
+            
             cd ..
           fi
           
           # Find generated files
-          DSC_FILE=$(find . -name "*.dsc" | head -1)
-          CHANGES_FILE=$(find . -name "*_source.changes" | head -1)
+          echo "🔍 Searching for source package files..."
+          echo "Files in current directory:"
+          ls -la *.dsc *.changes *.tar.* 2>/dev/null || echo "No source files in root yet"
+          
+          DSC_FILE=$(find . -maxdepth 1 -name "*.dsc" | head -1)
+          CHANGES_FILE=$(find . -maxdepth 1 -name "*_source.changes" | head -1)
           
           if [ -z "$DSC_FILE" ] || [ -z "$CHANGES_FILE" ]; then
             echo "❌ Source package files not found"
+            echo "Expected: ${PACKAGE_NAME}_${VERSION}-1.dsc and ${PACKAGE_NAME}_${VERSION}-1_source.changes"
+            echo "All files in directory:"
+            ls -laR
             exit 1
           fi
+          
+          echo "📦 Found .dsc file: $DSC_FILE"
+          echo "📦 Found .changes file: $CHANGES_FILE"
           
           echo "dsc_file=$DSC_FILE" >> $GITHUB_OUTPUT
           echo "changes_file=$CHANGES_FILE" >> $GITHUB_OUTPUT
@@ -473,13 +504,20 @@ jobs:
           echo "📤 Uploading to ppa:wulfic/aios-dev..."
           
           cd package
+          
+          echo "📂 Files in package directory:"
+          ls -la
+          
           CHANGES_FILE=$(find . -name "*_source.changes" | head -1)
           
           if [ -z "$CHANGES_FILE" ]; then
             echo "❌ Source changes file not found"
+            echo "Available files:"
+            ls -la
             exit 1
           fi
           
+          echo "📤 Uploading: $CHANGES_FILE"
           dput ppa:wulfic/aios-dev "$CHANGES_FILE"
           
           echo "✅ Package uploaded successfully to ppa:wulfic/aios-dev"
