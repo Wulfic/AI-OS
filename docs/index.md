@@ -55,12 +55,6 @@ If you broke your install or are missing dependencies in terminal use:
 ```bash
 aios doctor --repair
 ```
-### APT
-```bash
-sudo add-apt-repository ppa:wulfic/ppa-aios
-sudo apt update
-sudo apt install ai-os -y
-```
 ### Ubuntu
 ```bash
 # From repo root

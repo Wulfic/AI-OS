@@ -790,10 +790,10 @@ def train_gpu_worker(
                 "session_steps": stats.get("session_steps", total_steps_this_gpu),  # Current session optimizer steps
                 "session_true_steps": stats.get("session_true_steps", 0),  # Current session true steps (micro-batches)
                 "total_true_steps": stats.get("total_true_steps", 0),  # All-time total true steps (all sessions)
-                "total_gpu_steps": stats["total_gpu_steps"],  # Historical max across all chunks/sessions
-                "total_chunks_trained": stats["total_chunks_trained"],
-                "blocks_completed": stats["blocks_completed"],
-                "current_epoch": stats["current_epoch"],
+                "total_gpu_steps": stats.get("total_optimizer_steps", stats.get("total_gpu_steps", total_steps_this_gpu)),  # Historical max across all chunks/sessions
+                "total_chunks_trained": stats.get("total_chunks_trained", 0),
+                "blocks_completed": stats.get("blocks_completed", 0),
+                "current_epoch": stats.get("current_epoch", 0),
                 "total_blocks": stats.get("total_blocks_in_dataset"),
             })
             

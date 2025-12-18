@@ -160,6 +160,9 @@ def get_gpu_stats() -> list[dict[str, Any]]:
         nvsmi = shutil.which("nvidia-smi")
         if nvsmi:
             nv_start = time.perf_counter()
+            # On Windows, use CREATE_NO_WINDOW to prevent CMD popups
+            import sys
+            creationflags = _sp.CREATE_NO_WINDOW if sys.platform == "win32" else 0
             res = _sp.run(
                 [
                     nvsmi,
@@ -170,6 +173,7 @@ def get_gpu_stats() -> list[dict[str, Any]]:
                 capture_output=True,
                 text=True,
                 timeout=1.0,  # Reduced from 2.0s to 1.0s to avoid blocking GUI
+                creationflags=creationflags,
             )
             nv_duration = time.perf_counter() - nv_start
             if nv_duration > 0.5:

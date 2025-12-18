@@ -140,6 +140,9 @@ class SystemStatusUpdater:
             if nvsmi:
                 try:
                     nv_start = time.perf_counter()
+                    # On Windows, use CREATE_NO_WINDOW to prevent CMD popups
+                    import sys
+                    creationflags = _sp.CREATE_NO_WINDOW if sys.platform == "win32" else 0
                     res = _sp.run(
                         [
                             nvsmi,
@@ -150,6 +153,7 @@ class SystemStatusUpdater:
                         capture_output=True,
                         text=True,
                         timeout=1.5,
+                        creationflags=creationflags,
                     )
                     nv_duration = time.perf_counter() - nv_start
                     if nv_duration > 0.5:

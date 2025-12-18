@@ -668,7 +668,6 @@ def train_actv1_impl(
     try:
         if getattr(config, "auto_adjust_lr", False) and float(lr) > 0:
             from .adaptive_lr import AdaptiveLRScheduler, build_adaptive_lr_config
-            from pathlib import Path
             import json as _json
 
             use_moe_flag = bool(getattr(config, "use_moe", False))

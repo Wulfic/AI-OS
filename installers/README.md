@@ -55,14 +55,7 @@ Download the latest `.exe` installer from the [Releases page](https://github.com
 
 ### Ubuntu Installation
 
-#### APT Repository (Recommended)
-```bash
-sudo add-apt-repository ppa:wulfic/ppa-aios
-sudo apt update
-sudo apt install ai-os -y
-```
-
-#### Shell Script
+#### Shell Script (Recommended)
 ```bash
 # From repository root
 sudo chmod a+x ./installers/scripts/install_aios_on_ubuntu.sh
