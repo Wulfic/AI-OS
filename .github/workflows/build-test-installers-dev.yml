@@ -3,7 +3,7 @@ name: Build → Test Installers (DEV)
 on:
   push:
     branches:
-      - dev
+      - dev  # Only run on dev branch pushes
     paths:
       - 'src/**'
       - 'config/**'
@@ -11,6 +11,8 @@ on:
       - 'pyproject.toml'
       - 'requirements*.txt'
       - '.github/workflows/build-test-installers-dev.yml'
+    tags-ignore:
+      - '**'  # Never run on tag pushes
   workflow_dispatch:  # Manual trigger for dev testing
     inputs:
       refresh_lock:
