@@ -258,10 +258,14 @@ jobs:
           echo "key_id=$KEY_ID" >> $GITHUB_OUTPUT
           echo "✅ GPG Key imported (ID: *****$KEY_ID_SHORT)"
           
-          if [ -n "$GPG_PASSPHRASE" ]; then
-            echo "allow-preset-passphrase" >> ~/.gnupg/gpg-agent.conf
-            gpg-connect-agent reloadagent /bye 2>/dev/null || true
-          fi
+          # Configure GPG for non-interactive use
+          echo "use-agent" > ~/.gnupg/gpg.conf
+          echo "pinentry-mode loopback" >> ~/.gnupg/gpg.conf
+          echo "allow-loopback-pinentry" > ~/.gnupg/gpg-agent.conf
+          gpg-connect-agent reloadagent /bye 2>/dev/null || true
+          
+          # Export key ID for signing
+          echo "GPG_KEY_ID=$KEY_ID" >> $GITHUB_ENV
       
       - name: Build source package for PPA
         id: build_source
@@ -437,13 +441,13 @@ jobs:
           echo "🔑 Available GPG keys:"
           gpg --list-secret-keys
           
-          # Sign with debsign
+          # Sign with debsign using GPG in loopback mode
           if [ -n "$GPG_PASSPHRASE" ]; then
             echo "🔐 Signing with passphrase..."
-            echo "$GPG_PASSPHRASE" | debsign -p"gpg --batch --yes --passphrase-fd 0" "$CHANGES_FILE"
+            debsign -p"gpg --batch --pinentry-mode loopback --passphrase-fd 0" -k"$GPG_KEY_ID" "$CHANGES_FILE" <<< "$GPG_PASSPHRASE"
           else
             echo "🔐 Signing without passphrase..."
-            debsign "$CHANGES_FILE"
+            debsign -k"$GPG_KEY_ID" "$CHANGES_FILE"
           fi
           
           # Verify signature
