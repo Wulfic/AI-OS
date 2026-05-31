@@ -6,13 +6,11 @@ from __future__ import annotations
 from ...utils import safe_variables
 
 import logging
-import os
 import platform
 import threading
 import time
 from concurrent.futures import CancelledError, TimeoutError, Future
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Any, Callable, Optional
 
 try:  # pragma: no cover - GUI environment dependent

@@ -10,7 +10,7 @@ This module provides advanced memory management techniques for pushing the limit
 """
 
 from __future__ import annotations
-from typing import Optional, Any
+from typing import Any
 import gc
 import logging
 import torch
@@ -431,11 +431,11 @@ def print_extreme_scale_recommendations(
     print(f"Architecture: {h_layers}H + {l_layers}L layers, {hidden_size}d, {num_heads} heads")
     print(f"Context Length: {seq_len:,} tokens")
     print(f"Available VRAM: {available_vram_gb:.1f} GB")
-    print(f"\nOptimal Configuration:")
+    print("\nOptimal Configuration:")
     print(f"  Chunk Size: {chunk_size} tokens")
     print(f"  Num Chunks: {num_chunks}")
     print(f"  Estimated VRAM: {estimate['total_estimated_gb']:.2f} GB")
-    print(f"\nMemory Breakdown:")
+    print("\nMemory Breakdown:")
     print(f"  Model + Optimizer: {estimate['model_params_gb'] + estimate['optimizer_states_gb']:.2f} GB")
     print(f"  Activations (per chunk): {estimate['chunk_activations_gb']:.2f} GB")
     print(f"  Carry State (compressed): {estimate['carry_state_gb']:.3f} GB")
@@ -446,19 +446,19 @@ def print_extreme_scale_recommendations(
     # Parameter verification
     param_breakdown = estimate.get('parameter_breakdown', {})
     if not param_breakdown.get('match', True):
-        print(f"\n⚠️  Parameter Count Mismatch:")
+        print("\n⚠️  Parameter Count Mismatch:")
         print(f"   Estimated: {param_breakdown.get('total', 0):,}")
         print(f"   Actual: {param_breakdown.get('model_params_input', 0):,}")
     
     if estimate['total_estimated_gb'] > available_vram_gb:
-        print(f"\n⚠️  WARNING: Estimated usage exceeds available VRAM!")
+        print("\n⚠️  WARNING: Estimated usage exceeds available VRAM!")
         overage = estimate['total_estimated_gb'] - available_vram_gb
         print(f"   Overage: {overage:.2f} GB ({overage/available_vram_gb*100:.0f}%)")
-        print(f"   Consider:")
+        print("   Consider:")
         print(f"   - Reducing context length to {seq_len // 2:,} tokens")
-        print(f"   - Reducing model size (fewer layers or smaller hidden dim)")
-        print(f"   - Reducing batch size to 1 (if not already)")
-        print(f"   - Using CPU offloading (slower but works)")
+        print("   - Reducing model size (fewer layers or smaller hidden dim)")
+        print("   - Reducing batch size to 1 (if not already)")
+        print("   - Using CPU offloading (slower but works)")
         
         # Suggest specific architecture reductions
         if h_layers > 4 or l_layers > 4:
@@ -467,15 +467,15 @@ def print_extreme_scale_recommendations(
             print(f"   - Try hidden_size = {max(256, hidden_size//2)}")
     else:
         headroom = available_vram_gb - estimate['total_estimated_gb']
-        print(f"\n✅ Configuration should work!")
+        print("\n✅ Configuration should work!")
         print(f"   Headroom: {headroom:.2f} GB ({headroom/available_vram_gb*100:.0f}%)")
         
         # Suggest optimizations if there's significant headroom
         if headroom > 3.0:
-            print(f"\n💡 You have significant headroom! Consider:")
+            print("\n💡 You have significant headroom! Consider:")
             if seq_len < 100_000:
                 print(f"   - Increasing context to {min(500_000, seq_len * 2):,} tokens")
-            print(f"   - Increasing batch_size to 2")
+            print("   - Increasing batch_size to 2")
             if h_layers < 12 and l_layers < 12:
                 print(f"   - Scaling up to {h_layers + 2}H + {l_layers + 2}L layers")
     

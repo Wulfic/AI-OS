@@ -105,4 +105,4 @@ class WidthManagementMixin:
                 pass
         self.mlp_t = rebuilt.to(self.device)
         # reset optimizer for new params (use getattr for type checkers)
-        self.opt = getattr(t.optim, "Adam")(self._torch_params(), lr=self.cfg.lr)
+        self.opt = t.optim.Adam(self._torch_params(), lr=self.cfg.lr)

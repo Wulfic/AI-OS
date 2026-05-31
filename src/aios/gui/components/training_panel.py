@@ -8,7 +8,6 @@ import logging
 import queue
 import re
 import subprocess as _sp
-import sys
 import time
 from typing import Any, Callable, Optional
 
@@ -135,7 +134,7 @@ class TrainingPanel:
                 result = self._run_cli(args)
             except Exception as exc:
                 if on_error is not None:
-                    self._dispatch_ui(lambda: on_error(exc))
+                    self._dispatch_ui(lambda exc=exc: on_error(exc))
             else:
                 if on_success is not None:
                     self._dispatch_ui(lambda: on_success(result))
@@ -324,7 +323,7 @@ class TrainingPanel:
 
         Non-blocking: runs search/crawl steps in a background thread, then triggers training on the UI thread.
         """
-        import ast, json
+        import ast
 
         logger.info("User action: Starting auto-train workflow (topics → search → crawl → train)")
         start_time = time.time()

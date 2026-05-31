@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional, Any
+from typing import Optional
 
 
 def load_brain_metadata(

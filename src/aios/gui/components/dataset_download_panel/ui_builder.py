@@ -4,7 +4,6 @@ UI Builder for Dataset Download Panel
 Functions for building the user interface components.
 """
 
-import tkinter as tk
 from tkinter import ttk, scrolledtext, filedialog
 
 # Import safe variable wrappers

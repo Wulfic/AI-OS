@@ -33,7 +33,7 @@ def show_config_selector(dataset_name: str, configs: List[str], parent: tk.Widge
     # Instructions
     instructions = ttk.Label(
         dialog,
-        text=f"This dataset has multiple configurations.\nPlease select one to download:",
+        text="This dataset has multiple configurations.\nPlease select one to download:",
         justify="left",
         font=("TkDefaultFont", 10)
     )

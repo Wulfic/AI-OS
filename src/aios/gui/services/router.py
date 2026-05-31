@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import ast
 import json
-from typing import Any
 
 
 def chat_route(user: str) -> list[str]:

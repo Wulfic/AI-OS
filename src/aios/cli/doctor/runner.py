@@ -9,9 +9,7 @@ import asyncio
 import json
 import logging
 import platform
-import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from enum import Enum
@@ -125,7 +123,6 @@ async def run_diagnostics(
     Returns:
         DiagnosticReport with all results
     """
-    from datetime import datetime
     
     start_time = time.perf_counter()
     results: list[DiagnosticResult] = []

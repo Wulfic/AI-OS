@@ -101,8 +101,8 @@ class AsyncWorkerPool:
             task_label = getattr(future, "_aios_task_label", None)
         if task_label is None:
             task_label = task_name
-        setattr(future, "_aios_task_label", task_label)
-        setattr(future, "_aios_submitted_at", submitted_at)
+        future._aios_task_label = task_label
+        future._aios_submitted_at = submitted_at
         with self._lock:
             self._submitted += 1
             self._queued += 1

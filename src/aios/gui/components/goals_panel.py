@@ -4,7 +4,7 @@ from __future__ import annotations
 from ..utils import safe_variables
 
 import logging
-from typing import Any, Callable, Iterable, List, cast
+from typing import Any, Callable, Iterable, cast
 
 try:
     import tkinter as tk  # type: ignore

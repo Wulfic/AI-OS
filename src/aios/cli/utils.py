@@ -10,7 +10,6 @@ from typing import Optional
 import io
 
 import yaml
-from aios.utils.async_logging import NonBlockingTimedRotatingFileHandler
 from aios.system.paths import get_logs_dir, get_user_config_dir
 
 # Global reference to UTF-8 wrapped streams for Windows
@@ -30,7 +29,7 @@ if sys.platform == 'win32':
                 line_buffering=True
             )
             sys.stdout = _utf8_stdout
-    except (AttributeError, ValueError) as e:
+    except (AttributeError, ValueError):
         # If wrapping fails, continue with original stdout
         pass
     
@@ -44,7 +43,7 @@ if sys.platform == 'win32':
                 line_buffering=True
             )
             sys.stderr = _utf8_stderr
-    except (AttributeError, ValueError) as e:
+    except (AttributeError, ValueError):
         # If wrapping fails, continue with original stderr
         pass
 

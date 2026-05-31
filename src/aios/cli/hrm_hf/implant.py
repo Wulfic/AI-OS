@@ -87,7 +87,7 @@ def implant_brain_impl(
     params = list(adapter.q_head.parameters())
     if train_lm:
         params += [p for p in adapter.model.parameters() if p.requires_grad]
-    OptClass = getattr(torch.optim, "AdamW", None) or getattr(torch.optim, "Adam")
+    OptClass = getattr(torch.optim, "AdamW", None) or torch.optim.Adam
     opt = OptClass(params, lr=float(lr))
 
     N = input_ids.shape[0]

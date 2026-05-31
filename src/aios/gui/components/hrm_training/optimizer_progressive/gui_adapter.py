@@ -40,14 +40,14 @@ def optimize_from_gui_progressive(panel) -> Dict[str, Any]:
             user_dataset = panel.dataset_var.get().strip()
             if user_dataset:
                 dataset_file = user_dataset
-        except:
+        except Exception:
             pass
     
     max_seq_len = 512
     if hasattr(panel, 'max_seq_var'):
         try:
             max_seq_len = int(panel.max_seq_var.get())
-        except:
+        except Exception:
             pass
     
     # Get GPU configuration
@@ -64,7 +64,7 @@ def optimize_from_gui_progressive(panel) -> Dict[str, Any]:
             ]
             cuda_devices = ",".join(str(i) for i in cuda_selected)
             use_multi_gpu = len(cuda_selected) > 1
-        except:
+        except Exception:
             pass
     
     # Create configuration
@@ -93,7 +93,7 @@ def optimize_from_gui_progressive(panel) -> Dict[str, Any]:
         level = results["optimal_level"]
         batch = results["optimal_batch"]
         
-        log_callback(f"\n📋 Applying optimal settings to GUI...")
+        log_callback("\n📋 Applying optimal settings to GUI...")
         
         try:
             # Update batch size

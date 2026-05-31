@@ -5,15 +5,15 @@ from __future__ import annotations
 import time
 import threading
 from pathlib import Path
-from typing import Dict, List, Any, Callable, TYPE_CHECKING
+from typing import Dict, List, Any, Callable, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .config import OptimizationConfig
     from .process_manager import ProcessManager
 
-from .command_builder import build_command_env, extend_with_device_args
+from .command_builder import build_command_env
 from .gpu_monitoring import create_gpu_monitor_safe, stop_gpu_monitor, extract_utilization, extract_memory
-from .result_parser import parse_training_throughput, detect_oom
+from .result_parser import detect_oom
 
 
 def run_single_batch(
@@ -238,5 +238,5 @@ def _create_stop_file(stop_file: Path):
     """
     try:
         stop_file.touch()
-    except:
+    except Exception:
         pass

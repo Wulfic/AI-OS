@@ -10,7 +10,7 @@ from aios.memory.store import (
     save_budgets,
     load_budget_usage,
 )
-from aios.core.budgets import SafetyBudget, defaults_for_risk_tier
+from aios.core.budgets import defaults_for_risk_tier
 
 
 def open_db(db_path: str | None):

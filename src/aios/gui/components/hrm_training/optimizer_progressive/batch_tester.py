@@ -106,14 +106,14 @@ def test_single_batch(
     if train_log.exists():
         try:
             train_log.unlink()
-        except:
+        except Exception:
             pass
     
     # Setup stop file cleanup
     if stop_file.exists():
         try:
             stop_file.unlink()
-        except:
+        except Exception:
             pass
     
     # Also clean graceful stop file
@@ -121,7 +121,7 @@ def test_single_batch(
         graceful_stop = Path("training_datasets/actv1/GRACEFUL_STOP")
         if graceful_stop.exists():
             graceful_stop.unlink()
-    except:
+    except Exception:
         pass
     
     # Start GPU monitoring
@@ -133,7 +133,7 @@ def test_single_batch(
                 log_file = output_dir / f"gpu_metrics_{config.session_id}.jsonl"
                 monitor = create_gpu_monitor(device_ids, str(log_file))
                 monitor.start_monitoring(interval=1.0)
-    except:
+    except Exception:
         pass
     
     # Create stop timer
@@ -178,7 +178,7 @@ def test_single_batch(
                     mem = device_metrics.get("memory_max", 0.0)
                     if mem > memory_percent:
                         memory_percent = mem
-        except:
+        except Exception:
             pass
     
     # Parse results
@@ -191,15 +191,15 @@ def test_single_batch(
     
     # Log stderr/stdout for debugging if throughput is 0
     if throughput == 0:
-        log(f"      ⚠️  Zero throughput detected - checking process output...")
+        log("      ⚠️  Zero throughput detected - checking process output...")
         if process.stderr:
             stderr_lines = process.stderr.strip().split('\n')
-            log(f"      STDERR (last 5 lines):")
+            log("      STDERR (last 5 lines):")
             for line in stderr_lines[-5:]:
                 log(f"        {line[:150]}")
         if process.stdout:
             stdout_lines = process.stdout.strip().split('\n')
-            log(f"      STDOUT (last 5 lines):")
+            log("      STDOUT (last 5 lines):")
             for line in stdout_lines[-5:]:
                 log(f"        {line[:150]}")
     
@@ -216,7 +216,7 @@ def test_single_batch(
     if stop_file.exists():
         try:
             stop_file.unlink()
-        except:
+        except Exception:
             pass
     
     return BatchTestResult(
@@ -253,7 +253,7 @@ def parse_throughput(train_log: Path, test_duration: int, log_func=None) -> floa
         
         file_size = train_log.stat().st_size
         if file_size == 0:
-            log(f"      ⚠️  Log file is empty (0 bytes)")
+            log("      ⚠️  Log file is empty (0 bytes)")
             return 0.0
         
         log(f"      📊 Parsing log file ({file_size} bytes)...")
@@ -293,7 +293,7 @@ def parse_throughput(train_log: Path, test_duration: int, log_func=None) -> floa
             log(f"      📊 Using fallback throughput: {throughput:.2f} steps/sec")
             return throughput
         else:
-            log(f"      ⚠️  No training steps found in log file")
+            log("      ⚠️  No training steps found in log file")
         
         return 0.0
     except Exception as e:

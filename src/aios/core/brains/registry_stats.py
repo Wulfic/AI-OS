@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any, Dict, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aios.core.brains.registry_core import BrainRegistry
+
+logger = logging.getLogger(__name__)
 
 
 def discover_actv1_bundles(registry: "BrainRegistry") -> Dict[str, int]:
@@ -192,7 +195,12 @@ def merge_orphaned_parallel_checkpoints(registry: "BrainRegistry", brain_name: s
         if not registry.store_dir:
             return False
         
-        brain_dir = os.path.join(registry.store_dir, "actv1", brain_name)
+        actv1_root = os.path.realpath(os.path.join(registry.store_dir, "actv1"))
+        brain_dir = os.path.realpath(os.path.join(actv1_root, brain_name))
+        # Guard against path traversal via a malicious brain_name (e.g. "../..").
+        if os.path.commonpath([actv1_root, brain_dir]) != actv1_root or brain_dir == actv1_root:
+            logger.error("Rejected unsafe brain_name for checkpoint merge: %r", brain_name)
+            return False
         if not os.path.isdir(brain_dir):
             return False
         
@@ -230,29 +238,73 @@ def merge_orphaned_parallel_checkpoints(registry: "BrainRegistry", brain_name: s
         try:
             from safetensors.torch import load_file as load_safetensors, save_file as save_safetensors
             import torch
-            
-            # Load all checkpoints
-            state_dicts = []
+
+            # Load all checkpoints, tracking the source path for diagnostics
+            loaded: list[tuple[str, dict]] = []
             for cp in checkpoint_files:
                 try:
                     sd = load_safetensors(cp, device='cpu')
-                    state_dicts.append(sd)
-                except Exception:
-                    pass
-            
-            if not state_dicts:
+                    loaded.append((cp, sd))
+                except Exception as exc:
+                    logger.warning("Skipping unreadable parallel checkpoint %s: %s", cp, exc)
+
+            if not loaded:
+                logger.error("No readable parallel checkpoints to merge in %s", parallel_dir)
                 return False
-            
-            # Average weights across all checkpoints
+
+            # Use the first checkpoint as the reference structure
+            ref_path, ref_sd = loaded[0]
+            ref_keys = set(ref_sd.keys())
+
+            # Validate that every checkpoint has identical keys and per-key shapes.
+            # A mismatch would otherwise crash mid-merge or silently average
+            # incompatible tensors, producing a corrupt model.
+            valid = [(ref_path, ref_sd)]
+            for cp, sd in loaded[1:]:
+                keys = set(sd.keys())
+                if keys != ref_keys:
+                    missing = ref_keys - keys
+                    extra = keys - ref_keys
+                    logger.error(
+                        "Parallel checkpoint %s has mismatched keys vs %s "
+                        "(missing=%s, extra=%s); excluding from merge",
+                        cp, ref_path, sorted(missing)[:5], sorted(extra)[:5],
+                    )
+                    continue
+                shape_mismatch = next(
+                    (k for k in ref_keys if sd[k].shape != ref_sd[k].shape), None
+                )
+                if shape_mismatch is not None:
+                    logger.error(
+                        "Parallel checkpoint %s has shape mismatch for %r "
+                        "(%s vs %s); excluding from merge",
+                        cp, shape_mismatch, tuple(sd[shape_mismatch].shape),
+                        tuple(ref_sd[shape_mismatch].shape),
+                    )
+                    continue
+                valid.append((cp, sd))
+
+            state_dicts = [sd for _, sd in valid]
+
+            # Average weights across all validated checkpoints, restoring the
+            # reference dtype so the merged file matches the original precision.
             merged_state = {}
-            for key in state_dicts[0].keys():
+            for key in ref_keys:
+                ref_dtype = ref_sd[key].dtype
                 tensors = [sd[key].float() for sd in state_dicts]
                 stacked = torch.stack(tensors)
-                merged_state[key] = stacked.mean(dim=0)
-            
-            # Save merged checkpoint
-            save_safetensors(merged_state, final_checkpoint)
-            
+                merged_state[key] = stacked.mean(dim=0).to(ref_dtype).contiguous()
+
+            # Save merged checkpoint atomically (tmp + replace) so a crash mid-write
+            # never leaves a partial actv1_student.safetensors.
+            tmp_checkpoint = final_checkpoint + ".tmp"
+            save_safetensors(merged_state, tmp_checkpoint)
+            os.replace(tmp_checkpoint, final_checkpoint)
+            logger.info(
+                "Merged %d/%d parallel checkpoints into %s",
+                len(state_dicts), len(checkpoint_files), final_checkpoint,
+            )
+
             # Cleanup parallel checkpoints if requested
             if remove_after_merge:
                 for cp in checkpoint_files:

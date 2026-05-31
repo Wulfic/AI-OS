@@ -12,7 +12,6 @@ All metrics are lightweight and deterministic.
 from __future__ import annotations
 
 import re
-from typing import Dict
 
 
 def count_syllables(word: str) -> int:

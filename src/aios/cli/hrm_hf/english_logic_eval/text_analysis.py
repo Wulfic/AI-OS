@@ -16,7 +16,6 @@ import re
 from typing import Dict, Any
 from collections import Counter
 
-from .readability import count_syllables
 
 
 def calculate_sentence_stats(text: str) -> Dict[str, float]:

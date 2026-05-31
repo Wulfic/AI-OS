@@ -11,7 +11,6 @@ if TYPE_CHECKING:
 
 def build_controls(panel: HRMTrainingPanel, parent: any) -> None:
     """Build control buttons section."""
-    from ..hrm_training.optimizer_progressive import optimize_from_gui_progressive
     
     btns = ttk.Frame(parent)
     btns.pack(fill="x", pady=(6, 0))

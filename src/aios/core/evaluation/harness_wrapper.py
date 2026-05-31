@@ -191,7 +191,7 @@ class HarnessWrapper:
             # it uses the same Python environment.
             if model_type == "aios":
                 try:
-                    from aios.core.evaluation.aios_lm_eval_adapter import AIOSBrainModel
+                    from aios.core.evaluation.aios_lm_eval_adapter import AIOSBrainModel  # noqa: F401  # import for side-effect registration
                     self.log_callback("[eval] AIOS adapter module imported (registration happens in subprocess)")
                 except ImportError as e:
                     self.log_callback(f"[eval] Warning: Could not import AIOS adapter: {e}")
@@ -671,7 +671,7 @@ cli_evaluate()
                     result.overall_score = total_score / count
                     self.log_callback(f"[eval] Calculated overall score from {count} metrics: {result.overall_score:.2%}")
                 else:
-                    self.log_callback(f"[eval] Warning: No valid metrics found to calculate overall score")
+                    self.log_callback("[eval] Warning: No valid metrics found to calculate overall score")
             
             self.log_callback(f"[eval] Parsed results: Overall score = {result.overall_score:.2%}")
             
@@ -687,7 +687,7 @@ cli_evaluate()
         """
         # Primary check: try importing the module
         try:
-            import lm_eval
+            import lm_eval  # noqa: F401  # availability check
             return True
         except ImportError:
             pass

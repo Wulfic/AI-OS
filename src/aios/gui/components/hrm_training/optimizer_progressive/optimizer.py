@@ -6,7 +6,7 @@ import json
 import time
 import logging
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 from aios.utils.optimization_cleanup import cleanup_on_startup
 from .models import OptimizationConfig, OptimizationLevel
@@ -77,7 +77,7 @@ class ProgressiveOptimizer:
         if self.config.stop_callback:
             try:
                 return self.config.stop_callback()
-            except:
+            except Exception:
                 return False
         return False
     
@@ -167,13 +167,13 @@ class ProgressiveOptimizer:
                 
                 # Check if this is better than previous best
                 if self._is_better_config(level_result, best_throughput, best_memory):
-                    self.log(f"      🎯 New best configuration!")
+                    self.log("      🎯 New best configuration!")
                     best_level = level
                     best_batch = level_result['optimal_batch']
                     best_throughput = level_result['max_throughput']
                     best_memory = level_result.get('memory_percent', 0)
                 else:
-                    self.log(f"      📊 Not better than current best (keeping previous)")
+                    self.log("      📊 Not better than current best (keeping previous)")
             else:
                 # This level failed
                 self.log(f"   ❌ {level.name} failed - will try next level...")
@@ -227,7 +227,6 @@ class ProgressiveOptimizer:
         
         ENHANCED: Now uses comprehensive scoring that considers throughput, memory, AND quality.
         """
-        from .scoring import score_optimization_result
         
         # First success is always better than nothing
         if best_throughput == 0:
@@ -334,7 +333,7 @@ class ProgressiveOptimizer:
         """Determine the next batch size to test, or None if we should stop."""
         if current_batch == 1:
             # ALWAYS try batch 2 after batch 1 succeeds
-            self.log(f"      • Testing batch 2 to confirm memory limit...")
+            self.log("      • Testing batch 2 to confirm memory limit...")
             return 2
         elif test_result.has_memory_headroom:
             # Still room to grow
@@ -346,7 +345,7 @@ class ProgressiveOptimizer:
                     return new_batch
                 else:
                     # Hit max batch limit
-                    self.log(f"      • Reached max batch size limit")
+                    self.log("      • Reached max batch size limit")
                     return None
             else:
                 # Moderate headroom: add 1
@@ -367,7 +366,7 @@ class ProgressiveOptimizer:
                 result["success"] = True
                 return False
             else:
-                self.log(f"      • OOM at batch 1 - optimization level too weak")
+                self.log("      • OOM at batch 1 - optimization level too weak")
                 return False
         else:
             # Other error (not OOM)

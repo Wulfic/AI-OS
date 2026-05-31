@@ -16,7 +16,7 @@ Usage:
 import logging
 import threading
 import weakref
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, Set
 import tkinter as tk
 
 logger = logging.getLogger(__name__)

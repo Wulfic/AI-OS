@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .panel_main import RichChatPanel
@@ -59,7 +59,7 @@ def refresh_brains(panel: RichChatPanel) -> None:
         except Exception as e:
             logger.error("Failed to refresh brain list: %s", e, exc_info=True)
             # Schedule error handling on main thread
-            def _handle_error():
+            def _handle_error(e=e):
                 if hasattr(panel, 'canvas'):
                     message_display.add_system_message(panel, f"Failed to refresh brains: {e}")
             

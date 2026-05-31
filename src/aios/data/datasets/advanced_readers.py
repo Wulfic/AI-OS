@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import List
-import io
 
 from .constants import TEXT_EXTS
 from .readers import read_text_lines_sample

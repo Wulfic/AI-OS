@@ -8,7 +8,7 @@ the inference model from training checkpoints.
 from __future__ import annotations
 
 import logging
-from typing import Optional, Any, Dict, Callable
+from typing import Optional, Any, Callable
 from pathlib import Path
 import torch
 import gc

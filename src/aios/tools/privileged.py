@@ -43,7 +43,7 @@ def run_privileged(
         raise PermissionError("Budget exceeded for privileged_calls")
 
     result = fn()
-    logger.info(f"Privileged operation completed successfully")
+    logger.info("Privileged operation completed successfully")
     
     if conn is not None:
         try:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING
 
-from .constants import tk, ttk
+from .constants import ttk
 from ...utils import safe_variables
 
 if TYPE_CHECKING:

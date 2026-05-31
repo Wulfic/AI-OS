@@ -91,13 +91,15 @@ def _queue_gpu_stats_poll(panel: "ResourcesPanel") -> None:
                     _schedule_gpu_stats_poll(panel, delay_ms=_GPU_POLL_INTERVAL_MS)
 
             root = _get_panel_root(panel)
+            scheduled = False
             if root is not None:
                 try:
                     root.after(0, _reset_and_schedule)
-                    return
+                    scheduled = True
                 except Exception:
                     pass
-            _reset_and_schedule()
+            if not scheduled:
+                _reset_and_schedule()
 
     if worker_pool is None:
         logger.debug("Executing GPU stats poll synchronously; worker pool unavailable")
@@ -503,14 +505,13 @@ def schedule_monitor_update(panel: "ResourcesPanel") -> None:
         update_monitor(panel)
     finally:
         # Check again after update - panel may have been shut down during update
-        if not _is_monitor_active(panel):
-            return
-        try:
-            root = _get_panel_root(panel)
-            if root is not None:
-                panel._monitor_after_id = root.after(1500, lambda: schedule_monitor_update(panel))
-        except Exception:
-            pass
+        if _is_monitor_active(panel):
+            try:
+                root = _get_panel_root(panel)
+                if root is not None:
+                    panel._monitor_after_id = root.after(1500, lambda: schedule_monitor_update(panel))
+            except Exception:
+                pass
 
 
 def schedule_storage_update(panel: "ResourcesPanel", *, delay_ms: int = 0) -> None:

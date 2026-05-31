@@ -12,7 +12,7 @@ from typing import Callable, Optional, Tuple
 from ...utils import safe_variables
 
 # Lazy imports from hf_search
-from .hf_search import login, whoami, HfFolder
+from .hf_search import login, whoami, HfFolder, get_token, hf_logout
 
 
 def get_hf_login_status() -> Tuple[bool, str]:
@@ -22,11 +22,11 @@ def get_hf_login_status() -> Tuple[bool, str]:
     Returns:
         Tuple of (is_logged_in, status_message)
     """
-    if HfFolder is None or whoami is None:
+    if whoami is None or get_token is None:
         return (False, "HF library not available")
     
     try:
-        token = HfFolder.get_token()
+        token = get_token()
         if token:
             try:
                 user_info = whoami(token=token)
@@ -55,8 +55,8 @@ def logout_from_hf(log_func: Callable[[str], None]) -> bool:
         True if successful, False otherwise
     """
     try:
-        if HfFolder is not None:
-            HfFolder.delete_token()
+        if hf_logout is not None:
+            hf_logout()
         log_func("✓ Successfully logged out of HuggingFace")
         return True
     except Exception as e:

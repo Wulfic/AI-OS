@@ -103,7 +103,7 @@ def optimize_from_gui(panel) -> Tuple[Dict[str, Any], UnifiedOptimizer]:
             user_dataset = panel.dataset_var.get().strip()
             if user_dataset:
                 dataset_file = user_dataset
-        except:
+        except Exception:
             pass
     
     # Extract configuration from GUI panel

@@ -120,11 +120,11 @@ def submit_background(
         _wrapped.__qualname__ = _wrapped.__name__
     except Exception:
         pass
-    setattr(_wrapped, "_aios_task_label", label)
+    _wrapped._aios_task_label = label
 
     future: Future = worker_pool.submit(_wrapped)
-    setattr(future, "_aios_task_label", label)
-    setattr(future, "_aios_submitted_at", submit_time)
+    future._aios_task_label = label
+    future._aios_submitted_at = submit_time
     return future
 
 

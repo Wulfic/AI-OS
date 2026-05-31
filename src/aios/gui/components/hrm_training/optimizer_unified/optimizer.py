@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import time
 import uuid
 from dataclasses import asdict
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Callable, Tuple
+from typing import Dict, List, Any, Callable
 
 from aios.python_exec import get_preferred_python_executable
 from aios.utils.optimization_cleanup import cleanup_on_startup
@@ -17,7 +16,6 @@ from aios.utils.optimization_cleanup import cleanup_on_startup
 from .config import OptimizationConfig
 from .process_manager import ProcessManager
 from .command_builder import parse_cuda_devices, extend_with_device_args
-from .batch_runner import run_single_batch
 from .result_parser import parse_training_throughput
 
 logger = logging.getLogger(__name__)
@@ -89,7 +87,7 @@ class UnifiedOptimizer:
         if self.config.stop_callback:
             try:
                 return self.config.stop_callback()
-            except:
+            except Exception:
                 return False
         return False
     
@@ -176,7 +174,7 @@ class UnifiedOptimizer:
             if train_results["success"]:
                 self.log(f"\n✓ SUCCESS: Training optimal batch: {train_results['optimal_batch']}")
             else:
-                self.log(f"\n❌ ERROR: Training testing failed")
+                self.log("\n❌ ERROR: Training testing failed")
             
             # Final results
             self.log("\n" + "=" * 60)

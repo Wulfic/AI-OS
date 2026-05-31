@@ -4,7 +4,6 @@ Training setup and configuration.
 Creates training configuration and handles GPU/checkpoint setup.
 """
 
-from pathlib import Path
 from typing import Optional
 
 from aios.core.train import Trainer, TrainConfig

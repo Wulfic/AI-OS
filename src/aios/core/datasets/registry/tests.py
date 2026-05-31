@@ -8,7 +8,6 @@ import tempfile
 import shutil
 import os
 
-from .metadata import DatasetMetadata
 from .helpers import create_dataset_metadata
 from .registry import DatasetRegistry
 from .scanner import LocalDatasetScanner
@@ -75,7 +74,7 @@ def run_tests():
         )
         registry.add_dataset(metadata3)
         
-        print(f"[OK] Added 3 datasets to registry")
+        print("[OK] Added 3 datasets to registry")
         print(f"     Total datasets: {len(registry.get_all_datasets())}")
         
         # Get dataset

@@ -12,10 +12,13 @@ logger = logging.getLogger(__name__)
 
 # Lazy import - will be None if library not installed
 try:
-    from huggingface_hub import login, whoami, HfFolder, list_datasets
+    from huggingface_hub import login, whoami, get_token, logout as hf_logout, list_datasets
+    HfFolder = None  # HfFolder removed in huggingface_hub>=1.0; use get_token/hf_logout
 except ImportError:
     login = None  # type: ignore
     whoami = None  # type: ignore
+    get_token = None  # type: ignore
+    hf_logout = None  # type: ignore
     HfFolder = None  # type: ignore
     list_datasets = None  # type: ignore
 
@@ -70,11 +73,11 @@ def search_huggingface_datasets(
                 logger.debug(f"Applying modality filter: {hf_filter}")
         
         # Search datasets on HuggingFace Hub
-        # Note: The filter parameter accepts a list of strings for tag-based filtering
+        # Note: the `direction` parameter was removed in huggingface_hub>=1.0;
+        # sort descending by downloads is now the default when sort="downloads"
         list_kwargs = {
             "search": query if query.strip() else None,
             "sort": "downloads",
-            "direction": -1,
             "limit": limit,
         }
         

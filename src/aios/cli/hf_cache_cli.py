@@ -67,7 +67,7 @@ def show(config: Optional[str] = typer.Option(None, "--config", help="Unused, fo
                 total_gb = stat.total / (1024**3)
                 free_gb = stat.free / (1024**3)
                 used_pct = ((stat.total - stat.free) / stat.total) * 100
-                print(f"\nDisk space:")
+                print("\nDisk space:")
                 print(f"  Total: {total_gb:.1f} GB")
                 print(f"  Free: {free_gb:.1f} GB")
                 print(f"  Used: {used_pct:.1f}%")
@@ -104,19 +104,19 @@ def set_location(
                 print(f"❌ Error creating directory: {e}")
                 return
         else:
-            print(f"❌ Directory doesn't exist and --no-create was specified")
+            print("❌ Directory doesn't exist and --no-create was specified")
             return
     elif not cache_path.is_dir():
-        print(f"❌ Path exists but is not a directory")
+        print("❌ Path exists but is not a directory")
         return
     
     # Save the configuration
     if set_hf_cache(str(cache_path)):
-        print(f"✅ Cache location saved successfully!")
-        print(f"\n⚠️  IMPORTANT: Restart VS Code and terminals for changes to take effect")
+        print("✅ Cache location saved successfully!")
+        print("\n⚠️  IMPORTANT: Restart VS Code and terminals for changes to take effect")
         print(f"   New downloads will go to: {cache_path}")
     else:
-        print(f"❌ Failed to save cache location")
+        print("❌ Failed to save cache location")
 
 
 def clear(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast, Callable
+from typing import Any, cast
 import os
 from pathlib import Path
 

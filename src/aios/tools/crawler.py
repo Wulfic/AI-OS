@@ -6,7 +6,7 @@ import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, Optional, Tuple, Iterable, List, Set, Deque, Callable, Awaitable
+from typing import Dict, Optional, Tuple, List, Set, Deque, Callable, Awaitable
 from urllib.parse import urlparse, urljoin, urldefrag
 from collections import deque
 from urllib.robotparser import RobotFileParser

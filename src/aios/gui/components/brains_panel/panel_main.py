@@ -6,7 +6,6 @@ The panel class delegates to builder functions and operation handlers.
 from __future__ import annotations
 
 import logging
-import os
 import time
 from pathlib import Path
 from typing import Any, Callable, Optional, cast
@@ -145,7 +144,7 @@ class BrainsPanel(ttk.LabelFrame):  # type: ignore[misc]
                             pass
             except Exception as e:
                 # Schedule error handling on main thread
-                def _handle_error():
+                def _handle_error(e=e):
                     self._append_out(f"[brains] Refresh failed: {e}")
                     if hasattr(self, 'status_var'):
                         self.status_var.set("Error")

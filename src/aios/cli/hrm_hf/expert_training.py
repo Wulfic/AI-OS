@@ -1,7 +1,6 @@
 """Expert-only training module for standalone FeedForward experts."""
 from __future__ import annotations
 
-import os
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -93,11 +92,11 @@ def train_expert_only(config: "TrainingConfig") -> None:
             opt = create_8bit_optimizer(params, lr=config.lr, optimizer_type='adamw')
             print({"optimizer": "AdamW8bit"})
         except ImportError:
-            OptClass = getattr(torch.optim, "AdamW", None) or getattr(torch.optim, "Adam")
+            OptClass = getattr(torch.optim, "AdamW", None) or torch.optim.Adam
             opt = OptClass(params, lr=config.lr)
             print({"optimizer": "AdamW (8bit unavailable)"})
     else:
-        OptClass = getattr(torch.optim, "AdamW", None) or getattr(torch.optim, "Adam")
+        OptClass = getattr(torch.optim, "AdamW", None) or torch.optim.Adam
         opt = OptClass(params, lr=config.lr)
         print({"optimizer": "AdamW"})
     

@@ -128,7 +128,6 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
             RuntimeError: If Tkinter is not available in this environment
         """
         import time
-        import sys
         import platform
         from datetime import datetime
         
@@ -205,7 +204,6 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
         
         # Create loading screen FIRST - before any heavy initialization
         try:
-            from tkinter import ttk
             from PIL import Image, ImageTk
             
             # Configure background color
@@ -437,7 +435,6 @@ class AiosTkApp(DebugMixin, CliBridgeMixin):
             return
 
         # Platform-specific maximization strategies
-        import sys
         
         if sys.platform.startswith("win"):
             # Windows: Use zoomed state for proper window maximize
@@ -682,7 +679,6 @@ def run(exit_after: float | None = None, minimized: bool = False):
         exit_after: if provided (>0), auto-close the window after N seconds (CI/headless smoke).
         minimized: if True, start with window minimized to tray
     """
-    import sys
     import os
     
     # Ensure stdout/stderr are valid to prevent crashes in Tkinter
@@ -765,4 +761,3 @@ from .goal_operations import setup_goal_operations
 from .event_handlers import setup_event_handlers, setup_periodic_tasks
 from .cleanup import cleanup
 from .tray_management import init_tray, on_tray_settings
-from .app_main import run_app

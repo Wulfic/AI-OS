@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import json
-import sys
 from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 import typer
@@ -14,7 +11,7 @@ from rich.table import Table
 
 # Lazy imports to avoid slow startup from lm_eval/transformers import chain
 if TYPE_CHECKING:
-    from aios.core.evaluation import EvaluationHistory, HarnessWrapper
+    pass
 
 app = typer.Typer(help="Model evaluation commands")
 console = Console()
@@ -157,7 +154,7 @@ def eval_run(
         )
         
         # Display results
-        console.print(f"\n[bold green]Evaluation completed![/bold green]")
+        console.print("\n[bold green]Evaluation completed![/bold green]")
         console.print(f"Status: {result.status}")
         console.print(f"Duration: {result.duration_str}")
         console.print(f"Overall Score: [bold]{result.overall_score:.2%}[/bold]\n")
@@ -349,7 +346,7 @@ def eval_history(
         
         # Display statistics
         stats = history.get_statistics()
-        console.print(f"\n[bold cyan]Evaluation History[/bold cyan]")
+        console.print("\n[bold cyan]Evaluation History[/bold cyan]")
         console.print(
             f"Total: {stats['total_evaluations']} | "
             f"Models: {stats['unique_models']} | "

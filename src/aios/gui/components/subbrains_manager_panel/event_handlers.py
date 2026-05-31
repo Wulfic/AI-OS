@@ -188,7 +188,6 @@ def handle_link_goal(
         append_out_callback: Callback for logging output
         on_expert_select_callback: Callback to refresh goals list
     """
-    import threading
     
     if not expert_id:
         logger.debug("Link goal cancelled: no expert selected")

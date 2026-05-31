@@ -11,7 +11,7 @@ This dialog allows users to create new HRM student models with:
 from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
-from typing import Any, Dict, Optional
+from typing import Any
 
 # Import safe variable wrappers
 from ....utils import safe_variables
@@ -166,7 +166,7 @@ def show_create_dialog(parent_dialog: tk.Toplevel, panel: Any) -> None:
                 if not _check_tokenizer_installed(tokenizer_id, panel._project_root):
                     panel._log(f"[hrm] ⚠️ WARNING: Tokenizer '{tokenizer_info.name}' is not installed!")
                     panel._log(f"[hrm] Run: python scripts/download_tokenizer.py {tokenizer_id}")
-                    panel._log(f"[hrm] Training will fail until tokenizer is downloaded.")
+                    panel._log("[hrm] Training will fail until tokenizer is downloaded.")
                 
                 panel._set_arch_widgets_state("disabled")
             except Exception as e:
@@ -188,7 +188,7 @@ def show_create_dialog(parent_dialog: tk.Toplevel, panel: Any) -> None:
         ttk.Button(btn_row, text="Create", command=_confirm_create).pack(side="left", padx=(0,6))
         ttk.Button(btn_row, text="Cancel", command=w.destroy).pack(side="left", padx=(6,0))
         
-    except Exception as e:
+    except Exception:
         try:
             parent_dialog.destroy()
         except Exception:

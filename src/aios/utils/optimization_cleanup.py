@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 import logging
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Dict, List
 from collections import defaultdict
 
 logger = logging.getLogger(__name__)

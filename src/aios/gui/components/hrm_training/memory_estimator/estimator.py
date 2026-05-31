@@ -11,10 +11,9 @@ from __future__ import annotations
 import logging
 from typing import Optional, Dict, Any
 
-from .constants import GB
 from .vram_estimation import estimate_vram
 from .ram_estimation import estimate_ram
-from .vram_lookup import estimate_vram_hybrid, OptimizationConfig
+from .vram_lookup import estimate_vram_hybrid
 
 logger = logging.getLogger(__name__)
 

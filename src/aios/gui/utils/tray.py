@@ -19,7 +19,6 @@ Example:
     >>> manager.destroy()      # Cleanup on exit
 """
 
-import sys
 import threading
 from pathlib import Path
 from typing import Optional, Callable, Any

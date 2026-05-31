@@ -6,7 +6,6 @@ from typing import Optional
 import typer
 
 from aios.core.brains import BrainRegistry, Router
-import os
 from pathlib import Path
 import yaml
 
@@ -263,7 +262,8 @@ def delete(
             pass
         # Delete offloaded files and actv1 bundle dir
         try:
-            import os, shutil
+            import os
+            import shutil
             from aios.core.brains.registry_storage import get_store_paths
             
             npz, meta = get_store_paths(reg, name)
@@ -325,7 +325,8 @@ def rename(
     ok = reg.rename(old, new)
     # Also rename ACTV1 brain bundle directory and update brain.json name
     try:
-        import os, json as _json
+        import os
+        import json as _json
         ob = os.path.join(resolved_store, "actv1", old)
         nb = os.path.join(resolved_store, "actv1", new)
         if os.path.isdir(ob) and not os.path.exists(nb):
@@ -487,7 +488,6 @@ def fetch_brain(
     import httpx
     import zipfile
     import io
-    import shutil
     from aios.core.brains import registry_management
 
     # Resolve storage directory

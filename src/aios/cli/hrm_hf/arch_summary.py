@@ -21,7 +21,6 @@ def arch_summary_impl(
     try:
         from transformers import AutoTokenizer
         from aios.core.hrm_models import build_act_v1
-        import torch
     except Exception as e:
         print({"error": f"Missing deps: {e}", "hint": "pip install -e .[hf]"})
         raise typer.Exit(code=1)

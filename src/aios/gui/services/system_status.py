@@ -5,7 +5,6 @@ import os
 import shutil
 import subprocess as _sp
 import time
-from typing import Any
 
 from ..utils.resource_management import submit_background
 

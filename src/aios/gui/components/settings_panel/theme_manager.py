@@ -3,6 +3,7 @@
 from __future__ import annotations
 import logging
 import time
+import tkinter
 import tkinter as tk
 import platform
 from collections import deque

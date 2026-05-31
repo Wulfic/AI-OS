@@ -4,7 +4,6 @@ CLI options for train command.
 Defines all typer options for the training CLI.
 """
 
-from typing import Optional
 
 import typer
 

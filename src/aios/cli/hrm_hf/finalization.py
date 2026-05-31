@@ -173,15 +173,25 @@ def finalize_training(
         tmp_path = out_dir / "actv1_student.safetensors.tmp"
         prev_path = out_dir / "actv1_student.safetensors.prev"
         
-        # Handle DDP-wrapped models: unwrap to get the actual model state dict
+        # Handle DDP / DeepSpeed-wrapped models: unwrap to get the actual model state dict
         try:
             from torch.nn.parallel import DistributedDataParallel as DDP
             if isinstance(model_student, DDP):
+                state_dict = model_student.module.state_dict()
+            elif hasattr(model_student, "module"):
+                # DeepSpeed engine / other wrappers also expose .module
                 state_dict = model_student.module.state_dict()
             else:
                 state_dict = model_student.state_dict()
         except Exception:
             state_dict = model_student.state_dict()
+
+        # Make the state dict safe for safetensors (CPU, contiguous, unshared)
+        try:
+            from .checkpoint_saver import prepare_state_dict_for_safetensors
+            state_dict = prepare_state_dict_for_safetensors(state_dict)
+        except Exception as _sanitize_err:
+            print({"checkpoint_save": "sanitize_warning", "error": str(_sanitize_err)})
         
         try:
             from safetensors.torch import save_file as _save_safetensors

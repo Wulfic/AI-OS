@@ -345,7 +345,7 @@ class EvaluationSamplesDialog(tk.Toplevel):  # type: ignore[misc]
         
         # Title
         self.details_text.insert(tk.END, f"Sample #{doc_id}\n", "heading")
-        self.details_text.insert(tk.END, f"Result: ", "label")
+        self.details_text.insert(tk.END, "Result: ", "label")
         result_text = "CORRECT ✓\n" if is_correct else "INCORRECT ✗\n"
         result_tag = "correct" if is_correct else "incorrect"
         self.details_text.insert(tk.END, result_text, result_tag)

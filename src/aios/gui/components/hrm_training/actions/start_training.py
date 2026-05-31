@@ -245,7 +245,7 @@ def _check_resumable_checkpoint(panel: Any, config: Any) -> None:
             legacy_dataset = legacy_state.get("dataset_name", "")
             if legacy_dataset == dataset_name:
                 # Legacy state matches, migrate to new location
-                panel._log(f"[hrm] Found matching legacy state, will use for resume")
+                panel._log("[hrm] Found matching legacy state, will use for resume")
                 chunk_tracker_state_path = legacy_state_path
                 using_legacy_state = True
             else:
@@ -272,7 +272,7 @@ def _check_resumable_checkpoint(panel: Any, config: Any) -> None:
     
     # Check for ChunkTracker state (from parallel_training_v3)
     if chunk_tracker_state_path.exists():
-        panel._log(f"[hrm] ChunkTracker state found - checking if resumable...")
+        panel._log("[hrm] ChunkTracker state found - checking if resumable...")
         try:
             with chunk_tracker_state_path.open("r", encoding="utf-8") as f:
                 tracker_state = json.load(f)
@@ -289,19 +289,19 @@ def _check_resumable_checkpoint(panel: Any, config: Any) -> None:
                 # Training has started and made progress
                 if checkpoint_path.exists():
                     should_prompt_resume = True
-                    panel._log(f"[hrm] [OK] ChunkTracker state + checkpoint found - WILL SHOW RESUME DIALOG")
+                    panel._log("[hrm] [OK] ChunkTracker state + checkpoint found - WILL SHOW RESUME DIALOG")
                 else:
-                    panel._log(f"[hrm] [WARN] ChunkTracker state found but checkpoint missing")
-                    panel._log(f"[hrm] [WARN] Starting fresh training (checkpoint will be recreated)")
+                    panel._log("[hrm] [WARN] ChunkTracker state found but checkpoint missing")
+                    panel._log("[hrm] [WARN] Starting fresh training (checkpoint will be recreated)")
                     # Delete orphaned ChunkTracker state to prevent resuming from wrong position
                     try:
                         import os
                         os.remove(chunk_tracker_state_path)
-                        panel._log(f"[hrm] [OK] Deleted orphaned ChunkTracker state")
+                        panel._log("[hrm] [OK] Deleted orphaned ChunkTracker state")
                     except Exception as e:
                         panel._log(f"[hrm] [WARN] Could not delete ChunkTracker state: {e}")
             else:
-                panel._log(f"[hrm] ChunkTracker state exists but no progress yet")
+                panel._log("[hrm] ChunkTracker state exists but no progress yet")
         except Exception as e:
             panel._log(f"[hrm] [X] Error reading ChunkTracker state: {e}")
             import traceback
@@ -310,7 +310,7 @@ def _check_resumable_checkpoint(panel: Any, config: Any) -> None:
     # Also check brain.json with last_session data (legacy/fallback)
     # Only use if dataset matches or if no dataset info is available
     if not should_prompt_resume and brain_json_path.exists():
-        panel._log(f"[hrm] brain.json exists - checking legacy last_session...")
+        panel._log("[hrm] brain.json exists - checking legacy last_session...")
         try:
             with brain_json_path.open("r", encoding="utf-8") as f:
                 brain_data = json.load(f)
@@ -331,32 +331,32 @@ def _check_resumable_checkpoint(panel: Any, config: Any) -> None:
                     dataset_matches = (saved_name == current_name)
                     panel._log(f"[hrm] Last session dataset: {saved_name}, current: {current_name}, match: {dataset_matches}")
                 else:
-                    panel._log(f"[hrm] No dataset info in last_session - skipping legacy resume")
+                    panel._log("[hrm] No dataset info in last_session - skipping legacy resume")
                 
                 if dataset_matches and checkpoint_path.exists():
                     # Both session data and checkpoint exist, and dataset matches - can resume
                     should_prompt_resume = True
-                    panel._log(f"[hrm] [OK] Valid last_session + checkpoint found + dataset matches - WILL SHOW RESUME DIALOG")
+                    panel._log("[hrm] [OK] Valid last_session + checkpoint found + dataset matches - WILL SHOW RESUME DIALOG")
                 elif checkpoint_path.exists() and not saved_dataset_file:
                     # Legacy checkpoint without dataset tracking - let resume dialog handle mismatch detection
                     should_prompt_resume = True
-                    panel._log(f"[hrm] [OK] Legacy checkpoint (no dataset info) - showing dialog")
+                    panel._log("[hrm] [OK] Legacy checkpoint (no dataset info) - showing dialog")
                 elif not dataset_matches:
-                    panel._log(f"[hrm] [X] Last session was for different dataset - not prompting resume")
+                    panel._log("[hrm] [X] Last session was for different dataset - not prompting resume")
                 else:
                     # Session data exists but checkpoint is missing/corrupted
-                    panel._log(f"[hrm] [WARN] Valid last_session found but checkpoint missing")
-                    panel._log(f"[hrm] [WARN] This usually means checkpoint was corrupted and auto-deleted")
-                    panel._log(f"[hrm] [WARN] Starting fresh training (checkpoint will be recreated)")
+                    panel._log("[hrm] [WARN] Valid last_session found but checkpoint missing")
+                    panel._log("[hrm] [WARN] This usually means checkpoint was corrupted and auto-deleted")
+                    panel._log("[hrm] [WARN] Starting fresh training (checkpoint will be recreated)")
             else:
-                panel._log(f"[hrm] [X] No valid last_session in brain.json")
+                panel._log("[hrm] [X] No valid last_session in brain.json")
         except Exception as e:
             panel._log(f"[hrm] [X] Error reading brain.json: {e}")
             import traceback
             panel._log(f"[hrm] Traceback: {traceback.format_exc()}")
     
     if not should_prompt_resume and not brain_json_path.exists():
-        panel._log(f"[hrm] [X] No checkpoint files found - this is a new brain")
+        panel._log("[hrm] [X] No checkpoint files found - this is a new brain")
 
     panel._log(f"[hrm] should_prompt_resume = {should_prompt_resume}")
 
@@ -370,9 +370,9 @@ def _check_resumable_checkpoint(panel: Any, config: Any) -> None:
     
     # In shuffle mode, automatically randomize start position without showing dialog
     if not linear_mode:
-        panel._log(f"[hrm] ==========================================")
-        panel._log(f"[hrm] SHUFFLE MODE: Randomizing start position")
-        panel._log(f"[hrm] ==========================================")
+        panel._log("[hrm] ==========================================")
+        panel._log("[hrm] SHUFFLE MODE: Randomizing start position")
+        panel._log("[hrm] ==========================================")
         
         import random
         
@@ -409,10 +409,10 @@ def _check_resumable_checkpoint(panel: Any, config: Any) -> None:
         
     else:
         # Linear mode: Show dialog for start position selection
-        panel._log(f"[hrm] ==========================================")
-        panel._log(f"[hrm] SHOWING START/RESUME DIALOG (Linear mode)")
+        panel._log("[hrm] ==========================================")
+        panel._log("[hrm] SHOWING START/RESUME DIALOG (Linear mode)")
         panel._log(f"[hrm] Brain: {config.brain_name}")
-        panel._log(f"[hrm] ==========================================")
+        panel._log("[hrm] ==========================================")
         try:
             from ..resume_dialog import show_resume_dialog
 
@@ -424,7 +424,7 @@ def _check_resumable_checkpoint(panel: Any, config: Any) -> None:
                 panel._log(f"[hrm] Warning: Could not get toplevel window: {e}, using panel as parent")
                 parent_window = panel
 
-            panel._log(f"[hrm] Calling show_resume_dialog()...")
+            panel._log("[hrm] Calling show_resume_dialog()...")
             
             # Dialog now returns a tuple: (resume_choice, start_block_id, start_chunk_id)
             dialog_result = show_resume_dialog(
@@ -440,7 +440,7 @@ def _check_resumable_checkpoint(panel: Any, config: Any) -> None:
             )
 
             panel._log(f"[hrm] Dialog returned: {dialog_result}")
-            panel._log(f"[hrm] ==========================================")
+            panel._log("[hrm] ==========================================")
             
             if dialog_result is None:
                 # User cancelled
@@ -490,7 +490,7 @@ def _check_resumable_checkpoint(panel: Any, config: Any) -> None:
         with event_file.open("a") as f:
             f.write(json.dumps(event) + "\n")
             
-        panel._log(f"[hrm] Telemetry: training_start_position_selected event emitted")
+        panel._log("[hrm] Telemetry: training_start_position_selected event emitted")
     except Exception as e:
         panel._log(f"[hrm] Warning: Could not emit telemetry event: {e}")
     
@@ -563,7 +563,7 @@ def _check_resumable_checkpoint(panel: Any, config: Any) -> None:
                             with open(brain_json_path, 'w') as f:
                                 json.dump(brain_data, f, indent=2)
                             
-                            panel._log(f"[hrm] Cleared resume metadata from brain.json (preserved training_steps)")
+                            panel._log("[hrm] Cleared resume metadata from brain.json (preserved training_steps)")
                         except Exception as e:
                             panel._log(f"[hrm] Warning: Could not clean brain.json: {e}")
                     
@@ -575,10 +575,10 @@ def _check_resumable_checkpoint(panel: Any, config: Any) -> None:
         raise  # Re-raise to abort training
     except Exception as e:
         import traceback
-        panel._log(f"[hrm] ERROR: Resume/start dialog failed")
+        panel._log("[hrm] ERROR: Resume/start dialog failed")
         panel._log(f"[hrm] Error: {e}")
         panel._log(f"[hrm] Traceback: {traceback.format_exc()}")
-        panel._log(f"[hrm] Aborting training due to dialog error")
+        panel._log("[hrm] Aborting training due to dialog error")
         raise SystemExit("Dialog error")
     
     panel._log("[hrm] === CHECKPOINT/START POSITION CHECK END ===")

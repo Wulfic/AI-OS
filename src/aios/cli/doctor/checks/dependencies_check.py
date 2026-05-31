@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import logging
-import sys
-from typing import Any, Optional
+from typing import Optional
 
 from ..runner import DiagnosticResult, DiagnosticSeverity
 

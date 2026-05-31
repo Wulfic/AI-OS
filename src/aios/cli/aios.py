@@ -158,16 +158,10 @@ os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
 # Now safe to import everything else
 # ============================================================================
 
-import time
-import json
 import asyncio
-import logging
-import logging.config
-import sqlite3
-import shutil
 import subprocess as _sp
 import shlex as _sh
-from typing import Optional, List
+from typing import Optional
 
 import typer
 from rich import print
@@ -175,25 +169,8 @@ import asyncio as _asyncio
 
 from aios.utils.diagnostics import enable_asyncio_diagnostics
 
-from aios.core.orchestrator import Orchestrator
-from aios.memory.store import init_db, get_db
-from aios.core.hrm import build_default_registry, Manager
-from aios.core.budgets import defaults_for_risk_tier
-from aios.memory.store import load_budgets, save_budgets, load_budget_usage
-from aios.core.directives import list_directives
-from aios.memory.store import list_artifacts
-from aios.core.watch import (
-    health_check as watch_health_check,
-    restore_last_checkpoint as watch_restore_last_checkpoint,
-    upload_checkpoint_to_repo,
-    git_commit,
-    latest_checkpoint_from_db,
-    latest_checkpoint_from_fs,
-)
-from aios.core.train import average_checkpoints_npz
 from aios.core.hrm_engine import HRMEngine
-from aios.docs.modelcard import generate_modelcard as _mc_generate, scaffold_config as _mc_scaffold
-from aios.cli.utils import load_config, setup_logging, dml_cfg_path as _dml_cfg_path
+from aios.cli.utils import load_config, setup_logging
 from aios.cli import training_cli, core_cli, crawl_cli, datasets_cli
 from aios.cli.hrm_hf_cli import app as hrm_hf_app
 from aios.cli import budgets_cli, artifacts_cli, goals_cli, agent_cli, hrm_cli, modelcard_cli, dml_cli, cleanup_cli, optimization_cli, hf_cache_cli, cache_cli, eval_cli
@@ -370,9 +347,8 @@ def doctor(
         aios doctor --permissions      # Check only file permissions
         aios doctor --no-network       # Skip network connectivity checks
     """
-    import asyncio
     
-    from .doctor import run_diagnostics, DiagnosticSeverity, save_report_to_log
+    from .doctor import run_diagnostics, save_report_to_log
     from .doctor.runner import format_report_text
     
     # If --permissions flag is used alone, limit to permission checks only

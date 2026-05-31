@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import subprocess as _sp
 import sys
@@ -201,7 +200,7 @@ def gui(
     safe_print(f"[GUI TIMING] HF cache configured: {time.time() - gui_start:.3f}s")
     
     try:
-        safe_print(f"[GUI TIMING] About to import aios.gui...")
+        safe_print("[GUI TIMING] About to import aios.gui...")
         from aios.gui import run as _run_gui
         safe_print(f"[GUI TIMING] aios.gui imported: {time.time() - gui_start:.3f}s")
     except ImportError as e:

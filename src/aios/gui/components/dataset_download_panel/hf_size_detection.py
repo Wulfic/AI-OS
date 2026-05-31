@@ -691,7 +691,6 @@ def enrich_dataset_with_size(
     
     # Get metadata with timeout protection
     try:
-        import signal
         
         # Use timeout for the metadata retrieval
         metadata = get_hf_dataset_metadata(
@@ -848,5 +847,5 @@ if __name__ == "__main__":
                 print(f"  ✅ {info['num_rows']:,} rows | {info['size_gb']:.2f} GB | {info['total_blocks']} blocks{type_info}")
                 print(f"     Quality: {info.get('estimation_quality', 'unknown')}, Source: {info['source']}")
             else:
-                print(f"  ❌ Failed")
+                print("  ❌ Failed")
             print()

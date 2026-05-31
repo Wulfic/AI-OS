@@ -27,7 +27,7 @@ def run_tests():
         lazy_loading=False,
         device=device,
     )
-    print(f"[OK] Created DynamicMoELayer with 0 experts initially")
+    print("[OK] Created DynamicMoELayer with 0 experts initially")
     
     # Test 2: Add experts
     print("\n[Test 2] Adding experts...")
@@ -50,7 +50,7 @@ def run_tests():
     print("\n[Test 3] Testing forward pass...")
     x = torch.randn(2, 10, 256)
     output, router_logits = moe(x)
-    print(f"[OK] Forward pass successful")
+    print("[OK] Forward pass successful")
     print(f"   Output shape: {output.shape}")
     print(f"   Router logits shape: {router_logits.shape}")
     assert output.shape == (2, 10, 256)
@@ -60,11 +60,11 @@ def run_tests():
     print("\n[Test 4] Testing freeze/unfreeze...")
     moe.freeze_expert("expert_0")
     assert "expert_0" in moe.frozen_experts
-    print(f"[OK] Froze expert_0")
+    print("[OK] Froze expert_0")
     
     moe.unfreeze_expert("expert_0")
     assert "expert_0" not in moe.frozen_experts
-    print(f"[OK] Unfroze expert_0")
+    print("[OK] Unfroze expert_0")
     
     # Test 5: Remove expert
     print("\n[Test 5] Testing expert removal...")
@@ -118,7 +118,7 @@ def run_tests():
         )
         moe_lazy.add_expert(expert_id, metadata=metadata)
     
-    print(f"[OK] Created lazy MoE with 4 experts")
+    print("[OK] Created lazy MoE with 4 experts")
     
     # Get lazy loader stats
     if moe_lazy.lazy_loader:

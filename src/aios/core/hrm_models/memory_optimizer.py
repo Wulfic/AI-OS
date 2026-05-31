@@ -7,7 +7,7 @@ providing recommendations and warnings before training starts.
 
 from __future__ import annotations
 
-from typing import Dict, Tuple, Optional, Any
+from typing import Dict, Any
 import math
 
 
@@ -350,7 +350,7 @@ def print_memory_analysis(
     print("=" * 70)
     print("MEMORY ESTIMATION")
     print("=" * 70)
-    print(f"Configuration:")
+    print("Configuration:")
     print(f"  Sequence length: {seq_len:,} tokens")
     print(f"  Chunk size: {chunk_size} tokens")
     print(f"  Batch size: {batch_size}")
@@ -372,7 +372,7 @@ def print_memory_analysis(
     if use_deepspeed:
         print(f"  DeepSpeed overhead:   {mem['deepspeed_overhead_gb']:>8.2f} GB")
     print(f"  PyTorch overhead:     {mem['pytorch_overhead_gb']:>8.2f} GB")
-    print(f"  " + "-" * 32)
+    print("  " + "-" * 32)
     print(f"  TOTAL:                {mem['per_gpu_gb']:>8.2f} GB")
     print()
     print(f"Number of chunks: {mem['num_chunks']}")
@@ -387,11 +387,11 @@ def print_memory_analysis(
     else:
         overage = mem['per_gpu_gb'] - safety_limit
         print(f"✗ Configuration EXCEEDS available VRAM by {overage:.2f} GB!")
-        print(f"  Recommendations:")
+        print("  Recommendations:")
         print(f"    - Reduce batch_size (currently {batch_size})")
         print(f"    - Reduce max_seq_len (currently {seq_len:,})")
         print(f"    - Increase chunk_size (currently {chunk_size})")
-        print(f"    - Use smaller model")
+        print("    - Use smaller model")
     
     print("=" * 70)
     
@@ -438,7 +438,7 @@ if __name__ == "__main__":
     )
     
     if result["best_config"]:
-        print(f"\n✓ RECOMMENDED CONFIGURATION:")
+        print("\n✓ RECOMMENDED CONFIGURATION:")
         print(f"  Batch size: {result['best_config']['batch_size']}")
         print(f"  Chunk size: {result['best_config']['chunk_size']}")
         mem = result['best_config']['memory_estimate']
@@ -446,12 +446,12 @@ if __name__ == "__main__":
         print(f"  Number of chunks: {mem['num_chunks']}")
     
     if result["warnings"]:
-        print(f"\n⚠ WARNINGS:")
+        print("\n⚠ WARNINGS:")
         for warning in result["warnings"]:
             print(f"  - {warning}")
     
     if result["recommendations"]:
-        print(f"\n📋 RECOMMENDATIONS:")
+        print("\n📋 RECOMMENDATIONS:")
         for rec in result["recommendations"]:
             print(f"  - {rec}")
     

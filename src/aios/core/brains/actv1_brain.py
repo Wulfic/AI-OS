@@ -282,7 +282,7 @@ class ACTv1Brain:
             checkpoint_size_bytes = os.path.getsize(self.checkpoint_path)
             checkpoint_size_mb = checkpoint_size_bytes / (1024 * 1024)
             logger.info(f"Loading checkpoint ({checkpoint_size_mb:.1f} MB)...")
-            print(f"[ACTv1Brain] Loading checkpoint weights...")
+            print("[ACTv1Brain] Loading checkpoint weights...")
 
             state_dict = load_safetensors(self.checkpoint_path, device=str(self._device))
             
@@ -304,9 +304,9 @@ class ACTv1Brain:
                     f"Vocab size mismatch: checkpoint={checkpoint_vocab_size}, "
                     f"model={model_vocab_size}, resizing embeddings..."
                 )
-                print(f"[ACTv1Brain] WARNING: Vocab size mismatch detected!")
+                print("[ACTv1Brain] WARNING: Vocab size mismatch detected!")
                 print(f"[ACTv1Brain]   Checkpoint vocab: {checkpoint_vocab_size}, Model vocab: {model_vocab_size}")
-                print(f"[ACTv1Brain]   Resizing embeddings to match model...")
+                print("[ACTv1Brain]   Resizing embeddings to match model...")
                 
                 # Resize embedding layer in state_dict
                 for key in ["inner.embed_tokens.embedding_weight", "inner.embed_tokens.weight"]:
@@ -648,7 +648,6 @@ class ACTv1Brain:
             return 100 * 1024 * 1024  # Default 100MB estimate
         
         try:
-            import torch
             total = sum(p.numel() * p.element_size() for p in self._model.parameters())
             return int(total * 1.2)  # Add 20% overhead
         except Exception:

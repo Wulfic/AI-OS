@@ -107,7 +107,7 @@ def segment_rollout(
     # Validate targets before training
     targets = batch["targets"].to(torch.int64)
     if torch.isnan(targets.float()).any():
-        logger.warning(f"[segment_rollout] NaN in targets! Replacing with ignore_index")
+        logger.warning("[segment_rollout] NaN in targets! Replacing with ignore_index")
         targets = torch.where(torch.isnan(targets.float()), ignore_index, targets)
     
     # Get vocab_size from model to validate targets

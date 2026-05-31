@@ -75,7 +75,6 @@ def _checkpoint_forward(model, carry, batch) -> Tuple:
         Tuple of (carry, outputs) from the model forward pass
     """
     try:
-        from torch.utils.checkpoint import checkpoint
         # For HRM models, gradient checkpointing is complex due to carry state
         # For now, just do regular forward - proper checkpointing would require
         # more careful handling of the carry state and custom autograd functions

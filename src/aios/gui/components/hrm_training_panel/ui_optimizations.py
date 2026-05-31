@@ -209,7 +209,7 @@ def build_optimizations_section(panel: HRMTrainingPanel, parent: any) -> None:  
 
     # React to dropdown changes and initialize the correct state
     try:
-        getattr(panel, "adaptive_lr_mode_var").trace_add("write", _sync_adaptive_lr_ui)
+        panel.adaptive_lr_mode_var.trace_add("write", _sync_adaptive_lr_ui)
     except Exception:
         pass
     _sync_adaptive_lr_ui()

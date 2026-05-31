@@ -95,7 +95,7 @@ class Router:
 
                 # Get modalities from the loaded brain or usage record
                 if hasattr(test_brain, "modalities"):
-                    m_mods = getattr(test_brain, "modalities")
+                    m_mods = test_brain.modalities
                 else:
                     m_mods = self.registry.usage.get(m, {}).get("modalities", [])
 

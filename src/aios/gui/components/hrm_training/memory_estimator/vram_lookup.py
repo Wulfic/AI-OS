@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict
 
 try:  # pragma: no cover - available at runtime
     from aios.system import paths as system_paths

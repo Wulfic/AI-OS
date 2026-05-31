@@ -1,4 +1,4 @@
-from typing import Tuple, List, Dict, cast, Optional
+from typing import List, Dict, cast, Optional
 from dataclasses import dataclass
 import logging
 import math
@@ -272,7 +272,7 @@ class HierarchicalReasoningModel_ACTV1_Inner(nn.Module):
         
         # Safety check: catch NaN in embeddings early
         if torch.isnan(input_embeddings).any() or torch.isinf(input_embeddings).any():
-            logger.warning(f"[ACTV1] NaN/Inf detected in input embeddings! Setting to zero.")
+            logger.warning("[ACTV1] NaN/Inf detected in input embeddings! Setting to zero.")
             input_embeddings = torch.nan_to_num(input_embeddings, nan=0.0, posinf=10.0, neginf=-10.0)
 
         # Start from carry tensors (they come from previous step without grad)

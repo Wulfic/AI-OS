@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import platform
 import sys
-from typing import Optional
 
 from ..runner import DiagnosticResult, DiagnosticSeverity
 

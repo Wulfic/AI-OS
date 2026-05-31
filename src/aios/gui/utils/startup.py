@@ -225,7 +225,7 @@ def _set_windows_startup_enabled(enabled: bool, minimized: bool) -> bool:
         
         return True
         
-    except PermissionError as e:
+    except PermissionError:
         # User doesn't have permission to modify registry
         logger.error(
             "Permission denied to modify startup registry entry. "

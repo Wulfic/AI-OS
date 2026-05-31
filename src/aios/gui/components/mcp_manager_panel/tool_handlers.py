@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, cast
+from typing import Any, cast
 
 try:  # pragma: no cover - environment dependent
     from tkinter import messagebox  # type: ignore

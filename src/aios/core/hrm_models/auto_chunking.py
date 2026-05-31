@@ -5,8 +5,7 @@ This module provides a drop-in replacement for segment_rollout that automaticall
 uses chunking when sequences exceed a threshold.
 """
 
-from typing import Dict, Tuple, Optional, Callable
-import torch
+from typing import Callable
 
 
 def auto_chunked_segment_rollout(

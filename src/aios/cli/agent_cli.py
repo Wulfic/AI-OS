@@ -7,7 +7,7 @@ from pathlib import Path
 
 import typer
 
-from aios.cli.utils import load_config, setup_logging
+from aios.cli.utils import load_config
 from aios.core.hrm import build_default_registry, Manager
 from aios.core.inference import run_inference
 from aios.core.orchestrator import Orchestrator

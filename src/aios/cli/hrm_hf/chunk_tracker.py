@@ -6,7 +6,6 @@ Ensures no duplicate training and enables resume capability.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -21,7 +20,21 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 
-CLAIM_TIMEOUT_SECONDS = 600
+def _resolve_claim_timeout() -> float:
+    """Resolve the stale chunk-claim timeout (seconds), overridable via env."""
+    raw = os.environ.get("AIOS_CHUNK_CLAIM_TIMEOUT_SECONDS")
+    if raw:
+        try:
+            value = float(raw)
+            if value > 0:
+                return value
+            logger.warning("AIOS_CHUNK_CLAIM_TIMEOUT_SECONDS must be > 0, ignoring %r", raw)
+        except ValueError:
+            logger.warning("Invalid AIOS_CHUNK_CLAIM_TIMEOUT_SECONDS=%r, using default", raw)
+    return 600.0
+
+
+CLAIM_TIMEOUT_SECONDS = _resolve_claim_timeout()
 
 
 def sanitize_dataset_name(dataset_path: str) -> str:

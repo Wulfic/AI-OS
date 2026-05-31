@@ -22,7 +22,6 @@ This preprocessing enables:
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Optional, List, Tuple
 import shutil
@@ -68,7 +67,7 @@ def preprocess_dataset(
             return (info["total_samples"], info["samples_per_block"], info["total_blocks"])
         except Exception:
             if not overwrite:
-                raise FileExistsError(f"Preprocessed structure exists but metadata is invalid. Use overwrite=True to rebuild.")
+                raise FileExistsError("Preprocessed structure exists but metadata is invalid. Use overwrite=True to rebuild.")
     
     print(f"📦 Preprocessing dataset: {dataset_path.name}")
     print(f"   Block size: {samples_per_block:,} samples")
@@ -77,7 +76,7 @@ def preprocess_dataset(
     existing_blocks = list(dataset_path.glob("block_*"))
     if existing_blocks:
         print(f"   ⚠️  Found {len(existing_blocks)} existing blocks - dataset appears partially preprocessed")
-        print(f"   Skipping preprocessing")
+        print("   Skipping preprocessing")
         # Count existing blocks and return
         total_blocks = len(existing_blocks)
         # Try to get total samples from existing metadata
@@ -99,8 +98,8 @@ def preprocess_dataset(
     )
     
     if has_hf_structure:
-        print(f"   ✓ Detected HuggingFace dataset structure")
-        print(f"   Note: HF datasets will be read directly (not moved to preserve structure)")
+        print("   ✓ Detected HuggingFace dataset structure")
+        print("   Note: HF datasets will be read directly (not moved to preserve structure)")
         # Read directly from dataset_path, don't move files
         source_dir = dataset_path
     else:
@@ -127,7 +126,7 @@ def preprocess_dataset(
             if moved_count > 0:
                 print(f"   ✓ Moved {moved_count} items to raw/")
         else:
-            print(f"   ✓ Raw directory already exists, using existing structure")
+            print("   ✓ Raw directory already exists, using existing structure")
         
         source_dir = raw_dir
     
@@ -185,8 +184,8 @@ def preprocess_dataset(
     with open(info_file, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2)
     
-    print(f"   ✓ Created metadata file")
-    print(f"✅ Preprocessing complete!")
+    print("   ✓ Created metadata file")
+    print("✅ Preprocessing complete!")
     print(f"   Total: {total_samples:,} samples in {total_blocks} blocks")
     
     return (total_samples, samples_per_block, total_blocks)
@@ -245,12 +244,12 @@ def _read_all_samples(directory: Path, ascii_only: bool) -> List[str]:
                 return samples
         except ImportError as e:
             print(f"   ⚠️  datasets library not available: {e}")
-            print(f"   Falling back to file reading...")
+            print("   Falling back to file reading...")
         except Exception as e:
             import traceback
             print(f"   ⚠️  Could not load as HF dataset: {e}")
             print(f"   Traceback: {traceback.format_exc()}")
-            print(f"   Falling back to file reading...")
+            print("   Falling back to file reading...")
     
     # Fallback: Read text files
     print("   Reading text files...")
@@ -393,7 +392,7 @@ if __name__ == "__main__":
             overwrite=args.overwrite
         )
         
-        print(f"\n✅ Success!")
+        print("\n✅ Success!")
         print(f"   Samples: {total_samples:,}")
         print(f"   Blocks: {total_blocks}")
         print(f"   Per block: {samples_per_block:,}")

@@ -285,7 +285,8 @@ class JournalOps(ServiceInterface):
 
 async def main():
     # Configure basic logging; honor AIOS_LOG_LEVEL and prefer stderr in debug to surface logs
-    import os, sys
+    import os
+    import sys
     level = (os.environ.get("AIOS_LOG_LEVEL") or ("DEBUG" if os.environ.get("AIOS_DEBUG") else "INFO")).upper()
     try:
         lvl = getattr(logging, level, logging.INFO)

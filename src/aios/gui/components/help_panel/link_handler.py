@@ -6,7 +6,6 @@ import re
 import webbrowser
 from pathlib import Path
 from typing import Any, Optional, Callable, List, Tuple
-from urllib.parse import urlparse, unquote
 from . import utils
 
 logger = logging.getLogger(__name__)
@@ -112,7 +111,7 @@ class LinkHandler:
         # Handle internal doc URLs
         if url.startswith(self.INTERNAL_PROTOCOL):
             actual_href = url[len(self.INTERNAL_PROTOCOL):]
-            logger.debug(f"Link type: internal documentation")
+            logger.debug("Link type: internal documentation")
             self._handle_internal_link(actual_href)
             return
         

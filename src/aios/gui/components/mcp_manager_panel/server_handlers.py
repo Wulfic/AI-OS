@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 try:  # pragma: no cover - environment dependent
     from tkinter import messagebox  # type: ignore
@@ -151,7 +151,7 @@ def handle_test_server(servers_tree: Any, log_callback: Any) -> None:
     
     # TODO: Implement actual connection test and log results
     # For now, log as initiated
-    logger.info(f"Test connection initiated (placeholder)")
+    logger.info("Test connection initiated (placeholder)")
     log_callback(f"[MCP] Connection test initiated for: {name}")
 
 def handle_enable_server(servers_tree: Any, servers_loader: Any, servers_saver: Any, refresh_callback: Any, log_callback: Any) -> None:

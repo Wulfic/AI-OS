@@ -10,12 +10,10 @@ import time
 import tkinter as tk
 from concurrent.futures import Future
 from queue import Queue, Empty
-from pathlib import Path
 from tkinter import messagebox
 from typing import Callable, Optional, Dict, Any
 
 # Import all helper modules
-from . import hf_cache_setup  # Must be first to set env vars
 from .hf_auth import get_hf_login_status, logout_from_hf, show_login_dialog
 from .favorites_dialog import show_favorites_popup
 from .favorites_manager import add_favorite, remove_favorite, is_favorited
@@ -27,7 +25,7 @@ from .search_operations import (
     get_selected_dataset,
     sort_results_by_column,
 )
-from .cache_manager import load_search_cache, save_search_cache
+from .cache_manager import load_search_cache
 from .download_core import download_dataset
 from .ui_builder import build_ui, browse_location
 from .pause_token import PauseToken

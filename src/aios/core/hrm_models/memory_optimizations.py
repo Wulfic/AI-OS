@@ -12,7 +12,7 @@ These techniques can enable 2-10x larger contexts on the same hardware.
 """
 
 from __future__ import annotations
-from typing import Optional, Any, Dict, List, Union
+from typing import Optional, Any, Dict, List
 import logging
 import torch
 import torch.nn as nn
@@ -241,23 +241,23 @@ def print_memory_optimization_recommendations(
     logger.info(f"   Current optimizer memory: {savings['fp32_optimizer_gb']:.2f} GB")
     logger.info(f"   With 8-bit optimizer: {savings['int8_optimizer_gb']:.2f} GB")
     logger.info(f"   Savings: {savings['savings_gb']:.2f} GB ({savings['savings_percent']:.1f}%)")
-    logger.info(f"   Enable with: --use-8bit-optimizer")
+    logger.info("   Enable with: --use-8bit-optimizer")
     logger.info("")
     
     # DeepSpeed ZeRO
     logger.info("2. DEEPSPEED ZERO-3")
     zero3_savings_gb = savings['fp32_optimizer_gb'] * 0.75  # Approximate
     logger.info(f"   Estimated savings: {zero3_savings_gb:.2f} GB (75% of optimizer+gradients+params)")
-    logger.info(f"   Enable with: --zero-stage zero3")
-    logger.info(f"   Note: Can work on single GPU with CPU offload")
+    logger.info("   Enable with: --zero-stage zero3")
+    logger.info("   Note: Can work on single GPU with CPU offload")
     logger.info("")
     
     # Layer freezing
     freeze_savings_gb = (num_params * 0.3 * 4 * 2) / (1024**3)  # 30% of params
     logger.info("3. LAYER FREEZING")
     logger.info(f"   Freeze 30% of layers: ~{freeze_savings_gb:.2f} GB saved")
-    logger.info(f"   Example: Freeze embeddings and early layers")
-    logger.info(f"   Enable with: --freeze-embeddings")
+    logger.info("   Example: Freeze embeddings and early layers")
+    logger.info("   Enable with: --freeze-embeddings")
     logger.info("")
     
     # Model size reduction
@@ -267,7 +267,7 @@ def print_memory_optimization_recommendations(
     logger.info(f"   Current: {num_params:,} params")
     logger.info(f"   Suggested: {smaller_model_params:,} params (1/4 size)")
     logger.info(f"   Savings: ~{smaller_savings:.2f} GB")
-    logger.info(f"   Example: --h-layers 1 --l-layers 1 --hidden-size 256")
+    logger.info("   Example: --h-layers 1 --l-layers 1 --hidden-size 256")
     logger.info("")
     
     # Combined approach
@@ -287,7 +287,7 @@ def print_memory_optimization_recommendations(
     logger.info(f"   (vs target of {target_context_length:,} tokens)")
     
     if estimated_context >= target_context_length:
-        logger.info(f"   ✅ Target is achievable with combined optimizations!")
+        logger.info("   ✅ Target is achievable with combined optimizations!")
     else:
         shortfall = target_context_length - estimated_context
         logger.info(f"   ⚠️  Still {shortfall:,} tokens short - consider smaller model")
@@ -309,7 +309,7 @@ def enable_torch_compile_optimization(model: nn.Module) -> Any:
         Compiled model (or original if compile not available)
     """
     try:
-        if hasattr(torch, 'compile') and hasattr(model, '__call__'):
+        if hasattr(torch, 'compile') and callable(model):
             logger.info("Enabling torch.compile() for optimized training...")
             return torch.compile(model, mode='reduce-overhead')
         else:

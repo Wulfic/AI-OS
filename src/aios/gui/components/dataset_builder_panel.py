@@ -270,7 +270,6 @@ class DatasetBuilderPanel(ttk.LabelFrame):  # type: ignore[misc]
 
     def start_build(self) -> None:
         import json
-        import shlex
         import subprocess as _sp
 
         q = (self.query_var.get() or "").strip()

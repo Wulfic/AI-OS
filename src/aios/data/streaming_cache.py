@@ -345,7 +345,7 @@ class StreamingChunkCache:
                 
                 return True
                 
-            except Exception as e:
+            except Exception:
                 # Failed to save
                 return False
     

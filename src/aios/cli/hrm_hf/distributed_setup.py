@@ -431,7 +431,7 @@ def handle_windows_zero_multi_gpu(
     
     if num_gpus > 1 or (config.ddp and config.world_size and config.world_size > 1):
         # Auto-convert to single GPU
-        logger.warning(f"Windows ZeRO multi-GPU incompatibility detected: Converting to single GPU (first device)")
+        logger.warning("Windows ZeRO multi-GPU incompatibility detected: Converting to single GPU (first device)")
         log_fn({
             "windows_zero_multi_gpu_detected": True,
             "action": "auto_convert_to_single_gpu",

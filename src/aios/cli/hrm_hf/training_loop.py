@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 import typer
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Tuple, Callable
 
 if TYPE_CHECKING:
@@ -343,7 +342,7 @@ def run_iterate_mode(
                             chunk_tracker.mark_block_complete(int(current_block_id))
                         # advance logical block id for subsequent cycles
                         current_block_id += 1
-                        setattr(config, 'current_block_id', int(current_block_id))
+                        config.current_block_id = int(current_block_id)
                         # reset per-block sample counter persisted in config if present
                         if hasattr(config, 'current_block_samples'):
                             config.current_block_samples = 0

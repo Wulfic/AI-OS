@@ -78,7 +78,7 @@ def estimate_model_params(panel: HRMTrainingPanel) -> int:  # pyright: ignore[re
             if moe_experts_text and moe_experts_text != "N/A" and moe_experts_text != "-":
                 num_experts = int(moe_experts_text)
                 use_moe = True
-        except:
+        except Exception:
             pass
         
         # Calculate using centralized function
@@ -763,7 +763,7 @@ def update_moe_stats_display(panel: HRMTrainingPanel) -> None:  # pyright: ignor
                                     entry = json.loads(line.strip())
                                     if "step" in entry:
                                         max_step = max(max_step, entry["step"])
-                                except:
+                                except Exception:
                                     continue
                             training_steps = max_step
                     except Exception:
@@ -805,7 +805,7 @@ def update_moe_stats_display(panel: HRMTrainingPanel) -> None:  # pyright: ignor
             panel.trained_steps_entry.config(state="readonly")
         else:
             # Brain JSON not found - calculate from GUI values instead
-            log(panel, f"[hrm] Brain JSON not found - calculating params from GUI values")
+            log(panel, "[hrm] Brain JSON not found - calculating params from GUI values")
             
             # Try to calculate params from current GUI architecture settings
             try:
@@ -825,7 +825,7 @@ def update_moe_stats_display(panel: HRMTrainingPanel) -> None:  # pyright: ignor
                     if moe_experts_text and moe_experts_text != "N/A" and moe_experts_text != "-":
                         num_experts = int(moe_experts_text)
                         use_moe = True
-                except:
+                except Exception:
                     pass
                 
                 # Calculate total params using shared function
@@ -879,7 +879,7 @@ def update_moe_stats_display(panel: HRMTrainingPanel) -> None:  # pyright: ignor
                 panel._log(f"[hrm] Error updating MoE stats: {e}")
                 import traceback
                 panel._log(f"[hrm] Traceback: {traceback.format_exc()}")
-        except:
+        except Exception:
             pass
         _clear_stats_display(panel)
 

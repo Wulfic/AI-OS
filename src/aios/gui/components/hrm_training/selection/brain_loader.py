@@ -80,7 +80,7 @@ def load_brain_to_panel(panel: Any, brain_dir: str, brain_name: str) -> None:
         try:
             from ...hrm_training_panel.memory_estimation import update_moe_stats_display
             update_moe_stats_display(panel)
-            panel._log(f"[hrm] Brain stats populated from metadata")
+            panel._log("[hrm] Brain stats populated from metadata")
         except Exception as e:
             panel._log(f"[hrm] Warning: Could not populate brain stats: {e}")
             logger.error(f"Failed to populate brain stats: {e}")

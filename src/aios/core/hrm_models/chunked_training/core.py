@@ -202,7 +202,7 @@ def chunked_segment_rollout(
                                     if attr_name.startswith('_cache'):
                                         try:
                                             delattr(module, attr_name)
-                                        except:
+                                        except Exception:
                                             pass
                     
                     # One retry attempt after cleanup

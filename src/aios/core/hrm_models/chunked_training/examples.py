@@ -36,7 +36,7 @@ def print_memory_estimations():
             num_params=124_000_000,
         )
         
-        print(f"  Memory breakdown:")
+        print("  Memory breakdown:")
         print(f"    Model: {mem['model_gb']:.2f} GB")
         print(f"    Optimizer: {mem['optimizer_gb']:.2f} GB")
         print(f"    Gradients: {mem['gradients_gb']:.2f} GB")

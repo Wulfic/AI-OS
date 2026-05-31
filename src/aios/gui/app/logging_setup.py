@@ -9,14 +9,13 @@ This module initializes the logging system including:
 from __future__ import annotations
 from typing import Any, TYPE_CHECKING
 import logging
-import sys
 import time
 from pathlib import Path
 
 if TYPE_CHECKING:
     pass
 
-from ..services import LogRouter, LogCategory
+from ..services import LogRouter
 
 logger = logging.getLogger(__name__)
 

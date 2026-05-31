@@ -83,7 +83,7 @@ except Exception:
     pass
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 try:  # pragma: no cover - handles bootstrap contexts
     from aios.system import paths as system_paths
@@ -683,11 +683,11 @@ def train_actv1_impl(
                 # Resolve scheduler config (file + CLI overrides)
                 override_dict = {}
                 if getattr(config, "adaptive_lr_debug_level", None) is not None:
-                    override_dict["debug_level"] = int(getattr(config, "adaptive_lr_debug_level"))
+                    override_dict["debug_level"] = int(config.adaptive_lr_debug_level)
                 if getattr(config, "adaptive_lr_emit_window_summary", None) is not None:
-                    override_dict["emit_window_summary"] = bool(getattr(config, "adaptive_lr_emit_window_summary"))
+                    override_dict["emit_window_summary"] = bool(config.adaptive_lr_emit_window_summary)
                 if getattr(config, "adaptive_lr_window_summary_every", None) is not None:
-                    override_dict["window_summary_every"] = int(getattr(config, "adaptive_lr_window_summary_every"))
+                    override_dict["window_summary_every"] = int(config.adaptive_lr_window_summary_every)
 
                 cfg_lr = build_adaptive_lr_config(
                     base_lr=float(lr),
@@ -1145,7 +1145,7 @@ def train_actv1_impl(
                         # Advance logical block id and reset counters
                         try:
                             current_block_id = int(current_block_id) + 1
-                            setattr(config, 'current_block_id', int(current_block_id))
+                            config.current_block_id = int(current_block_id)
                             config.current_block_samples = 0
                         except Exception:
                             pass

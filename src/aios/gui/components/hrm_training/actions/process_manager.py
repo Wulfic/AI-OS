@@ -19,7 +19,6 @@ import multiprocessing as mp
 from multiprocessing.queues import Queue as MPQueue
 import queue
 
-from aios.python_exec import get_preferred_python_executable
 from ....utils.resource_management import submit_background
 from aios.gui.components.hrm_training_panel.path_defaults import get_default_bundle_dir
 
@@ -266,7 +265,7 @@ def _training_process_wrapper(
             if msg and msg.strip():
                 try:
                     self.queue.put(('stdout', msg))
-                except:
+                except Exception:
                     pass
             return len(msg)
         
@@ -374,7 +373,7 @@ def _cleanup_process_resources(panel: Any) -> None:
             try:
                 panel._output_queue.put(None)
                 logger.debug("Sent stop signal to queue monitor")
-            except:
+            except Exception:
                 pass
         
         # Clean up Manager

@@ -85,7 +85,7 @@ def _install_guard() -> None:
                 continue
             _orig_meth = meth
 
-            def _guarded(self: Any, event: Any) -> Any:  # type: ignore[misc]
+            def _guarded(self: Any, event: Any, _orig_meth: Any = _orig_meth) -> Any:  # type: ignore[misc]
                 try:
                     w = getattr(event, 'widget', None)
                     if (w is None) or isinstance(w, str) or (not hasattr(w, 'winfo_containing')):
@@ -101,7 +101,7 @@ def _install_guard() -> None:
                     return None
 
             try:
-                setattr(cls, 'scroll_event_windows', _guarded)
+                cls.scroll_event_windows = _guarded
                 patched_classes.append(attr_name)
             except Exception as e:
                 logger.error(f"Failed to patch {attr_name}.scroll_event_windows: {e}")

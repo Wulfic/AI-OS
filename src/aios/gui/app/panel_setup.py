@@ -471,7 +471,7 @@ def _load_brains_panel_sync(app: Any) -> None:
             # NO Tkinter calls from this thread!
             app.brains_panel._data_loaded = True
             
-            logger.debug(f"Brains panel data loaded from CLI")
+            logger.debug("Brains panel data loaded from CLI")
     except Exception as e:
         logger.warning(f"Failed to load brains panel data: {e}")
 
@@ -1128,7 +1128,6 @@ def _initialize_resources_panel(app: Any, save_state_cb: Callable[[], None] | No
 def _configure_python_logging(app: Any) -> None:
     """Configure Python logging to route to Debug panel."""
     import logging
-    import tkinter as tk
     
     # Register debug panel as handler for all log categories
     try:
@@ -1244,7 +1243,7 @@ def _apply_loaded_panel_data(app: Any) -> None:
         section_start = time.perf_counter()
         # Apply any queued brains panel updates that were scheduled before Tk mainloop started
         if hasattr(app, 'brains_panel') and hasattr(app.brains_panel, '_startup_callbacks'):
-            callbacks = getattr(app.brains_panel, '_startup_callbacks') or []
+            callbacks = app.brains_panel._startup_callbacks or []
             for cb in list(callbacks):
                 try:
                     cb()
@@ -1674,7 +1673,7 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
         except Exception as e:
             results['chat']['error'] = str(e)
             logger.error(f"Error loading chat data: {e}")
-            _write_crash_log(f"load_chat: FAILED", e)
+            _write_crash_log("load_chat: FAILED", e)
         return 'chat'
     
     def load_brains():
@@ -1690,7 +1689,7 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
         except Exception as e:
             results['brains']['error'] = str(e)
             logger.error(f"Error loading brains data: {e}")
-            _write_crash_log(f"load_brains: FAILED", e)
+            _write_crash_log("load_brains: FAILED", e)
         return 'brains'
     
     def load_mcp():
@@ -1706,7 +1705,7 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
         except Exception as e:
             results['mcp']['error'] = str(e)
             logger.error(f"Error loading MCP data: {e}")
-            _write_crash_log(f"load_mcp: FAILED", e)
+            _write_crash_log("load_mcp: FAILED", e)
         return 'mcp'
     
     def load_resources():
@@ -1722,7 +1721,7 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
         except Exception as e:
             results['resources']['error'] = str(e)
             logger.error(f"Error loading resources data: {e}")
-            _write_crash_log(f"load_resources: FAILED", e)
+            _write_crash_log("load_resources: FAILED", e)
         return 'resources'
     
     def load_settings():
@@ -1738,7 +1737,7 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
         except Exception as e:
             results['settings']['error'] = str(e)
             logger.error(f"Error loading settings data: {e}")
-            _write_crash_log(f"load_settings: FAILED", e)
+            _write_crash_log("load_settings: FAILED", e)
         return 'settings'
     
     def load_evaluation():
@@ -1754,7 +1753,7 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
         except Exception as e:
             results['evaluation']['error'] = str(e)
             logger.error(f"Error loading evaluation data: {e}")
-            _write_crash_log(f"load_evaluation: FAILED", e)
+            _write_crash_log("load_evaluation: FAILED", e)
         return 'evaluation'
     
     def load_help():
@@ -1770,7 +1769,7 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
         except Exception as e:
             results['help']['error'] = str(e)
             logger.error(f"Error loading help data: {e}")
-            _write_crash_log(f"load_help: FAILED", e)
+            _write_crash_log("load_help: FAILED", e)
         return 'help'
     
     def load_hrm_training():
@@ -1786,7 +1785,7 @@ def load_all_panel_data(app: Any, update_status_fn: Any) -> None:
         except Exception as e:
             results['hrm_training']['error'] = str(e)
             logger.error(f"Error loading HRM training data: {e}")
-            _write_crash_log(f"load_hrm_training: FAILED", e)
+            _write_crash_log("load_hrm_training: FAILED", e)
         return 'hrm_training'
     
     # Start loading with available executor

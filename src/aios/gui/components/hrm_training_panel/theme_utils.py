@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from tkinter import ttk
+    pass
 
 
 def get_theme_colors() -> dict[str, str]:

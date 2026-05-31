@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import warnings
-from typing import TYPE_CHECKING, Any, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 
@@ -63,7 +63,7 @@ def create_optimizer(
             })
     
     # Standard optimizer
-    OptClass = getattr(torch.optim, "AdamW", None) or getattr(torch.optim, "Adam")
+    OptClass = getattr(torch.optim, "AdamW", None) or torch.optim.Adam
     opt = OptClass(params, lr=config.lr)
     logger.info(f"Created standard {OptClass.__name__} optimizer: lr={config.lr}, params={len(params)}")
     log_fn({

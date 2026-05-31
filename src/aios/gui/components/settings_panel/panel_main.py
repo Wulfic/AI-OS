@@ -7,7 +7,6 @@ import os
 import time
 from typing import Any, Callable
 from tkinter import ttk
-import tkinter as tk
 
 from . import ui_builders, theme_manager, startup_settings, cache_management
 from ...utils.resource_management import submit_background
@@ -509,8 +508,6 @@ class SettingsPanel:
             logger.info(f"Updated HF_XET_CACHE to: {xet_cache_path.resolve()}")
         except Exception as e:
             logger.error(f"Error updating HF_HOME: {e}", exc_info=True)
-        except Exception as e:
-            logger.error(f"Error updating HF_HOME: {e}", exc_info=True)
     
     def _load_download_location(self) -> None:
         """Load and expand download location to show full path."""
@@ -607,7 +604,7 @@ class SettingsPanel:
             submit_background("settings-help-index", rebuild, pool=self._worker_pool)
         except RuntimeError as exc:
             logger.error("Failed to queue help index rebuild: %s", exc)
-            _dispatch(lambda: self.help_index_status_label.config(text=f"✗ Queue error: {exc}"))
+            _dispatch(lambda exc=exc: self.help_index_status_label.config(text=f"✗ Queue error: {exc}"))
 
     def get_state(self) -> dict[str, Any]:
         """Return current settings state for persistence."""
@@ -988,7 +985,6 @@ class SettingsPanel:
         """
         try:
             from tkinter import messagebox
-            import glob
             
             logger.info("User action: Clearing old log files")
             

@@ -4,7 +4,7 @@ Dynamic Mixture of Experts layer with runtime expert management.
 Supports adding/removing experts, freezing/unfreezing, and integration with ExpertRegistry.
 """
 
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 import torch
 import torch.nn as nn
 from pathlib import Path
@@ -310,7 +310,7 @@ class DynamicMoELayer(nn.Module):
         # Validate router size matches expert count
         if self.router.num_experts != len(expert_ids):
             logger.error(f"[DynamicMoE] ROUTER SIZE MISMATCH! router.num_experts={self.router.num_experts} != len(expert_ids)={len(expert_ids)}")
-            logger.error(f"[DynamicMoE] Calling _update_router_size() to fix...")
+            logger.error("[DynamicMoE] Calling _update_router_size() to fix...")
             self._update_router_size()
         
         # Ensure router is on same device as input to prevent device mismatch
@@ -333,7 +333,7 @@ class DynamicMoELayer(nn.Module):
         if max_idx >= len(expert_ids):
             logger.error(f"[DynamicMoE] INVALID ROUTER OUTPUT! max_idx={max_idx} >= len(expert_ids)={len(expert_ids)}")
             logger.error(f"[DynamicMoE] router.gate.weight.shape={self.router.gate.weight.shape}")
-            logger.error(f"[DynamicMoE] This will cause CUDA indexing error!")
+            logger.error("[DynamicMoE] This will cause CUDA indexing error!")
             # Clamp indices to valid range as emergency fix
             top_k_indices = torch.clamp(top_k_indices, 0, len(expert_ids) - 1)
             logger.warning(f"[DynamicMoE] Clamped indices to valid range [0, {len(expert_ids)-1}]")

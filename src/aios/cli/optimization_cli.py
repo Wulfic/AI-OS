@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional, List
 import json
 
-from aios.gui.components.hrm_training.optimizer_unified import optimize_cli, OptimizationConfig, optimize_from_config
+from aios.gui.components.hrm_training.optimizer_unified import OptimizationConfig, optimize_from_config
 
 
 def register(app: typer.Typer):

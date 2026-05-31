@@ -8,7 +8,6 @@ import os
 import socket
 import time
 from typing import Optional
-from urllib.parse import urlparse
 
 from ..runner import DiagnosticResult, DiagnosticSeverity
 

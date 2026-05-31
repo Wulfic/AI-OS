@@ -170,7 +170,8 @@ class CliBridgeMixin:
           and parse that segment via JSON, then via literal eval as fallback
         - final attempt: slice from the last '{' and try again
         """
-        import json, ast
+        import json
+        import ast
         if not text:
             return {}
         # Fast path: exact JSON
@@ -233,7 +234,7 @@ class CliBridgeMixin:
             logger.debug(f"Last-ditch parse failed: {e}")
         
         # Parsing failed - log at debug level since empty dict is returned as fallback
-        logger.debug(f"Output parsing failed: unable to extract dict from CLI output")
+        logger.debug("Output parsing failed: unable to extract dict from CLI output")
         logger.debug(f"Unexpected output format (length: {len(text)} chars): {text[:500]}")
         return {}
 

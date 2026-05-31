@@ -652,7 +652,7 @@ def show_dataset_selector(panel: HRMTrainingPanel) -> None:
                     panel.dataset_var.set(hf_identifier)
                     log(panel, f"[hrm] Selected HuggingFace dataset: {dataset_path}")
                     log(panel, f"[hrm] Using config='{config}', split='{split}'")
-                    log(panel, f"[hrm] Dataset will be streamed from HuggingFace Hub")
+                    log(panel, "[hrm] Dataset will be streamed from HuggingFace Hub")
                     
                     # Detect and display dataset size info
                     try:

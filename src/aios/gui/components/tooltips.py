@@ -108,7 +108,7 @@ def add_tooltip(widget: Any, text: str, *, delay_ms: int = 500, wrap: int = 288)
         return None
     try:
         tip = _Tooltip(widget, text, delay_ms=delay_ms, wrap=wrap)
-        setattr(widget, "_aios_tooltip", tip)  # prevent GC
+        widget._aios_tooltip = tip  # prevent GC
         return tip
     except Exception:
         return None

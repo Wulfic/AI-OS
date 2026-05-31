@@ -6,7 +6,7 @@ This module provides a custom lm_eval model class that wraps AI-OS brains
 
 from __future__ import annotations
 
-from typing import Any, Optional, Union
+from typing import Any
 import torch
 from pathlib import Path
 import json
@@ -439,5 +439,5 @@ def register_aios_model() -> None:
 
 
 # Auto-register when module is imported
-if LM != object:
+if LM is not object:
     register_aios_model()

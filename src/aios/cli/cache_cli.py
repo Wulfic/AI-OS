@@ -147,10 +147,10 @@ def configure(
         with open(config_path, 'w', encoding='utf-8') as f:
             yaml.dump(config, f, default_flow_style=False, sort_keys=False)
         
-        print(f"✓ Updated cache configuration:")
+        print("✓ Updated cache configuration:")
         for item in updated:
             print(f"  • {item}")
-        print(f"\n[dim]Note: Restart any running processes to apply changes[/dim]")
+        print("\n[dim]Note: Restart any running processes to apply changes[/dim]")
         
     except Exception as e:
         print(f"[red]Error updating configuration: {e}[/red]")

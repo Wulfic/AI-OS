@@ -25,9 +25,9 @@ def preprocess_dataset_cmd(
         print(f"📦 Preprocessing dataset: {dataset_path}")
         print(f"   Block size: {block_size:,} samples per block")
         if ascii_only:
-            print(f"   Filtering: ASCII-only text")
+            print("   Filtering: ASCII-only text")
         if overwrite:
-            print(f"   Mode: Overwrite existing")
+            print("   Mode: Overwrite existing")
         print()
         
         total_samples, samples_per_block, total_blocks = preprocess_dataset(
@@ -47,9 +47,9 @@ def preprocess_dataset_cmd(
         print(f"Samples per Block: {samples_per_block:,}")
         print()
         print("The dataset is now optimized for training:")
-        print(f"  • Fast size detection (metadata file)")
-        print(f"  • Efficient block loading")
-        print(f"  • Progress tracking with known block counts")
+        print("  • Fast size detection (metadata file)")
+        print("  • Efficient block loading")
+        print("  • Progress tracking with known block counts")
         print()
         
     except Exception as e:

@@ -5,7 +5,7 @@ Provides logging, state management, and utility functions that require panel acc
 
 from __future__ import annotations
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional, Dict
 
 from ...utils.resource_management import submit_background
 
@@ -99,7 +99,6 @@ def mk_bool(val: bool) -> Any:
         tk.BooleanVar or mock object
     """
     try:
-        import tkinter as tk
         return safe_variables.BooleanVar(value=val)
     except Exception:  # pragma: no cover - headless
         class _B:
@@ -161,7 +160,7 @@ def detect_and_display_dataset_info(panel: HRMTrainingPanel) -> Optional[Dict[st
                     
                     est_tag = " (estimated)" if is_estimated else ""
                     
-                    log(panel, f"✅ Dataset info detected:")
+                    log(panel, "✅ Dataset info detected:")
                     log(panel, f"   Rows: {num_rows:,}{est_tag}")
                     log(panel, f"   Size: {size_str}")
                     log(panel, f"   Blocks (100k samples): {total_blocks}")
@@ -217,7 +216,7 @@ def auto_calculate_steps(panel: HRMTrainingPanel) -> None:
             dataset_chunk_size = int(panel.dataset_chunk_size_var.get())
             if dataset_chunk_size < 1:
                 dataset_chunk_size = 4000
-        except:
+        except Exception:
             dataset_chunk_size = 4000
         
         # Simply set steps = chunk_size
@@ -238,9 +237,9 @@ def auto_calculate_steps(panel: HRMTrainingPanel) -> None:
         
         # Old dataset counting logic (kept as fallback, never reached)
         def _count_and_update():
+            dataset_path = panel.dataset_var.get().strip()
             try:
                 from pathlib import Path
-                import os
                 
                 dataset_count = 0
                 
@@ -291,9 +290,9 @@ def auto_calculate_steps(panel: HRMTrainingPanel) -> None:
                                 log(panel, f"[Auto Steps] Loaded {dataset_count:,} examples from HF dataset")
                             else:
                                 # For IterableDataset, we can't get length without downloading
-                                log(panel, f"[Auto Steps] Error: Cannot determine size for streaming dataset without downloading")
-                                log(panel, f"[Auto Steps] Solution: Download dataset first via Datasets tab, or manually set steps")
-                                log(panel, f"[Auto Steps] Tip: For large datasets, use estimated steps based on training time")
+                                log(panel, "[Auto Steps] Error: Cannot determine size for streaming dataset without downloading")
+                                log(panel, "[Auto Steps] Solution: Download dataset first via Datasets tab, or manually set steps")
+                                log(panel, "[Auto Steps] Tip: For large datasets, use estimated steps based on training time")
                                 return
                     
                     except ImportError:
@@ -310,7 +309,7 @@ def auto_calculate_steps(panel: HRMTrainingPanel) -> None:
                     # Check if path exists
                     if not path.exists():
                         log(panel, f"[Auto Steps] Error: Dataset path does not exist: {dataset_path}")
-                        log(panel, f"[Auto Steps] Tip: For HuggingFace datasets, use format: hf://dataset_name:config:split")
+                        log(panel, "[Auto Steps] Tip: For HuggingFace datasets, use format: hf://dataset_name:config:split")
                         return
                     
                     # Count samples based on path type
@@ -336,11 +335,11 @@ def auto_calculate_steps(panel: HRMTrainingPanel) -> None:
                             except Exception:
                                 continue
                     else:
-                        log(panel, f"[Auto Steps] Error: Invalid dataset path type")
+                        log(panel, "[Auto Steps] Error: Invalid dataset path type")
                         return
                 
                 if dataset_count == 0:
-                    log(panel, f"[Auto Steps] Warning: Dataset appears to be empty")
+                    log(panel, "[Auto Steps] Warning: Dataset appears to be empty")
                     return
                 
                 # Get dataset chunk size
@@ -348,7 +347,7 @@ def auto_calculate_steps(panel: HRMTrainingPanel) -> None:
                     dataset_chunk_size = int(panel.dataset_chunk_size_var.get())
                     if dataset_chunk_size < 1:
                         dataset_chunk_size = 4000
-                except:
+                except Exception:
                     dataset_chunk_size = 4000
                 
                 # Check if iterate mode is enabled
@@ -373,7 +372,7 @@ def auto_calculate_steps(panel: HRMTrainingPanel) -> None:
                     def _update_ui():
                         panel.steps_var.set(str(optimal_steps))
                         log(panel, f"[Auto Steps] Set to dataset size: {optimal_steps:,} steps (1 step per example)")
-                        log(panel, f"[Auto Steps] Coverage: 100% of dataset")
+                        log(panel, "[Auto Steps] Coverage: 100% of dataset")
                     
                     # Re-enable button
                     if hasattr(panel, '_auto_steps_btn'):
@@ -384,7 +383,7 @@ def auto_calculate_steps(panel: HRMTrainingPanel) -> None:
                 panel.after(0, _update_ui)
                 
             except Exception as e:
-                def _show_error():
+                def _show_error(e=e):
                     log(panel, f"[Auto Steps] Error: {e}")
                     if hasattr(panel, '_auto_steps_btn'):
                         panel._auto_steps_btn.config(state="normal", text="Auto")

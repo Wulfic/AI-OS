@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, asdict
-from typing import Optional
 
 from .base_fields import BaseFields
 from .architecture_fields import ArchitectureFields
@@ -112,6 +111,24 @@ class TrainingConfig(
             logger.warning(f"Validation failed: eval_batches={self.eval_batches} (must be non-negative)")
             raise ValueError("eval_batches must be non-negative (0 to disable)")
         validation_count += 1
+        
+        if self.use_moe:
+            if self.num_experts < 1:
+                logger.warning(f"Validation failed: num_experts={self.num_experts} (must be positive)")
+                raise ValueError("num_experts must be positive when use_moe is enabled")
+            if self.num_experts_per_tok < 1:
+                logger.warning(f"Validation failed: num_experts_per_tok={self.num_experts_per_tok} (must be positive)")
+                raise ValueError("num_experts_per_tok must be positive when use_moe is enabled")
+            if self.num_experts_per_tok > self.num_experts:
+                logger.warning(
+                    f"Validation failed: num_experts_per_tok={self.num_experts_per_tok} "
+                    f"> num_experts={self.num_experts}"
+                )
+                raise ValueError(
+                    f"num_experts_per_tok ({self.num_experts_per_tok}) must be <= "
+                    f"num_experts ({self.num_experts})"
+                )
+            validation_count += 1
         
         logger.debug(f"Validation passed: {validation_count} fields validated")
     

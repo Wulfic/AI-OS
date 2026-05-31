@@ -8,6 +8,8 @@ import re
 import logging
 from datetime import datetime
 
+logger = logging.getLogger(__name__)
+
 try:  # pragma: no cover - environment dependent
     import tkinter as tk  # type: ignore
     from tkinter import ttk  # type: ignore
@@ -781,7 +783,7 @@ class DebugPanel(ttk.LabelFrame):  # type: ignore[misc]
             if filename:
                 logger.debug(f"Exporting {len(self._all_messages)} log messages to {filename}")
                 with open(filename, 'w', encoding='utf-8') as f:
-                    f.write(f"AI-OS Debug Log Export\n")
+                    f.write("AI-OS Debug Log Export\n")
                     f.write(f"Exported: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                     f.write(f"Total Messages: {len(self._all_messages)}\n")
                     f.write("=" * 80 + "\n\n")

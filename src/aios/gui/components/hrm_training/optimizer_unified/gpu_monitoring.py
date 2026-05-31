@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 
 
 def create_gpu_monitor_safe(device_ids: List[int], log_file: Path, monitor_interval: float):

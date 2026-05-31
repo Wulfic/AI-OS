@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import csv
 import json
-from pathlib import Path
 from tkinter import filedialog, messagebox
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aios.core.evaluation import EvaluationResult

@@ -7,7 +7,7 @@ from datetime import timedelta
 from typing import Any, TYPE_CHECKING
 import warnings
 
-from .constants import MATPLOTLIB_AVAILABLE, Figure, FigureCanvasTkAgg, mdates, ttk
+from .constants import Figure, FigureCanvasTkAgg, mdates, ttk
 
 if TYPE_CHECKING:
     from .panel_main import ResourcesPanel

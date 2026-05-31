@@ -368,11 +368,16 @@ def train_epoch(
                                     pass
                 
                 # NaN detection
-                if loss is None or torch.isnan(loss).any() if torch.is_tensor(loss) else False or torch.isinf(loss).any() if torch.is_tensor(loss) else False:
+                is_bad_loss = (
+                    loss is None
+                    or (torch.is_tensor(loss) and (torch.isnan(loss).any() or torch.isinf(loss).any()))
+                )
+                if is_bad_loss:
+                    _m = metrics or {}
                     loss_val = float(loss.detach().cpu()) if loss is not None and torch.is_tensor(loss) else None
-                    ce_val = float(metrics.get("ce").detach().cpu()) if metrics.get("ce") is not None and torch.is_tensor(metrics.get("ce")) else None
-                    bce_halt = float(metrics.get("bce_halt").detach().cpu()) if metrics.get("bce_halt") is not None and torch.is_tensor(metrics.get("bce_halt")) else None
-                    bce_continue = float(metrics.get("bce_continue").detach().cpu()) if metrics.get("bce_continue") is not None and torch.is_tensor(metrics.get("bce_continue")) else None
+                    ce_val = float(_m.get("ce").detach().cpu()) if torch.is_tensor(_m.get("ce")) else None
+                    bce_halt = float(_m.get("bce_halt").detach().cpu()) if torch.is_tensor(_m.get("bce_halt")) else None
+                    bce_continue = float(_m.get("bce_continue").detach().cpu()) if torch.is_tensor(_m.get("bce_continue")) else None
                     
                     print({
                         "event": "nan_detected",
@@ -588,7 +593,7 @@ def train_epoch(
                                 "seq_len": batch["inputs"].shape[1],
                                 **log_metrics_extra
                             })
-                    except Exception as e:
+                    except Exception:
                         pass
                 
                 # Log expert usage statistics
@@ -717,8 +722,8 @@ def train_epoch(
                             "suggestion": "Reduce max_seq_len, enable gradient checkpointing, or use smaller model"
                         })
                         raise RuntimeError(
-                            f"Out of memory even at batch_size=1. "
-                            f"Try reducing max_seq_len or using gradient checkpointing."
+                            "Out of memory even at batch_size=1. "
+                            "Try reducing max_seq_len or using gradient checkpointing."
                         ) from e
                 raise
 

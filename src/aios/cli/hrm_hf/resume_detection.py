@@ -54,7 +54,29 @@ def detect_resume_state(
             step_offset = resume_session.get("total_steps", 0) or resume_session.get("steps_completed", 0)
             # Field is saved as 'iterate_cycle' in finalization.py
             resume_cycle = resume_session.get("iterate_cycle", 0) or resume_session.get("cycle", 0)
-            
+
+            # Validate the dataset matches the one used in the prior session.
+            # Resuming against a different dataset silently continues the step
+            # counter and LR schedule on incompatible data, which corrupts training.
+            prev_dataset = resume_session.get("dataset_file")
+            current_dataset = str(config.dataset_file) if config.dataset_file else None
+            if prev_dataset and current_dataset:
+                try:
+                    same = Path(prev_dataset).resolve() == Path(current_dataset).resolve()
+                except Exception:
+                    same = prev_dataset == current_dataset
+                if not same:
+                    log_fn({
+                        "resume": "dataset_mismatch_warning",
+                        "previous_dataset": prev_dataset,
+                        "current_dataset": current_dataset,
+                        "note": (
+                            "Resuming with a DIFFERENT dataset than the previous "
+                            "session. Step offset and LR schedule will continue as if "
+                            "this were the same data. Verify this is intentional."
+                        ),
+                    })
+
             log_fn({
                 "resume": "detected",
                 "brain_name": brain_name,

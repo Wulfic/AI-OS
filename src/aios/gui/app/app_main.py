@@ -181,19 +181,19 @@ except Exception:  # pragma: no cover
     system_paths = None
 
 if TYPE_CHECKING:
-    import tkinter as tk
+    pass
 
 from .resource_setup import setup_resources
 from .logging_setup import initialize_logging, configure_log_levels
 from .ui_setup import create_ui_structure
-from .panel_setup import initialize_panels, deferred_panel_initialization
+from .panel_setup import initialize_panels
 from .state_management import initialize_state, load_state, restore_state, save_state
 from .chat_operations import setup_chat_operations
 from .brain_operations import setup_brain_operations
 from .goal_operations import setup_goal_operations
 from .event_handlers import setup_event_handlers, setup_periodic_tasks
 from .cleanup import cleanup
-from .tray_management import init_tray, on_tray_settings
+from .tray_management import init_tray
 
 logger = logging.getLogger(__name__)
 

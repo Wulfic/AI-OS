@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Callable, List, Any
+from typing import Optional, Callable, List
 
 
 @dataclass

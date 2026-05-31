@@ -8,7 +8,7 @@ import threading
 import subprocess
 import psutil
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Callable, Any
+from typing import Dict, List, Tuple, Optional, Callable
 
 
 class ProcessManager:
@@ -186,19 +186,19 @@ class ProcessManager:
                 for child in children:
                     try:
                         child.kill()
-                    except:
+                    except Exception:
                         pass
                         
                 # Kill parent
                 try:
                     parent.kill()
-                except:
+                except Exception:
                     pass
                     
                 # Force terminate subprocess
                 try:
                     process.kill()
-                except:
+                except Exception:
                     pass
                     
         except Exception:
@@ -206,7 +206,7 @@ class ProcessManager:
             try:
                 process.terminate()
                 process.kill()
-            except:
+            except Exception:
                 pass
     
     def cleanup(self):

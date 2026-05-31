@@ -291,7 +291,7 @@ def start_evaluation(panel: "EvaluationPanel") -> None:
                 
                 if brain_type == "actv1":
                     # This is a native AI-OS brain - use custom adapter
-                    panel._log(f"[eval] Detected AI-OS ACTv1 brain - using native adapter")
+                    panel._log("[eval] Detected AI-OS ACTv1 brain - using native adapter")
                     
                     # Check for checkpoint
                     checkpoint = brain_path / "actv1_student.safetensors"
@@ -329,7 +329,7 @@ def start_evaluation(panel: "EvaluationPanel") -> None:
                 model_type = "hf"
         else:
             # No brain.json found - treat as HF-compatible model
-            panel._log(f"[eval] No brain.json found, treating as HF-compatible")
+            panel._log("[eval] No brain.json found, treating as HF-compatible")
             model = str(brain_path)
             model_type = "hf"
     else:
@@ -442,7 +442,7 @@ def on_progress_update(panel: "EvaluationPanel", progress: float, status_msg: st
                 panel._record_progress_update(progress, status_msg)
             except Exception:
                 logger.debug("Failed to log progress update", exc_info=True)
-    except Exception as e:
+    except Exception:
         # Silently ignore update errors to prevent crashes
         pass
 
@@ -569,7 +569,7 @@ def on_evaluation_complete(panel: "EvaluationPanel", result: "EvaluationResult")
                             samples_path = str(samples_dir)
                             panel._log(f"[eval] Found {len(sample_files)} sample file(s) in {samples_dir.name}")
                         else:
-                            panel._log(f"[eval] No sample files found (log_samples was enabled)")
+                            panel._log("[eval] No sample files found (log_samples was enabled)")
                     else:
                         panel._log(f"[eval] Output directory does not exist: {base_output_dir}")
                 except Exception as e:

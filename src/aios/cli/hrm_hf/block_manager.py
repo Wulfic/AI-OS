@@ -11,7 +11,6 @@ Key optimizations:
 
 from __future__ import annotations
 
-import os
 import threading
 import logging
 from pathlib import Path
@@ -187,13 +186,13 @@ class BlockManager:
                         logger.info(f"Pre-download stopped: dataset exhausted at block {block_id}")
                         break
                     
-                    logger.info(f"Pre-downloaded Block {block_id}: {len(block.samples)} samples")
+                    logger.info(f"Pre-downloaded Block {block_id}: {block.total_samples} samples")
                     
                 except Exception as e:
                     logger.warning(f"Pre-download failed for block {block_id}: {e}")
                     continue
             
-            logger.info(f"Pre-download complete")
+            logger.info("Pre-download complete")
         
         # Start background thread
         self._predownload_thread = threading.Thread(target=_predownload_worker, daemon=True, name="BlockPredownload")
@@ -872,6 +871,12 @@ class BlockManager:
         with self.lock:
             if block_id in self.blocks:
                 del self.blocks[block_id]
+        # Also evict any cached chunks belonging to this block so a later reload
+        # of the same block_id cannot return stale chunk data.
+        with self._chunk_cache_lock:
+            stale_keys = [key for key in self.chunk_cache if key[0] == block_id]
+            for key in stale_keys:
+                del self.chunk_cache[key]
     
     def get_next_block(self) -> Optional[DataBlock]:
         """Get the next sequential block.

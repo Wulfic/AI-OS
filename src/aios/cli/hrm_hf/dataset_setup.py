@@ -1,7 +1,6 @@
 """Dataset and model configuration setup."""
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Tuple, Any
 
 if TYPE_CHECKING:

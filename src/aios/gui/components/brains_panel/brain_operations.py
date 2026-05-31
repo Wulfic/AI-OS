@@ -239,7 +239,7 @@ def pin_brain(panel: Any) -> None:
                 suggestion = "Try refreshing the brains list and ensuring the brain exists"
             
             logger.error(f"{error_context}: {e}. Suggestion: {suggestion}", exc_info=True)
-            panel.after(0, lambda: panel._append_out(f"Error pinning brain: {e}\nSuggestion: {suggestion}"))
+            panel.after(0, lambda e=e, suggestion=suggestion: panel._append_out(f"Error pinning brain: {e}\nSuggestion: {suggestion}"))
         finally:
             # Refresh in background
             invalidate_brain_cache(panel._store_dir)
@@ -293,7 +293,7 @@ def unpin_brain(panel: Any) -> None:
                 suggestion = "Verify the brain is currently pinned and try again"
             
             logger.error(f"{error_context}: {e}. Suggestion: {suggestion}", exc_info=True)
-            panel.after(0, lambda: panel._append_out(f"Error unpinning brain: {e}\nSuggestion: {suggestion}"))
+            panel.after(0, lambda e=e, suggestion=suggestion: panel._append_out(f"Error unpinning brain: {e}\nSuggestion: {suggestion}"))
         finally:
             # Refresh in background
             invalidate_brain_cache(panel._store_dir)
@@ -385,7 +385,7 @@ def delete_brain(panel: Any) -> None:
                 suggestion = "Ensure the brain is not loaded in chat and try again"
             
             logger.error(f"{error_context}: {e}. Suggestion: {suggestion}", exc_info=True)
-            def show_error():
+            def show_error(e=e, suggestion=suggestion):
                 if messagebox is not None:
                     messagebox.showerror("Delete Brain", f"Error during deletion: {e}\n\nSuggestion: {suggestion}")
                 panel._append_out(f"[delete] Exception: {e}\nSuggestion: {suggestion}")
@@ -418,7 +418,7 @@ def show_brain_details(panel: Any) -> None:
         panel._append_out("Brain details are already loading. Please wait...")
         return
 
-    setattr(panel, "_brain_details_loading", True)
+    panel._brain_details_loading = True
     if hasattr(panel, "status_var"):
         try:
             panel.status_var.set("Loading details...")
@@ -431,7 +431,7 @@ def show_brain_details(panel: Any) -> None:
         pass
 
     def _finish_status() -> None:
-        setattr(panel, "_brain_details_loading", False)
+        panel._brain_details_loading = False
         if hasattr(panel, "status_var"):
             try:
                 panel.status_var.set("")
@@ -467,7 +467,7 @@ def show_brain_details(panel: Any) -> None:
                 brain_stats_data=stats_data
             )
         except Exception as build_err:
-            def _handle_build_error() -> None:
+            def _handle_build_error(build_err=build_err) -> None:
                 _finish_status()
                 err_str = str(build_err).lower()
                 if "not found" in err_str or "does not exist" in err_str:
@@ -536,7 +536,7 @@ def rename_brain(panel: Any) -> None:
                 suggestion = "Ensure the new name is unique and contains only valid characters"
             
             logger.error(f"{error_context}: {e}. Suggestion: {suggestion}", exc_info=True)
-            panel.after(0, lambda: panel._append_out(f"Error renaming: {e}\nSuggestion: {suggestion}"))
+            panel.after(0, lambda e=e, suggestion=suggestion: panel._append_out(f"Error renaming: {e}\nSuggestion: {suggestion}"))
         finally:
             # Refresh in background and clear rename field
             panel.after(0, lambda: panel.rename_var.set(""))
@@ -573,7 +573,7 @@ def set_master_status(panel: Any, enabled: bool) -> None:
             logger.info(f"Successfully {action.lower()} master status for brain '{name}'")
         except Exception as e:
             logger.error(f"Failed to {action.lower()} master for brain '{name}': {e}", exc_info=True)
-            panel.after(0, lambda: panel._append_out(f"Error setting master: {e}"))
+            panel.after(0, lambda e=e: panel._append_out(f"Error setting master: {e}"))
         finally:
             # Refresh in background
             invalidate_brain_cache(panel._store_dir)
@@ -606,7 +606,7 @@ def set_parent_brain(panel: Any) -> None:
             logger.info(f"Successfully set parent of '{name}' to '{parent}'")
         except Exception as e:
             logger.error(f"Failed to set parent for brain '{name}': {e}", exc_info=True)
-            panel.after(0, lambda: panel._append_out(f"Error setting parent: {e}"))
+            panel.after(0, lambda e=e: panel._append_out(f"Error setting parent: {e}"))
         finally:
             # Refresh in background
             invalidate_brain_cache(panel._store_dir)
@@ -638,7 +638,7 @@ def clear_parent_brain(panel: Any) -> None:
             logger.info(f"Successfully cleared parent of brain '{name}'")
         except Exception as e:
             logger.error(f"Failed to clear parent for brain '{name}': {e}", exc_info=True)
-            panel.after(0, lambda: panel._append_out(f"Error clearing parent: {e}"))
+            panel.after(0, lambda e=e: panel._append_out(f"Error clearing parent: {e}"))
         finally:
             # Refresh in background
             invalidate_brain_cache(panel._store_dir)
@@ -799,7 +799,7 @@ def export_brain(panel: Any) -> None:
             _update_transfer_status(panel, "Export failed")
             _clear_transfer_status(panel, delay_ms=4000)
 
-            def _on_error() -> None:
+            def _on_error(exc=exc) -> None:
                 if messagebox is not None:
                     messagebox.showerror("Export Brain", f"Failed to export '{name}': {exc}")
                 panel._append_out(f"[brains] Export failed for '{name}': {exc}")
@@ -993,7 +993,7 @@ def import_brain(panel: Any) -> None:
             _update_transfer_status(panel, "Import failed")
             _clear_transfer_status(panel, delay_ms=4000)
 
-            def _on_error() -> None:
+            def _on_error(exc=exc) -> None:
                 if messagebox is not None:
                     messagebox.showerror("Import Brain", f"Failed to import '{exported_name}': {exc}")
                 panel._append_out(f"[brains] Import failed: {exc}")

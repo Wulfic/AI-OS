@@ -28,7 +28,7 @@ def apply_quantization(model: Any, config: Any, log_fn) -> int:
     # 8-bit Quantization
     if config.load_in_8bit:
         try:
-            import bitsandbytes as bnb
+            import bitsandbytes as bnb  # noqa: F401  # availability check
             
             log_fn({
                 "quantization": "8-bit",

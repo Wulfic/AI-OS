@@ -5,7 +5,7 @@ including sparse MoE overhead.
 """
 
 from __future__ import annotations
-from typing import Tuple, Dict
+from typing import Tuple
 
 # Import centralized parameter calculation (single source of truth)
 from aios.cli.hrm_hf.model_building import calculate_actv1_params

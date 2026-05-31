@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import tkinter as tk
-    from tkinter import ttk
 
 
 def create_header(

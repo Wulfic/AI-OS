@@ -30,7 +30,6 @@ def setup_event_handlers(app: Any) -> None:
     def _on_close() -> None:
         """Handle window close event."""
         import threading
-        import sys
         import os
         
         logger.info("User action: Closing application window")

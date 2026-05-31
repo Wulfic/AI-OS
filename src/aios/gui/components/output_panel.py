@@ -4,7 +4,7 @@ from __future__ import annotations
 from ..utils import safe_variables
 
 import logging
-from typing import Any, Callable, List, cast
+from typing import Any, List, cast
 
 logger = logging.getLogger(__name__)
 

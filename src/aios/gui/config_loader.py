@@ -73,7 +73,7 @@ def get_config_path() -> Path:
         return fallback
     
     # If nothing found, return user config path (will be created on save)
-    logger.warning(f"Config file not found, will use user config path on save")
+    logger.warning("Config file not found, will use user config path on save")
     return Path.home() / ".config" / "aios" / "config.yaml"
 
 

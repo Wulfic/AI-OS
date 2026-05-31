@@ -219,7 +219,6 @@ def maybe_spawn_and_exit_if_parent(
                     # Wait for all workers with timeout
                     # First, give workers brief time to initialize DDP
                     # If any worker fails in first 30 seconds, likely a DDP init issue
-                    import signal
                     import time
                     
                     ddp_init_timeout = 30  # seconds
@@ -259,8 +258,8 @@ def maybe_spawn_and_exit_if_parent(
                         print("  2. Firewall blocking port 29500")
                         print("  3. Docker Desktop hostname pollution")
                         print("\n[cyan]Solutions:[/cyan]")
-                        print(f"  • Try single GPU: [green]--cuda-ids 0[/green]")
-                        print(f"  • Check firewall: [green]Allow port 29500[/green]")
+                        print("  • Try single GPU: [green]--cuda-ids 0[/green]")
+                        print("  • Check firewall: [green]Allow port 29500[/green]")
                         print(f"  • Review logs: [green]{os.environ.get('AIOS_DDP_LOG_DIR', 'N/A')}[/green]")
                         print()
                         
@@ -324,7 +323,6 @@ def maybe_spawn_and_exit_if_parent(
                     except Exception:
                         pass
                     from rich import print
-                    import traceback
                     print({"ddp": "spawn_failed", "error": str(e)[:200]})
                     if strict:
                         import typer
@@ -346,7 +344,7 @@ def maybe_spawn_and_exit_if_parent(
                     print("[cyan]Option 2 - Convenience script:[/cyan]")
                     print(f"  .\\scripts\\train_ddp.ps1 -NumGPUs {ngpus}\n")
                     print("[cyan]Option 3 - Enable internal spawn (for GUI/wrappers):[/cyan]")
-                    print(f"  Set environment variable: AIOS_DDP_SPAWN=1\n")
+                    print("  Set environment variable: AIOS_DDP_SPAWN=1\n")
                 else:
                     print("[cyan]Option 1 - Simple launcher:[/cyan]")
                     print(f"  python scripts/simple_ddp_launcher.py --nproc_per_node={ngpus} aios.cli.aios hrm-hf train-actv1 --ddp [green]<args>[/green]\n")

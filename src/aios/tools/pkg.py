@@ -63,7 +63,7 @@ def _pkg_op(
         try:
             limits.update(load_budgets(conn))
             used = load_budget_usage(conn)
-            logger.debug(f"Budget limits loaded from database")
+            logger.debug("Budget limits loaded from database")
         except Exception as e:
             logger.warning(f"Failed to load budgets from database: {e}")
     sb = SafetyBudget(limits=limits)

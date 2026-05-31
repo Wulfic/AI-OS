@@ -9,7 +9,7 @@ Notes:
 - Training data is intentionally excluded.
 """
 
-from typing import Any, Dict, Tuple
+from typing import Any, Dict
 
 
 def _require_torch():

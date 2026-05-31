@@ -6,7 +6,6 @@ trace setup for auto-save, and PEFT module mapping.
 
 from __future__ import annotations
 import logging
-import tkinter as tk
 from typing import TYPE_CHECKING
 
 from .path_defaults import (

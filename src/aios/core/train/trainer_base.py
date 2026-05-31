@@ -176,7 +176,7 @@ class TrainerBase:
     def _setup_optimizer(self, torch) -> None:  # pragma: no cover
         """Setup Adam optimizer."""
         # construct optimizer via getattr to satisfy some type checkers/stubs
-        self.opt = getattr(torch.optim, "Adam")(self._torch_params(), lr=self.cfg.lr)
+        self.opt = torch.optim.Adam(self._torch_params(), lr=self.cfg.lr)
         self.loss_fn = torch.nn.MSELoss()
 
     def _setup_amp(self, torch) -> None:  # pragma: no cover

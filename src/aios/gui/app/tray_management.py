@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    import tkinter as tk
+    pass
 
 from ..utils.tray import TrayManager
 

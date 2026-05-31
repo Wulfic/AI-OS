@@ -14,8 +14,7 @@ from ...utils import safe_variables
 
 # Lazy imports to avoid loading torch on startup
 if TYPE_CHECKING:
-    from aios.core.evaluation import EvaluationResult, HarnessWrapper, EvaluationHistory
-    from aios.gui.dialogs import EvaluationResultsDialog
+    from aios.core.evaluation import EvaluationResult, EvaluationHistory
 from aios.gui.services import DeviceSelectionResult
 # Note: EvaluationResultsDialog imported lazily via TYPE_CHECKING to avoid torch import during startup
 

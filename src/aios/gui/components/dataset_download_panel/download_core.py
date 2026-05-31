@@ -11,7 +11,6 @@ import logging
 import os
 import sys
 import threading
-import time
 from pathlib import Path
 from tkinter import messagebox
 from typing import Dict, Any, Optional
@@ -101,7 +100,7 @@ def download_dataset(panel, dataset: Dict[str, Any], download_location: str):
         confirmed = show_download_confirmation_dialog(dataset, parent_widget=panel.frame)
         logger.info(f"Confirmation result: {confirmed}")
         if not confirmed:
-            panel.log(f"   ❌ Download cancelled by user")
+            panel.log("   ❌ Download cancelled by user")
             logger.info(f"Download cancelled by user: {dataset_name}")
             return
     except Exception as e:
@@ -176,7 +175,7 @@ def download_dataset(panel, dataset: Dict[str, Any], download_location: str):
         use_streaming = False
         
         # Log download info
-        panel.log(f"   ⚡ Fast download mode - bulk downloading pre-built files...")
+        panel.log("   ⚡ Fast download mode - bulk downloading pre-built files...")
         if num_rows > 0:
             if max_samples > 0 and max_samples < num_rows:
                 panel.log(f"   📊 Downloading {max_samples:,} of {num_rows:,} samples ({size_gb:.2f} GB)")
@@ -255,7 +254,7 @@ def download_dataset(panel, dataset: Dict[str, Any], download_location: str):
         elif total_samples_count > 0:
             panel.log(f"   📊 Tracking: {total_samples_count:,} samples expected")
         else:
-            panel.log(f"   📊 Tracking: unknown size")
+            panel.log("   📊 Tracking: unknown size")
         
         # Capture progress (with tracker for parsing HF download progress)
         progress_capture = RealTimeProgressCapture(panel.log, panel.frame, progress_tracker)
@@ -283,7 +282,7 @@ def download_dataset(panel, dataset: Dict[str, Any], download_location: str):
             # Fast download failed, fall back to streaming
             if not use_streaming:
                 panel.log(f"   ⚠️ Fast download failed: {e}")
-                panel.log(f"   🔄 Falling back to streaming mode...")
+                panel.log("   🔄 Falling back to streaming mode...")
                 load_kwargs["streaming"] = True
                 use_streaming = True
                 try:
@@ -311,7 +310,7 @@ def download_dataset(panel, dataset: Dict[str, Any], download_location: str):
         # Handle fast (non-streaming) downloads
         if not use_streaming:
             try:
-                panel.log(f"   💾 Dataset downloaded to cache, converting to training format...")
+                panel.log("   💾 Dataset downloaded to cache, converting to training format...")
                 logger.info(f"Fast download complete, converting {dataset_name} to training format")
                 
                 # Get actual dataset length
@@ -374,7 +373,7 @@ def download_dataset(panel, dataset: Dict[str, Any], download_location: str):
                         logger.info(f"Fast download complete: {block_info.total_blocks} blocks saved")
                 else:
                     # Save as single file
-                    panel.log(f"   💾 Saving dataset to disk...")
+                    panel.log("   💾 Saving dataset to disk...")
                     dataset_subset = dataset_stream.select(range(actual_samples)) if max_samples > 0 else dataset_stream
                     output_path.mkdir(parents=True, exist_ok=True)
                     dataset_subset.save_to_disk(str(output_path))
@@ -397,7 +396,7 @@ def download_dataset(panel, dataset: Dict[str, Any], download_location: str):
             except Exception as e:
                 logger.exception(f"Fast download conversion failed for {dataset_name}")
                 panel.log(f"   ⚠️ Fast download conversion failed: {e}")
-                panel.log(f"   🔄 Falling back to streaming mode...")
+                panel.log("   🔄 Falling back to streaming mode...")
                 # Fall back to streaming
                 use_streaming = True
                 load_kwargs["streaming"] = True
@@ -427,7 +426,7 @@ def download_dataset(panel, dataset: Dict[str, Any], download_location: str):
         
         # Progress tracker already initialized earlier (reused for streaming fallback)
         # Just log that we're in streaming mode
-        panel.log(f"   📊 Streaming mode: downloading samples...")
+        panel.log("   📊 Streaming mode: downloading samples...")
         
         for j, sample in enumerate(dataset_stream, 1):
             if panel.cancel_download:

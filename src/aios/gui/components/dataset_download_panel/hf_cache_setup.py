@@ -62,9 +62,9 @@ def setup_hf_cache_env():
             # User explicitly configured a path that failed - warn them loudly
             logger.error(f"⚠️  CRITICAL: Cannot access configured HF cache location: {_configured_path}")
             logger.error(f"   Error: {e}")
-            logger.error(f"   The configured path may be on an unmounted drive or have permission issues.")
+            logger.error("   The configured path may be on an unmounted drive or have permission issues.")
             logger.error(f"   Please check your configuration at: {_config_file}")
-            logger.error(f"   Datasets will NOT be downloaded until this is resolved.")
+            logger.error("   Datasets will NOT be downloaded until this is resolved.")
             # Don't fall back silently - let it fail visibly
             raise RuntimeError(
                 f"Cannot access configured HF cache at {_configured_path}. "

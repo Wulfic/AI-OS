@@ -7,7 +7,7 @@ Supports both bits and bytes speed display with automatic unit scaling.
 
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Optional
 from enum import Enum
 

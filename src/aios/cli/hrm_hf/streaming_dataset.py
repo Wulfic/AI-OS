@@ -325,12 +325,12 @@ if __name__ == "__main__":
         eager = estimate_dataset_memory(num_samples, max_seq_len, batch_size, eager_loading=True)
         streaming = estimate_dataset_memory(num_samples, max_seq_len, batch_size, eager_loading=False)
         
-        print(f"\n  Eager loading (current):")
+        print("\n  Eager loading (current):")
         print(f"    Input IDs: {eager['input_ids_gb']} GB")
         print(f"    Labels: {eager['labels_gb']} GB")
         print(f"    TOTAL: {eager['total_gb']} GB")
         
-        print(f"\n  Streaming loading (optimized):")
+        print("\n  Streaming loading (optimized):")
         print(f"    Input IDs: {streaming['input_ids_gb']} GB")
         print(f"    Labels: {streaming['labels_gb']} GB")
         print(f"    TOTAL: {streaming['total_gb']} GB")

@@ -159,7 +159,6 @@ def validate_dependencies(log_fn) -> bool:
     """
     try:
         import warnings as _warnings
-        from pathlib import Path
         import torch
         
         logger.info(f"Validating dependencies - torch version: {torch.__version__}")
@@ -169,7 +168,6 @@ def validate_dependencies(log_fn) -> bool:
         _warnings.filterwarnings("ignore", message=".*TRANSFORMERS_CACHE.*", category=FutureWarning)
         _warnings.filterwarnings("ignore", message=".*weights_only.*", category=FutureWarning)
         
-        from transformers import AutoTokenizer, AutoModelForCausalLM
         import transformers
         
         logger.info(f"Transformers version: {transformers.__version__}")
@@ -181,8 +179,6 @@ def validate_dependencies(log_fn) -> bool:
         except Exception:
             pass
         
-        from aios.core.hrm_models import build_act_v1
-        from aios.core.hrm_models.auto_chunking import auto_chunked_segment_rollout
         
         logger.info("All required dependencies validated successfully")
         return True
@@ -216,7 +212,6 @@ def setup_output_directory(
     Returns:
         Tuple of (out_dir_path, save_dir, log_file)
     """
-    from pathlib import Path
     
     out_dir_path = None
     

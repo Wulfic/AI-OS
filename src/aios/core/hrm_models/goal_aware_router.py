@@ -17,7 +17,7 @@ from typing import List, Optional, Tuple, Dict, Any
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 import logging
 
@@ -366,7 +366,7 @@ if __name__ == "__main__":
     
     weights, indices, logits = router(x, top_k=2, active_goal_ids=None, expert_ids=expert_ids)
     
-    print(f"[OK] Routing completed")
+    print("[OK] Routing completed")
     print(f"     Output shapes: weights={weights.shape}, indices={indices.shape}, logits={logits.shape}")
     print(f"     Selected experts (token 0): {[expert_ids[i] for i in indices[0, 0].tolist()]}")
     print(f"     Weights (token 0): {weights[0, 0].tolist()}")
@@ -380,16 +380,16 @@ if __name__ == "__main__":
     )
     
     selected_experts = [expert_ids[i] for i in indices_biased[0, 0].tolist()]
-    print(f"[OK] Routing with goal bias completed")
+    print("[OK] Routing with goal bias completed")
     print(f"     Active goals: {active_goals}")
     print(f"     Selected experts (token 0): {selected_experts}")
     print(f"     Weights (token 0): {weights_biased[0, 0].tolist()}")
     
     # Check if Python expert was selected more often
     if "expert_0" in selected_experts:
-        print(f"     [BIAS EFFECT] Python expert selected (linked to active goal)")
+        print("     [BIAS EFFECT] Python expert selected (linked to active goal)")
     else:
-        print(f"     [NOTE] Python expert not selected despite bias (base router very confident in others)")
+        print("     [NOTE] Python expert not selected despite bias (base router very confident in others)")
     
     # Test 4: Compute bias directly
     print("\n[Test 4] Testing bias computation...")
@@ -402,7 +402,7 @@ if __name__ == "__main__":
     
     expected_bias = [2.0, 0.0, 0.0, 0.0]  # Only expert_0 matches
     assert bias.tolist() == expected_bias, f"Expected {expected_bias}, got {bias.tolist()}"
-    print(f"     [OK] Bias values correct!")
+    print("     [OK] Bias values correct!")
     
     # Test 5: Multiple active goals
     print("\n[Test 5] Routing with multiple active goals...")
@@ -413,7 +413,7 @@ if __name__ == "__main__":
     )
     
     selected_experts_multi = [expert_ids[i] for i in indices_multi[0, 0].tolist()]
-    print(f"[OK] Routing with multiple goals completed")
+    print("[OK] Routing with multiple goals completed")
     print(f"     Active goals: {multi_goals}")
     print(f"     Selected experts (token 0): {selected_experts_multi}")
     print(f"     Weights (token 0): {weights_multi[0, 0].tolist()}")
@@ -438,7 +438,7 @@ if __name__ == "__main__":
     # Test 7: Statistics
     print("\n[Test 7] Routing statistics...")
     stats = router.get_routing_stats()
-    print(f"[OK] Statistics retrieved:")
+    print("[OK] Statistics retrieved:")
     for key, value in stats.items():
         print(f"     {key}: {value}")
     
@@ -452,7 +452,7 @@ if __name__ == "__main__":
     bias_new = router.compute_goal_bias(["learn_python"], expert_ids)
     print(f"     New bias for Python expert: {bias_new[0].item()}")
     assert bias_new[0].item() == 3.5
-    print(f"     [OK] Bias strength change reflected in computation")
+    print("     [OK] Bias strength change reflected in computation")
     
     # Test 9: Clear history
     print("\n[Test 9] Testing history clearing...")
@@ -462,6 +462,6 @@ if __name__ == "__main__":
     assert len(router.routing_history) == 0
     assert router.total_routings == 0
     assert router.goal_biased_routings == 0
-    print(f"     [OK] Statistics reset")
+    print("     [OK] Statistics reset")
     
     print("\n[OK] All tests passed!")

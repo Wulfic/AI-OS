@@ -99,11 +99,11 @@ def check_and_preprocess_dataset(
     # Auto-preprocess the dataset
     logger.info(f"🔄 Auto-preprocessing dataset: {dataset_path}")
     print(f"\n{'='*60}")
-    print(f"📦 Dataset preprocessing required")
+    print("📦 Dataset preprocessing required")
     print(f"   Path: {dataset_path}")
     print(f"   Block size: {samples_per_block:,} samples per block")
     if ascii_only:
-        print(f"   Filter: ASCII-only text")
+        print("   Filter: ASCII-only text")
     print(f"{'='*60}\n")
     
     try:
@@ -117,7 +117,7 @@ def check_and_preprocess_dataset(
         )
         
         print(f"\n{'='*60}")
-        print(f"✅ Preprocessing complete!")
+        print("✅ Preprocessing complete!")
         print(f"   Total samples: {total_samples:,}")
         print(f"   Total blocks: {total_blocks}")
         print(f"   Samples per block: {actual_samples_per_block:,}")

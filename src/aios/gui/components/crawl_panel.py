@@ -101,7 +101,11 @@ class CrawlPanel(ttk.LabelFrame):  # type: ignore[misc]
     # public API
     def run_crawl(self) -> str:
         """Run crawl with current options in background; streams live progress to output."""
-        import threading, json, subprocess as _sp, sys, shlex
+        import threading
+        import json
+        import subprocess as _sp
+        import sys
+        import shlex
         url = (self.url_var.get() or "").strip()
         if not url:
             logger.warning("User attempted to start crawl with empty URL")

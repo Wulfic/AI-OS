@@ -60,7 +60,7 @@ from .optimizer_setup import create_optimizer
 from .encoding import adjust_tokenizer_padding, encode_lines
 from .memory_optimization import configure_chunking
 from .config_validation import auto_adjust_moe_learning_rate
-from .block_manager import BlockManager, DataBlock
+from .block_manager import BlockManager
 from .chunk_tracker import ChunkTracker
 
 
@@ -169,7 +169,7 @@ def train_gpu_worker(
     def signal_handler(signum, frame):
         try:
             sig_name = signal.Signals(signum).name if hasattr(signal, 'Signals') else str(signum)
-        except:
+        except Exception:
             sig_name = str(signum)
         print(f"\n[GPU {tracker_id}] !!!!! SIGNAL RECEIVED: {sig_name} ({signum}) !!!!!", flush=True)
         sys.stdout.flush()
@@ -283,11 +283,11 @@ def train_gpu_worker(
 
             override_dict = {}
             if getattr(config, "adaptive_lr_debug_level", None) is not None:
-                override_dict["debug_level"] = int(getattr(config, "adaptive_lr_debug_level"))
+                override_dict["debug_level"] = int(config.adaptive_lr_debug_level)
             if getattr(config, "adaptive_lr_emit_window_summary", None) is not None:
-                override_dict["emit_window_summary"] = bool(getattr(config, "adaptive_lr_emit_window_summary"))
+                override_dict["emit_window_summary"] = bool(config.adaptive_lr_emit_window_summary)
             if getattr(config, "adaptive_lr_window_summary_every", None) is not None:
-                override_dict["window_summary_every"] = int(getattr(config, "adaptive_lr_window_summary_every"))
+                override_dict["window_summary_every"] = int(config.adaptive_lr_window_summary_every)
 
             cfg_lr = build_adaptive_lr_config(
                 base_lr=base_lr,
@@ -1196,7 +1196,7 @@ def run_parallel_training_v3(
         if is_primary:
             print(f"[WARN] --resume requested but no checkpoint found in {save_dir}; starting fresh")
         try:
-            setattr(config, "resume", False)
+            config.resume = False
         except Exception:
             pass
 
@@ -1211,7 +1211,7 @@ def run_parallel_training_v3(
             if is_primary:
                 print(f"[INFO] Resume precedence: ignoring student_init={original_student_init!r} and loading from {save_dir}")
         try:
-            setattr(config, "student_init", resolved_student_init)
+            config.student_init = resolved_student_init
         except Exception:
             pass
 
@@ -1319,7 +1319,7 @@ def run_parallel_training_v3(
             raise RuntimeError(f"Dataset validation failed: {e}")
     
     if is_primary:
-        print(f"[INIT] Initializing BlockManager (async)...")
+        print("[INIT] Initializing BlockManager (async)...")
         print(f"   Dataset: {config.dataset_file}")
         print(f"   Items per block: {config.samples_per_block:,}")
         print(f"   Chunk size: {config.dataset_chunk_size:,}")
@@ -1340,14 +1340,14 @@ def run_parallel_training_v3(
         enable_prefetch=True,  # Lightweight metadata prefetch for next block
     )
     if is_primary:
-        print(f"[OK] BlockManager initialized (ready for lazy loading)")
-        print(f"[INFO] Blocks will be loaded on-demand during training\n")
+        print("[OK] BlockManager initialized (ready for lazy loading)")
+        print("[INFO] Blocks will be loaded on-demand during training\n")
     
     # Start pre-downloading first 5 blocks in background for HF streaming datasets
     if config.dataset_file and isinstance(config.dataset_file, str) and config.dataset_file.startswith("hf://"):
         block_manager.start_predownload(num_blocks=5)
         if is_primary:
-            print(f"[INFO] Started background pre-download of first 5 blocks\n")
+            print("[INFO] Started background pre-download of first 5 blocks\n")
     
     # Get total blocks if already detected (for local datasets)
     total_blocks_detected = block_manager.get_total_blocks()
@@ -1357,7 +1357,7 @@ def run_parallel_training_v3(
     # Initialize ChunkTracker in brain directory for proper resume detection
     state_file = chunk_state_file
     if is_primary:
-        print(f"[INIT] Initializing ChunkTracker...")
+        print("[INIT] Initializing ChunkTracker...")
         print(f"   Save directory (config.save_dir): {config.save_dir}")
         print(f"   Save directory (local save_dir var): {save_dir}")
         print(f"   Bundle directory: {config.bundle_dir}")
@@ -1416,13 +1416,13 @@ def run_parallel_training_v3(
     # Show resumed state if applicable
     stats = chunk_tracker.get_progress_stats()
     if stats['total_chunks_trained'] > 0 and is_primary:
-        print(f"[RESUME] Resuming from previous state:")
+        print("[RESUME] Resuming from previous state:")
         print(f"   Chunks trained: {stats['total_chunks_trained']}")
         print(f"   Epoch: {stats['current_epoch']}")
         print(f"   Steps trained: {stats['total_steps']:,}")
     
     if is_primary:
-        print(f"[OK] ChunkTracker initialized\n")
+        print("[OK] ChunkTracker initialized\n")
     
     # Parse cuda_ids from config
     cuda_ids = config.cuda_ids
@@ -1471,7 +1471,7 @@ def run_parallel_training_v3(
     num_gpus = len(cuda_ids)
     
     if is_primary:
-        print(f"[PLAN] Training Plan:")
+        print("[PLAN] Training Plan:")
         print(f"   GPUs: {cuda_ids} ({num_gpus} GPUs)")
         print(f"   Steps PER CHUNK: {config.steps} (each chunk trains for this many steps)")
         print(f"   Stop after block: {config.stop_after_block}")
@@ -1652,7 +1652,7 @@ def run_parallel_training_v3(
         print("\n" + "="*60)
         print("TRAINING COMPLETE!")
         print("="*60)
-        print(f"Final Statistics:")
+        print("Final Statistics:")
         print(f"   Total optimizer steps (all GPUs): {final_stats['total_optimizer_steps']}")
         print(f"   Session steps: {final_stats.get('session_steps', 0)}")
         print(f"   Total steps: {final_stats.get('total_steps', 0)}")
@@ -1662,5 +1662,5 @@ def run_parallel_training_v3(
         if zero_stage != "none":
             print(f"   ZeRO stage: {zero_stage}")
         print(f"   Checkpoint: {final_checkpoint_path}")
-        print(f"   Resume: Training can be resumed from this checkpoint")
+        print("   Resume: Training can be resumed from this checkpoint")
         print("="*60 + "\n")

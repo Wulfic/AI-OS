@@ -7,7 +7,11 @@ Enables live progress tracking for tqdm progress bars during dataset downloads.
 
 import re
 import tkinter as tk
-from typing import Callable, Optional
+from typing import Callable, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .download_progress import DownloadProgressTracker
+
 
 
 class RealTimeProgressCapture:

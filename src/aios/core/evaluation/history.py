@@ -6,7 +6,6 @@ import json
 import sqlite3
 import time
 import logging
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Optional
 

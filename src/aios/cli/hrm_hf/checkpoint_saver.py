@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import signal
 import sys
+import os
 from typing import TYPE_CHECKING, Optional, Any, Callable
 from pathlib import Path
 
@@ -11,6 +12,29 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from aios.core.hrm_training.training_config import TrainingConfig
+
+
+def prepare_state_dict_for_safetensors(state_dict: dict) -> dict:
+    """Return a state dict that is safe to pass to ``safetensors.save_file``.
+
+    safetensors raises at save time for tensors that are on a non-CPU device,
+    are non-contiguous (common with gradient checkpointing / slicing), or share
+    storage with another tensor (tied embeddings). This moves every tensor to
+    CPU, makes it contiguous, and clones it to break any shared storage.
+    """
+    import torch
+
+    cleaned: dict = {}
+    for key, value in state_dict.items():
+        if torch.is_tensor(value):
+            tensor = value.detach().cpu()
+            if not tensor.is_contiguous():
+                tensor = tensor.contiguous()
+            # clone() breaks shared/tied storage so safetensors won't reject it
+            cleaned[key] = tensor.clone()
+        else:
+            cleaned[key] = value
+    return cleaned
 
 
 class CheckpointSaver:
@@ -40,15 +64,30 @@ class CheckpointSaver:
         self.print_fn({"checkpoint_saver": "signal_handlers_installed"})
         
     def _signal_handler(self, signum, frame):
-        """Handle interrupt signals by saving checkpoint."""
+        """Handle interrupt signals by saving checkpoint.
+
+        A second signal arriving while the checkpoint is being written could
+        terminate the process mid-write and corrupt the file. To prevent that
+        we ignore further SIGINT/SIGTERM for the duration of the save, then
+        exit once the on-disk state is consistent.
+        """
         signal_name = "SIGINT" if signum == signal.SIGINT else "SIGTERM"
+
+        # Ignore further interrupts while we flush state to disk so a second
+        # Ctrl-C cannot interrupt the (atomic) save half-way through.
+        try:
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        except Exception:
+            pass
+
         self.print_fn({
             "checkpoint_saver": "signal_received",
             "signal": signal_name,
             "current_step": self.current_step,
             "current_cycle": self.current_cycle,
         })
-        
+
         if not self.interrupted:
             self.interrupted = True
             self.print_fn({"checkpoint_saver": "saving_interrupt_checkpoint"})
@@ -58,14 +97,8 @@ class CheckpointSaver:
                 cycle=self.current_cycle,
             )
             self.print_fn({"checkpoint_saver": "checkpoint_saved", "exiting": True})
-        
-        # Restore original handler and re-raise
-        if signum == signal.SIGINT and self._original_sigint:
-            signal.signal(signal.SIGINT, self._original_sigint)
-        elif signum == signal.SIGTERM and self._original_sigterm:
-            signal.signal(signal.SIGTERM, self._original_sigterm)
-        
-        # Exit gracefully
+
+        # Exit gracefully now that on-disk state is consistent.
         sys.exit(0)
     
     def update_progress(self, step: int, cycle: int = 0):
@@ -93,7 +126,6 @@ class CheckpointSaver:
         cycle = cycle if cycle is not None else self.current_cycle
         
         try:
-            import torch
             from safetensors.torch import save_file as save_safetensors
             
             self.save_dir.mkdir(parents=True, exist_ok=True)
@@ -112,12 +144,15 @@ class CheckpointSaver:
                 "path": str(checkpoint_path),
             })
             
-            # Get model state dict (handle DeepSpeed wrapper)
+            # Get model state dict (handle DDP / DeepSpeed wrappers which expose .module)
             if hasattr(self.model, 'module'):
                 state_dict = self.model.module.state_dict()
             else:
                 state_dict = self.model.state_dict()
-            
+
+            # Make the state dict safe for safetensors (CPU, contiguous, unshared)
+            state_dict = prepare_state_dict_for_safetensors(state_dict)
+
             # Log state dict info
             num_tensors = len(state_dict)
             total_params = sum(p.numel() for p in state_dict.values())
@@ -157,8 +192,10 @@ class CheckpointSaver:
             }
             metadata_path = self.save_dir / "checkpoint_metadata.json"
             import json
-            with open(metadata_path, 'w') as f:
+            metadata_tmp = metadata_path.with_suffix(".json.tmp")
+            with open(metadata_tmp, 'w') as f:
                 json.dump(metadata, f, indent=2)
+            os.replace(metadata_tmp, metadata_path)
             
             # Update brain.json last_session.checkpoint_path to ensure resume works
             # This is critical for single-GPU training which doesn't always go through finalization
@@ -172,19 +209,18 @@ class CheckpointSaver:
                     if "last_session" not in brain_data:
                         brain_data["last_session"] = {}
                     
-                    # Calculate cumulative total_steps
-                    # step parameter is the CURRENT session steps, need to add to previous total
+                    # Calculate cumulative total_steps.
+                    # `step` is the CURRENT session's step count (session-relative).
+                    # `training_steps` is the cumulative total as of the last
+                    # finalization (i.e. the total before this session began) and is
+                    # intentionally NOT updated here, so it stays constant across all
+                    # intra-session checkpoint writes. The running cumulative total is
+                    # therefore simply (previous cumulative total + current session steps).
+                    # NOTE: the previous heuristic that subtracted last_session.steps_completed
+                    # and guessed "fresh start" misfired whenever a session was shorter
+                    # than the prior one, corrupting the resume step count.
                     prev_total = brain_data.get("training_steps", 0)
-                    prev_session_steps = brain_data.get("last_session", {}).get("steps_completed", 0)
-                    
-                    # If step is less than prev_session_steps, we're starting fresh (counter reset)
-                    # Otherwise, add the increment to cumulative total
-                    if step < prev_session_steps:
-                        # Fresh start detected - use step as new total
-                        current_total = step
-                    else:
-                        # Add new steps to previous total
-                        current_total = prev_total + (step - prev_session_steps)
+                    current_total = prev_total + step
                     
                     brain_data["last_session"]["checkpoint_path"] = str(checkpoint_path)
                     brain_data["last_session"]["steps_completed"] = step
@@ -200,9 +236,11 @@ class CheckpointSaver:
                     # NOTE: Do NOT update training_steps here - finalization will handle cumulative total
                     # Only update last_session.total_steps for resume detection
                     
-                    # Write updated brain.json
-                    with open(brain_json_path, 'w') as f:
+                    # Write updated brain.json (atomic: tmp + replace)
+                    brain_json_tmp = brain_json_path.with_suffix(".json.tmp")
+                    with open(brain_json_tmp, 'w') as f:
                         json.dump(brain_data, f, indent=2)
+                    os.replace(brain_json_tmp, brain_json_path)
                     
                     self.print_fn({"brain_json": "updated", "checkpoint_path": str(checkpoint_path)})
             except Exception as e:

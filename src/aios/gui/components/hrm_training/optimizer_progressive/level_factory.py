@@ -200,7 +200,7 @@ def create_exhaustive_levels(
     
     for chunk_size in exhaustive_chunk_sizes:
         level_num = 100 + len(levels)  # Start from 100 to distinguish exhaustive
-        name = f"Full + ZeRO-3"
+        name = "Full + ZeRO-3"
         if best_lora.enabled:
             name += f" + {best_lora}"
         name += f" (chunk={chunk_size}) [EXHAUSTIVE]"

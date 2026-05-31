@@ -52,7 +52,7 @@ def _show_dialog_threadsafe(parent_widget: Any, dialog_func, *args, **kwargs) ->
     try:
         if parent_widget:
             # Don't call winfo_exists() from background thread - just try to schedule
-            logger.debug(f"Scheduling dialog on main thread via after()")
+            logger.debug("Scheduling dialog on main thread via after()")
             try:
                 parent_widget.after(0, _run_dialog)
             except Exception as after_error:
@@ -61,7 +61,7 @@ def _show_dialog_threadsafe(parent_widget: Any, dialog_func, *args, **kwargs) ->
                 return result[0] if not error[0] else None
             
             # Wait for dialog to complete (with timeout to prevent deadlock)
-            logger.debug(f"Waiting for dialog response...")
+            logger.debug("Waiting for dialog response...")
             if not event.wait(timeout=120):  # 2 minute timeout
                 logger.warning("Dialog timeout - continuing without response")
                 return None
